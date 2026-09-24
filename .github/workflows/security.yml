@@ -59,7 +59,21 @@ jobs:
       - uses: actions/checkout@v4
         with:
           persist-credentials: false
+      # Dependency review needs the repository's Dependency graph setting. When it is off,
+      # warn with instructions instead of failing every pull request.
+      - name: Check that Dependency graph is enabled
+        id: graph
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh api "repos/${{ github.repository }}/dependency-graph/sbom" --silent 2>/dev/null; then
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+            echo "::warning title=Dependency review skipped::Enable Dependency graph in Settings → Code security (https://github.com/${{ github.repository }}/settings/security_analysis) so pull requests are checked for vulnerable or disallowed dependencies."
+          fi
       - uses: actions/dependency-review-action@v4
+        if: steps.graph.outputs.enabled == 'true'
         with:
           fail-on-severity: high
           deny-licenses: AGPL-1.0-only, AGPL-3.0-only, AGPL-3.0-or-later, GPL-2.0-only, GPL-3.0-only

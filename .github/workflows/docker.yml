@@ -60,20 +60,23 @@ jobs:
           curl -fsS http://localhost:4000/api/health
           docker rm -f softex
       - name: Scan image for vulnerabilities (Trivy)
-        uses: aquasecurity/trivy-action@0.28.0
+        uses: aquasecurity/trivy-action@v0.36.0
         with:
           image-ref: softex:scan
           format: sarif
           output: trivy.sarif
           severity: CRITICAL,HIGH
           ignore-unfixed: true
-      - uses: github/codeql-action/upload-sarif@v3
+      - name: Upload scan results to the Security tab
+        uses: github/codeql-action/upload-sarif@v3
         if: always() && hashFiles('trivy.sarif') != ''
+        # Code scanning is not available on every repository plan; the blocking check is the next step.
+        continue-on-error: true
         with:
           sarif_file: trivy.sarif
           category: trivy-image
       - name: Fail on critical vulnerabilities
-        uses: aquasecurity/trivy-action@0.28.0
+        uses: aquasecurity/trivy-action@v0.36.0
         with:
           image-ref: softex:scan
           format: table
