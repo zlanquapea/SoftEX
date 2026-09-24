@@ -1,0 +1,42 @@
+# Self-hosting example: SoftEX + ClamAV malware scanning + Mailpit (a local
+# inbox for testing email). For production, point SOFTEX_SMTP_URL at your real
+# mail provider and put SoftEX behind HTTPS.
+services:
+  softex:
+    build: .
+    image: ghcr.io/zlanquapea/softex:latest
+    ports:
+      - "4000:4000"
+    environment:
+      SOFTEX_PUBLIC_URL: ${SOFTEX_PUBLIC_URL:-http://localhost:4000}
+      SOFTEX_SECRET_KEY: ${SOFTEX_SECRET_KEY:?Set SOFTEX_SECRET_KEY to a long random string}
+      SOFTEX_SMTP_URL: ${SOFTEX_SMTP_URL:-smtp://mailpit:1025}
+      SOFTEX_MAIL_FROM: ${SOFTEX_MAIL_FROM:-SoftEX <no-reply@softex.local>}
+      SOFTEX_CLAMAV_HOST: clamav
+      SOFTEX_SECURE_COOKIES: ${SOFTEX_SECURE_COOKIES:-false}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+    volumes:
+      - softex-data:/app/server/data
+    depends_on:
+      clamav:
+        condition: service_healthy
+    restart: unless-stopped
+
+  clamav:
+    image: clamav/clamav:stable
+    healthcheck:
+      test: ["CMD", "clamdcheck.sh"]
+      interval: 30s
+      timeout: 10s
+      start_period: 180s
+      retries: 5
+    restart: unless-stopped
+
+  mailpit:
+    image: axllent/mailpit:latest
+    ports:
+      - "8025:8025" # web inbox at http://localhost:8025
+    restart: unless-stopped
+
+volumes:
+  softex-data:

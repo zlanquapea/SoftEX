@@ -180,6 +180,7 @@ export function SearchDialog({ open, initial, onClose }: { open: boolean; initia
                   <small>
                     {f.owner_name} · {timeAgo(f.updated_at)}
                   </small>
+                  {f.snippet && <small className="snippet">…{f.snippet}…</small>}
                 </span>
               </button>
             ))}

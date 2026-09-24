@@ -2,21 +2,41 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import request from 'supertest';
-import { createApp, type SoftexApp } from '../src/app.js';
+import { createApp, type AppOptions, type SoftexApp } from '../src/app.js';
 import { resetRateLimits } from '../src/routes/auth.js';
+import { runJobsOnce } from '../src/jobs.js';
+
+export interface SentMail {
+  to: string;
+  subject: string;
+  text: string;
+  attachments?: { filename: string; content: string }[];
+}
 
 export interface TestEnv {
   softex: SoftexApp;
+  sent: SentMail[];
   agent: () => ReturnType<typeof request.agent>;
   cleanup: () => void;
 }
 
-export function setup(): TestEnv {
+export function setup(options: Partial<AppOptions> = {}): TestEnv {
   resetRateLimits();
   const dir = mkdtempSync(join(tmpdir(), 'softex-test-'));
-  const softex = createApp({ dbPath: ':memory:', uploadDir: join(dir, 'uploads') });
+  const sent: SentMail[] = [];
+  const softex = createApp({
+    dbPath: ':memory:',
+    uploadDir: join(dir, 'uploads'),
+    startJobs: false,
+    publicUrl: 'https://softex.test',
+    allowPrivateWebhooks: true,
+    secretKey: 'test-secret-key',
+    mail: { sendMail: async (m) => void sent.push(m as SentMail) },
+    ...options,
+  });
   return {
     softex,
+    sent,
     agent: () => request.agent(softex.app),
     cleanup: () => {
       softex.close();
@@ -52,3 +72,6 @@ export async function invite(
   if (res.status !== 200) throw new Error(`accept failed: ${res.status} ${JSON.stringify(res.body)}`);
   return { agent, me: res.body, id: res.body.user.id as string, email };
 }
+
+/** Deliver queued emails and webhooks, as the background scheduler would. */
+export const flushJobs = (env: TestEnv) => runJobsOnce(env.softex.ctx);

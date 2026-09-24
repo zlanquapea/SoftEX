@@ -392,12 +392,24 @@ export function homeRouter(ctx: Ctx) {
         result.files = db
           .all(
             `SELECT f.*, u.name AS owner_name FROM files f JOIN users u ON u.id = f.owner_id WHERE f.workspace_id = ? AND f.archived_at IS NULL
-               AND (f.name LIKE ? ESCAPE '\\' OR f.label LIKE ? ESCAPE '\\') ${q.projectId ? 'AND f.project_id = ?' : ''} ORDER BY f.updated_at DESC LIMIT 200`,
-            ...[auth.workspaceId, like, like, ...(q.projectId ? [q.projectId] : [])],
+               AND (f.name LIKE ? ESCAPE '\\' OR f.label LIKE ? ESCAPE '\\' OR f.content_text LIKE ? ESCAPE '\\') ${q.projectId ? 'AND f.project_id = ?' : ''}
+             ORDER BY f.name LIKE ? ESCAPE '\\' DESC, f.updated_at DESC LIMIT 200`,
+            ...[auth.workspaceId, like, like, like, ...(q.projectId ? [q.projectId] : []), like],
           )
           .filter((f) => canViewFile(db, auth, f))
           .slice(0, q.limit)
-          .map((f) => ({ id: f.id, name: f.name, label: f.label, owner_name: f.owner_name, updated_at: f.updated_at, external_url: f.external_url }));
+          .map((f) => {
+            const idx = (f.content_text ?? '').toLowerCase().indexOf(q.q.toLowerCase());
+            return {
+              id: f.id,
+              name: f.name,
+              label: f.label,
+              owner_name: f.owner_name,
+              updated_at: f.updated_at,
+              external_url: f.external_url,
+              snippet: idx >= 0 ? f.content_text.slice(Math.max(0, idx - 60), idx + 120) : null,
+            };
+          });
       }
       if (want('decisions')) {
         result.decisions = db

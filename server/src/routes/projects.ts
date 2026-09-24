@@ -17,6 +17,7 @@ import {
 } from '../access.js';
 import type { Database, Row } from '../db.js';
 import { audit, authOf, notify, recordActivity, userSummary, type Ctx } from '../context.js';
+import { emitEvent } from '../webhooks.js';
 import { badRequest, forbidden, newId, notFound, now, parse, today } from '../util.js';
 
 const DateStr = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'use YYYY-MM-DD');
@@ -215,6 +216,7 @@ export function projectsRouter(ctx: Ctx) {
       notify(ctx, auth.workspaceId, { userId: m, kind: 'project', title: `You were added to the project ${body.name}`, link: `/projects/${id}`, actorId: auth.userId });
     }
     audit(ctx, auth.workspaceId, auth.userId, 'project.created', 'project', id, { visibility: body.visibility });
+    emitEvent(ctx, auth.workspaceId, 'project.created', { id, name: body.name, owner_id: auth.userId, due_date: body.dueDate ?? null }, { projectId: id });
     res.status(201).json({ ...projectSummary(db, auth, db.get('SELECT * FROM projects WHERE id = ?', id)!), channel_id: channelId });
   });
 
@@ -243,6 +245,7 @@ export function projectsRouter(ctx: Ctx) {
       latest_update: latestUpdate ?? null,
       can_contribute: canContributeProject(db, auth, project),
       can_manage: canManageProject(db, auth, project),
+      ai_excluded: !!project.ai_excluded,
     });
   });
 
@@ -591,6 +594,7 @@ export function projectsRouter(ctx: Ctx) {
       summary: `recorded the decision “${body.title}”`,
       link: projectId ? `/projects/${projectId}?tab=decisions` : `/decisions`,
     });
+    emitEvent(ctx, auth.workspaceId, 'decision.recorded', { id, title: body.title, rationale: body.rationale, project_id: projectId, channel_id: channelId, meeting_id: body.meetingId ?? null, decided_by: auth.userId }, { projectId, channelId });
     if (channelId) {
       const channel = db.get('SELECT * FROM channels WHERE id = ?', channelId)!;
       ctx.hub.publish(auth.workspaceId, { type: 'message.updated', messageId: body.messageId, channelId }, (a) => canViewChannel(db, a, channel));

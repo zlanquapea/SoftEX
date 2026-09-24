@@ -74,6 +74,8 @@ export interface Me {
     quiet_end: string | null;
     color: string;
     mfa_enabled: boolean;
+    email_digest: boolean;
+    email_urgent: boolean;
   };
   workspace: {
     id: string;
@@ -82,6 +84,10 @@ export interface Me {
     guest_default_days: number;
     require_mfa: boolean;
     member_count: number;
+    sso_enabled: boolean;
+    sso_required: boolean;
+    ai_enabled: boolean;
+    ai_available: boolean;
   };
   role: Role;
   guest_expires_at: string | null;

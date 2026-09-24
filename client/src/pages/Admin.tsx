@@ -8,7 +8,7 @@ import { dateTime, ROLE_LABEL, timeAgo } from '../format';
 import { useApi } from '../hooks';
 import { useSession } from '../session';
 
-type Tab = 'members' | 'invitations' | 'teams' | 'onboarding' | 'settings' | 'audit';
+type Tab = 'members' | 'invitations' | 'teams' | 'onboarding' | 'settings' | 'sso' | 'integrations' | 'email' | 'audit';
 
 export function Admin() {
   const { can } = useSession();
@@ -23,6 +23,9 @@ export function Admin() {
         { id: 'teams', label: 'Teams' },
         { id: 'onboarding', label: 'Onboarding' },
         { id: 'settings', label: 'Workspace' },
+        { id: 'sso', label: 'Single sign-on' },
+        { id: 'integrations', label: 'Webhooks' },
+        { id: 'email', label: 'Email' },
         { id: 'audit', label: 'Audit log' },
       ]
     : [
@@ -43,6 +46,9 @@ export function Admin() {
       {tab === 'teams' && <Teams />}
       {tab === 'onboarding' && isAdmin && <OnboardingAdmin />}
       {tab === 'settings' && isAdmin && <WorkspaceSettings />}
+      {tab === 'sso' && isAdmin && <SsoSettings />}
+      {tab === 'integrations' && isAdmin && <Webhooks />}
+      {tab === 'email' && isAdmin && <EmailOutbox />}
       {tab === 'audit' && isAdmin && <Audit />}
     </div>
   );
@@ -163,7 +169,7 @@ function Invitations() {
   const { data: channels } = useApi<Channel[]>('/channels');
   const { data: projects } = useApi<Project[]>('/projects');
   const [form, setForm] = useState({ email: '', role: 'member', guestDays: 30, channelIds: [] as string[], projectIds: [] as string[] });
-  const [link, setLink] = useState<string | null>(null);
+  const [link, setLink] = useState<{ url: string; email: string } | null>(null);
   const toggle = (key: 'channelIds' | 'projectIds', id: string) =>
     setForm({ ...form, [key]: form[key].includes(id) ? form[key].filter((x) => x !== id) : [...form[key], id] });
   return (
@@ -181,7 +187,7 @@ function Invitations() {
             }),
           );
           if (res) {
-            setLink(`${location.origin}${res.url}`);
+            setLink({ url: `${location.origin}${res.url}`, email: form.email });
             setForm({ email: '', role: form.role, guestDays: 30, channelIds: [], projectIds: [] });
             reload();
           }
@@ -230,10 +236,10 @@ function Invitations() {
         {link && (
           <div className="hint-box">
             <p>
-              Share this link with the invitee (valid for 14 days). It is shown only once.
+              Invitation emailed to <strong>{link.email}</strong>. You can also share this link directly (valid for 14 days, shown only once):
             </p>
-            <code className="secret">{link}</code>
-            <button type="button" className="btn sm" onClick={() => navigator.clipboard?.writeText(link)}>
+            <code className="secret">{link.url}</code>
+            <button type="button" className="btn sm" onClick={() => navigator.clipboard?.writeText(link.url)}>
               Copy link
             </button>
           </div>
@@ -253,6 +259,20 @@ function Invitations() {
                   {state} · invited by {i.invited_by_name} {timeAgo(i.created_at)}
                 </small>
               </span>
+              {(state === 'Pending' || state === 'Expired') && (
+                <button
+                  className="btn sm"
+                  onClick={async () => {
+                    const res = await act(() => api.post<{ url: string }>(`/admin/invitations/${i.id}/resend`), `Invitation re-sent to ${i.email}`);
+                    if (res) {
+                      setLink({ url: `${location.origin}${res.url}`, email: i.email });
+                      reload();
+                    }
+                  }}
+                >
+                  Resend
+                </button>
+              )}
               {state === 'Pending' && (
                 <button
                   className="btn sm"
@@ -437,7 +457,13 @@ function WorkspaceSettings() {
   const { me, refresh } = useSession();
   const act = useAction();
   const ws = me!.workspace;
-  const [form, setForm] = useState({ name: ws.name, messageEditPolicy: ws.message_edit_policy, guestDefaultDays: ws.guest_default_days, requireMfa: ws.require_mfa });
+  const [form, setForm] = useState({
+    name: ws.name,
+    messageEditPolicy: ws.message_edit_policy,
+    guestDefaultDays: ws.guest_default_days,
+    requireMfa: ws.require_mfa,
+    aiEnabled: ws.ai_enabled,
+  });
   return (
     <form
       className="card form narrow-form"
@@ -465,6 +491,17 @@ function WorkspaceSettings() {
         <span>
           <strong>Require multifactor authentication</strong>
           <small className="muted block">Members without MFA must set it up before they can continue.</small>
+        </span>
+      </label>
+      <label className="check-row">
+        <input type="checkbox" checked={form.aiEnabled} disabled={!ws.ai_available} onChange={(e) => setForm({ ...form, aiEnabled: e.target.checked })} />
+        <span>
+          <strong>AI assistance</strong>
+          <small className="muted block">
+            {ws.ai_available
+              ? 'Lets people draft thread and meeting summaries, task suggestions and project briefs with Claude. It only reads content the requesting person can already open, drafts are never shared automatically, every use is audited, and channel or project owners can exclude their spaces.'
+              : 'Not available: the server administrator must set ANTHROPIC_API_KEY first.'}
+          </small>
         </span>
       </label>
       <div className="form-actions spread">
@@ -521,6 +558,271 @@ function Audit() {
               </td>
             </tr>
           ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function SsoSettings() {
+  const act = useAction();
+  const { data, reload } = useApi<{
+    available: boolean;
+    enabled: boolean;
+    issuer: string;
+    client_id: string;
+    has_client_secret: boolean;
+    domain: string;
+    required: boolean;
+    auto_provision: boolean;
+    redirect_uri: string;
+  }>('/admin/sso');
+  const [form, setForm] = useState<null | { enabled: boolean; issuer: string; clientId: string; clientSecret: string; domain: string; required: boolean; autoProvision: boolean }>(null);
+  if (!data) return <Loading />;
+  const f = form ?? { enabled: data.enabled, issuer: data.issuer, clientId: data.client_id, clientSecret: '', domain: data.domain, required: data.required, autoProvision: data.auto_provision };
+  const set = (patch: Partial<typeof f>) => setForm({ ...f, ...patch });
+  if (!data.available) {
+    return <div className="card">Single sign-on needs the server setting <code>SOFTEX_SECRET_KEY</code> (used to encrypt the provider secret). Ask whoever runs SoftEX to set it.</div>;
+  }
+  return (
+    <form
+      className="card form narrow-form"
+      onSubmit={async (e) => {
+        e.preventDefault();
+        const ok = await act(() => api.put('/admin/sso', { ...f, clientSecret: f.clientSecret || undefined }), 'Single sign-on settings saved');
+        if (ok) {
+          setForm(null);
+          reload();
+        }
+      }}
+    >
+      <h2>Single sign-on (OpenID Connect)</h2>
+      <p className="muted">Works with Google Workspace, Microsoft Entra ID, Okta, Auth0, Keycloak and other OIDC providers. Register SoftEX with your provider using this redirect URI:</p>
+      <code className="secret">{data.redirect_uri}</code>
+      <Field label="Issuer URL" hint="e.g. https://accounts.google.com or https://login.microsoftonline.com/<tenant>/v2.0">
+        <input required type="url" value={f.issuer} onChange={(e) => set({ issuer: e.target.value })} />
+      </Field>
+      <div className="form-row">
+        <Field label="Client ID">
+          <input required value={f.clientId} onChange={(e) => set({ clientId: e.target.value })} />
+        </Field>
+        <Field label="Client secret" hint={data.has_client_secret ? 'Leave blank to keep the saved secret.' : undefined}>
+          <input type="password" value={f.clientSecret} onChange={(e) => set({ clientSecret: e.target.value })} placeholder={data.has_client_secret ? '••••••••' : ''} />
+        </Field>
+      </div>
+      <Field label="Email domain" hint="People with this email domain are sent to your provider.">
+        <input required value={f.domain} onChange={(e) => set({ domain: e.target.value })} placeholder="acme.com" />
+      </Field>
+      <label className="check-row">
+        <input type="checkbox" checked={f.enabled} onChange={(e) => set({ enabled: e.target.checked })} /> <strong>Enable single sign-on</strong>
+      </label>
+      <label className="check-row">
+        <input type="checkbox" checked={f.autoProvision} onChange={(e) => set({ autoProvision: e.target.checked })} />
+        <span>
+          <strong>Create accounts automatically</strong>
+          <small className="muted block">New people from your domain join as members the first time they sign in.</small>
+        </span>
+      </label>
+      <label className="check-row">
+        <input type="checkbox" checked={f.required} onChange={(e) => set({ required: e.target.checked })} />
+        <span>
+          <strong>Require single sign-on</strong>
+          <small className="muted block">Password sign-in is turned off for everyone except owners, who keep it as an emergency fallback.</small>
+        </span>
+      </label>
+      <div className="form-actions">
+        <button className="btn primary">Save</button>
+      </div>
+    </form>
+  );
+}
+
+function Webhooks() {
+  const act = useAction();
+  const { data, reload } = useApi<{
+    events: string[];
+    webhooks: { id: string; url: string; events: string[]; description: string; active: boolean; recent: { delivered: number | null; failed: number | null; pending: number | null } }[];
+  }>('/integrations/webhooks');
+  const [form, setForm] = useState({ url: '', description: '', events: [] as string[] });
+  const [secret, setSecret] = useState<string | null>(null);
+  const [open, setOpen] = useState<string | null>(null);
+  const deliveries = useApi<{ id: string; event: string; status: string; attempts: number; response_status: number | null; last_error: string | null; created_at: string }[]>(
+    open ? `/integrations/webhooks/${open}/deliveries` : null,
+  );
+  if (!data) return <Loading />;
+  return (
+    <div className="two-col">
+      <div className="card">
+        <h2>Webhooks</h2>
+        <p className="muted">
+          SoftEX POSTs JSON events to these URLs, signed with HMAC-SHA256 in <code>X-SoftEX-Signature</code>. Events about private channels, private projects and direct
+          messages are never sent.
+        </p>
+        {!data.webhooks.length && <p className="muted">No webhooks yet.</p>}
+        {data.webhooks.map((w) => (
+          <div key={w.id} className="team-row">
+            <div className="row-gap wrap">
+              <strong className="grow" style={{ overflowWrap: 'anywhere' }}>
+                {w.url}
+              </strong>
+              <span className={`pill ${w.active ? 'status-done' : ''}`}>{w.active ? 'Active' : 'Paused'}</span>
+            </div>
+            <small className="muted">
+              {w.description && `${w.description} · `}
+              {w.events.join(', ')} · last 50: {w.recent?.delivered ?? 0} delivered, {w.recent?.failed ?? 0} failed, {w.recent?.pending ?? 0} pending
+            </small>
+            <div className="row-gap wrap">
+              <button className="btn sm" onClick={() => setOpen(open === w.id ? null : w.id)}>
+                {open === w.id ? 'Hide deliveries' : 'Deliveries'}
+              </button>
+              <button className="btn sm" onClick={async () => { await act(() => api.post(`/integrations/webhooks/${w.id}/ping`), 'Test event queued'); }}>
+                Send test
+              </button>
+              <button className="btn sm" onClick={async () => { await act(() => api.patch(`/integrations/webhooks/${w.id}`, { active: !w.active })); reload(); }}>
+                {w.active ? 'Pause' : 'Resume'}
+              </button>
+              <button
+                className="btn sm"
+                onClick={async () => {
+                  const res = await act(() => api.post<{ secret: string }>(`/integrations/webhooks/${w.id}/rotate-secret`), 'Secret rotated');
+                  if (res) setSecret(res.secret);
+                }}
+              >
+                Rotate secret
+              </button>
+              <button
+                className="btn sm danger-text"
+                onClick={async () => {
+                  if (!confirm('Delete this webhook?')) return;
+                  await act(() => api.del(`/integrations/webhooks/${w.id}`), 'Webhook deleted');
+                  reload();
+                }}
+              >
+                Delete
+              </button>
+            </div>
+            {open === w.id && (
+              <table className="table">
+                <tbody>
+                  {(deliveries.data ?? []).map((d) => (
+                    <tr key={d.id}>
+                      <td>{new Date(d.created_at).toLocaleString()}</td>
+                      <td>
+                        <code>{d.event}</code>
+                      </td>
+                      <td>
+                        <span className={`pill ${d.status === 'delivered' ? 'status-done' : d.status === 'failed' ? 'status-blocked' : ''}`}>{d.status}</span>
+                      </td>
+                      <td className="muted small">{d.response_status ?? ''} {d.last_error ?? ''}</td>
+                    </tr>
+                  ))}
+                  {deliveries.data && !deliveries.data.length && (
+                    <tr>
+                      <td className="muted">No deliveries yet.</td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            )}
+          </div>
+        ))}
+        {secret && (
+          <div className="hint-box token-reveal">
+            <strong>Signing secret (shown once):</strong>
+            <code className="secret">{secret}</code>
+            <button className="btn sm" onClick={() => navigator.clipboard?.writeText(secret)}>
+              Copy
+            </button>
+          </div>
+        )}
+      </div>
+      <form
+        className="card form"
+        onSubmit={async (e) => {
+          e.preventDefault();
+          const res = await act(() => api.post<{ secret: string }>('/integrations/webhooks', form), 'Webhook added');
+          if (res) {
+            setSecret(res.secret);
+            setForm({ url: '', description: '', events: [] });
+            reload();
+          }
+        }}
+      >
+        <h2>Add a webhook</h2>
+        <Field label="Endpoint URL" hint="Must be a public https address.">
+          <input required type="url" value={form.url} onChange={(e) => setForm({ ...form, url: e.target.value })} placeholder="https://example.com/softex-events" />
+        </Field>
+        <Field label="Description">
+          <input value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} />
+        </Field>
+        <Field label="Events">
+          <div className="check-list">
+            {['*', ...data.events].map((ev) => (
+              <label key={ev} className="check-inline">
+                <input
+                  type="checkbox"
+                  checked={form.events.includes(ev)}
+                  onChange={() => setForm({ ...form, events: form.events.includes(ev) ? form.events.filter((x) => x !== ev) : [...form.events, ev] })}
+                />{' '}
+                {ev === '*' ? 'All events' : ev}
+              </label>
+            ))}
+          </div>
+        </Field>
+        <button className="btn primary" disabled={!form.events.length}>
+          Add webhook
+        </button>
+      </form>
+    </div>
+  );
+}
+
+function EmailOutbox() {
+  const act = useAction();
+  const { data, reload } = useApi<{
+    smtp_configured: boolean;
+    emails: { id: string; kind: string; to_email: string; subject: string; status: string; attempts: number; last_error: string | null; created_at: string }[];
+  }>('/integrations/emails');
+  if (!data) return <Loading />;
+  return (
+    <div className="card">
+      <h2>Email</h2>
+      {!data.smtp_configured && (
+        <p className="hint-box warn">
+          Email delivery is not configured, so messages are recorded here but not sent. Set <code>SOFTEX_SMTP_URL</code> and <code>SOFTEX_MAIL_FROM</code> on the server.
+        </p>
+      )}
+      <table className="table">
+        <thead>
+          <tr>
+            <th>When</th>
+            <th>To</th>
+            <th className="hide-mobile">Subject</th>
+            <th>Status</th>
+          </tr>
+        </thead>
+        <tbody>
+          {data.emails.map((e) => (
+            <tr key={e.id}>
+              <td>{new Date(e.created_at).toLocaleString()}</td>
+              <td>{e.to_email}</td>
+              <td className="hide-mobile">{e.subject}</td>
+              <td>
+                <span className={`pill ${e.status === 'sent' ? 'status-done' : e.status === 'failed' ? 'status-blocked' : ''}`}>{e.status === 'logged' ? 'not sent' : e.status}</span>
+                {e.last_error && <small className="muted block">{e.last_error}</small>}
+                {e.status === 'failed' && (
+                  <button className="link-btn" onClick={async () => { await act(() => api.post(`/integrations/emails/${e.id}/retry`), 'Queued for another attempt'); reload(); }}>
+                    Retry
+                  </button>
+                )}
+              </td>
+            </tr>
+          ))}
+          {!data.emails.length && (
+            <tr>
+              <td className="muted">No emails yet.</td>
+            </tr>
+          )}
         </tbody>
       </table>
     </div>

@@ -3,6 +3,7 @@ import type { Auth } from './access.js';
 import { canViewChannel } from './access.js';
 import type { Database, Row } from './db.js';
 import type { RealtimeHub } from './realtime.js';
+import { queueEmail } from './mailer.js';
 import { newId, now } from './util.js';
 
 export interface Config {
@@ -10,12 +11,43 @@ export interface Config {
   meetingBaseUrl: string;
   maxUploadBytes: number;
   secureCookies: boolean;
+  /** Public origin used in links inside emails and SSO redirects, e.g. https://softex.example.com */
+  publicUrl: string;
+  /** SMTP connection URL (smtp[s]://user:pass@host:port). Without it, emails are recorded in the outbox and logged. */
+  smtpUrl?: string;
+  mailFrom: string;
+  /** Secret used to encrypt stored credentials such as SSO client secrets. */
+  secretKey?: string;
+  /** ClamAV daemon for malware scanning of uploads, e.g. { host: 'clamav', port: 3310 }. */
+  clamav?: { host: string; port: number };
+  /** Allow webhooks to private network addresses (only for development and tests). */
+  allowPrivateWebhooks: boolean;
+  aiModel: string;
+}
+
+/** Minimal mail transport interface (nodemailer-compatible) so tests can inject a fake. */
+export interface MailTransport {
+  sendMail(message: {
+    from: string;
+    to: string;
+    subject: string;
+    text: string;
+    html?: string;
+    attachments?: { filename: string; content: string; contentType?: string }[];
+  }): Promise<unknown>;
+}
+
+/** The subset of the Anthropic client SoftEX uses, injectable for tests. */
+export interface AiClient {
+  complete(input: { system: string; prompt: string; jsonSchema?: Record<string, unknown> }): Promise<{ text: string; refused: boolean }>;
 }
 
 export interface Ctx {
   db: Database;
   hub: RealtimeHub;
   config: Config;
+  mail?: MailTransport;
+  ai?: AiClient;
 }
 
 declare global {
@@ -94,6 +126,17 @@ export function notify(ctx: Ctx, workspaceId: string, input: NotifyInput) {
   };
   ctx.db.insert('notifications', row);
   const silent = !input.urgent && inQuietHours(user);
+  // Urgent items also go out by email when the person is not connected to SoftEX right now.
+  if (input.urgent && user.email_urgent && !ctx.hub.isOnline(workspaceId, input.userId)) {
+    queueEmail(ctx, {
+      workspaceId,
+      kind: 'urgent',
+      to: user.email,
+      subject: `Urgent: ${input.title}`,
+      text: input.body ? `${input.title}\n\n“${input.body.replace(/@\[([^\]]+)\]\([0-9a-f-]{36}\)/g, '@$1')}”` : input.title,
+      action: { label: 'Open in SoftEX', url: `${ctx.config.publicUrl}${input.link ?? '/inbox'}` },
+    });
+  }
   ctx.hub.toUser(workspaceId, input.userId, {
     type: 'notification',
     notification: { ...row, read_at: null, actor: userSummary(ctx.db, input.actorId) },

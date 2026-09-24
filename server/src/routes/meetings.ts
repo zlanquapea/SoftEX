@@ -16,9 +16,34 @@ import {
 } from '../access.js';
 import type { Row } from '../db.js';
 import { authOf, notify, publishToChannel, recordActivity, userSummary, type Ctx } from '../context.js';
+import { emitEvent } from '../webhooks.js';
 import { forbidden, newId, notFound, now, parse } from '../util.js';
+import { queueEmail } from '../mailer.js';
 import { serializeTasks } from './tasks.js';
 import { serializeMessages } from './channels.js';
+
+/** iCalendar invite used for both the download endpoint and email attachments. */
+export function buildIcs(m: { id: string; title: string; agenda: string; starts_at: string; duration_min: number; video_url: string; location: string }, publicUrl: string, method: 'PUBLISH' | 'REQUEST' | 'CANCEL' = 'PUBLISH') {
+  const end = new Date(new Date(m.starts_at).getTime() + m.duration_min * 60_000).toISOString();
+  return [
+    'BEGIN:VCALENDAR',
+    'VERSION:2.0',
+    'PRODID:-//SoftEX//Meetings//EN',
+    `METHOD:${method}`,
+    'BEGIN:VEVENT',
+    `UID:${m.id}@softex`,
+    `DTSTAMP:${icsDate(new Date().toISOString())}`,
+    `DTSTART:${icsDate(m.starts_at)}`,
+    `DTEND:${icsDate(end)}`,
+    `SUMMARY:${icsEscape(m.title)}`,
+    `DESCRIPTION:${icsEscape(`${m.agenda}\n\n${publicUrl}/meetings/${m.id}`)}`,
+    `LOCATION:${icsEscape(m.video_url || m.location)}`,
+    `URL:${publicUrl}/meetings/${m.id}`,
+    method === 'CANCEL' ? 'STATUS:CANCELLED' : 'STATUS:CONFIRMED',
+    'END:VEVENT',
+    'END:VCALENDAR',
+  ].join('\r\n');
+}
 
 const icsDate = (iso: string) => iso.replace(/[-:]/g, '').replace(/\.\d{3}/, '');
 const icsEscape = (s: string) => s.replace(/\\/g, '\\\\').replace(/\n/g, '\\n').replace(/[,;]/g, (c) => `\\${c}`);
@@ -26,6 +51,33 @@ const icsEscape = (s: string) => s.replace(/\\/g, '\\\\').replace(/\n/g, '\\n').
 export function meetingsRouter(ctx: Ctx) {
   const r = Router();
   const { db } = ctx;
+
+  /** Calendar invitations by email, so meetings land in Outlook, Google Calendar or Apple Calendar. */
+  const emailInvites = (m: Row, userIds: string[], method: 'REQUEST' | 'CANCEL') => {
+    if (!userIds.length) return;
+    const organizer = db.get('SELECT name FROM users WHERE id = ?', m.organizer_id)!.name;
+    const when = new Date(m.starts_at).toUTCString().replace('GMT', 'UTC');
+    for (const u of db.all(`SELECT id, email, timezone FROM users WHERE id IN (${userIds.map(() => '?').join(',')})`, ...userIds)) {
+      let local = when;
+      try {
+        local = new Date(m.starts_at).toLocaleString('en-GB', { timeZone: u.timezone, dateStyle: 'full', timeStyle: 'short' }) + ` (${u.timezone})`;
+      } catch {
+        /* keep UTC */
+      }
+      queueEmail(ctx, {
+        workspaceId: m.workspace_id,
+        kind: method === 'CANCEL' ? 'meeting_cancelled' : 'meeting_invite',
+        to: u.email,
+        subject: method === 'CANCEL' ? `Cancelled: ${m.title}` : `Invitation: ${m.title}`,
+        text:
+          method === 'CANCEL'
+            ? `${organizer} cancelled “${m.title}” scheduled for ${local}.`
+            : `${organizer} invited you to “${m.title}”.\n\nWhen: ${local}, ${m.duration_min} minutes${m.location ? `\nWhere: ${m.location}` : ''}${m.video_url ? `\nVideo: ${m.video_url}` : ''}${m.agenda ? `\n\nAgenda:\n${m.agenda}` : ''}`,
+        action: method === 'CANCEL' ? undefined : { label: 'Open meeting', url: `${ctx.config.publicUrl}/meetings/${m.id}` },
+        attachments: [{ filename: 'invite.ics', content: buildIcs(m as any, ctx.config.publicUrl, method), contentType: `text/calendar; method=${method}` }],
+      });
+    }
+  };
 
   const loadMeeting = (auth: Auth, id: string) => {
     const meeting = db.get('SELECT * FROM meetings WHERE id = ?', id);
@@ -151,6 +203,7 @@ export function meetingsRouter(ctx: Ctx) {
     for (const u of people) {
       notify(ctx, auth.workspaceId, { userId: u, kind: 'meeting', title: `${organizer.name} invited you to “${body.title}”`, body: new Date(startsAt).toUTCString(), link: `/meetings/${id}`, actorId: auth.userId });
     }
+    emailInvites(db.get('SELECT * FROM meetings WHERE id = ?', id)!, people.filter((u) => u !== auth.userId), 'REQUEST');
     if (channel) {
       const messageId = newId();
       db.insert('messages', {
@@ -278,6 +331,7 @@ export function meetingsRouter(ctx: Ctx) {
     db.update('meetings', m.id, { ended_at: now(), started_at: m.started_at ?? now() });
     const followUps = db.get('SELECT COUNT(*) AS n FROM tasks WHERE meeting_id = ?', m.id)!.n;
     const decisions = db.get('SELECT COUNT(*) AS n FROM decisions WHERE meeting_id = ?', m.id)!.n;
+    emitEvent(ctx, auth.workspaceId, 'meeting.ended', { id: m.id, title: m.title, project_id: m.project_id, decisions, follow_up_tasks: followUps }, { projectId: m.project_id, channelId: m.channel_id });
     recordActivity(ctx, auth.workspaceId, {
       actorId: auth.userId,
       verb: 'ended',
@@ -300,6 +354,7 @@ export function meetingsRouter(ctx: Ctx) {
     const m = loadMeeting(auth, req.params.id);
     if (!isOrganizerOrManager(auth, m)) throw forbidden('Only the organizer can cancel this meeting');
     const people = participants(m.id);
+    emailInvites(m, people.map((p) => p.id).filter((u) => u !== auth.userId), 'CANCEL');
     db.run('DELETE FROM meetings WHERE id = ?', m.id);
     for (const p of people) {
       notify(ctx, auth.workspaceId, { userId: p.id, kind: 'meeting', title: `“${m.title}” was cancelled`, link: '/meetings', actorId: auth.userId });
@@ -311,28 +366,9 @@ export function meetingsRouter(ctx: Ctx) {
   r.get('/meetings/:id/ics', (req, res) => {
     const auth = authOf(req);
     const m = loadMeeting(auth, req.params.id);
-    const end = new Date(new Date(m.starts_at).getTime() + m.duration_min * 60_000).toISOString();
-    const origin = `${req.protocol}://${req.get('host')}`;
-    const lines = [
-      'BEGIN:VCALENDAR',
-      'VERSION:2.0',
-      'PRODID:-//SoftEX//Meetings//EN',
-      'METHOD:PUBLISH',
-      'BEGIN:VEVENT',
-      `UID:${m.id}@softex`,
-      `DTSTAMP:${icsDate(now())}`,
-      `DTSTART:${icsDate(m.starts_at)}`,
-      `DTEND:${icsDate(end)}`,
-      `SUMMARY:${icsEscape(m.title)}`,
-      `DESCRIPTION:${icsEscape(`${m.agenda}\n\n${origin}/meetings/${m.id}`)}`,
-      `LOCATION:${icsEscape(m.video_url || m.location)}`,
-      `URL:${origin}/meetings/${m.id}`,
-      'END:VEVENT',
-      'END:VCALENDAR',
-    ];
     res.setHeader('Content-Type', 'text/calendar; charset=utf-8');
     res.setHeader('Content-Disposition', `attachment; filename="meeting-${m.id.slice(0, 8)}.ics"`);
-    res.send(lines.join('\r\n'));
+    res.send(buildIcs(m as Parameters<typeof buildIcs>[0], ctx.config.publicUrl));
   });
 
   return r;

@@ -15,6 +15,7 @@ import {
   type Role,
 } from '../access.js';
 import { audit, authOf, notify, type Ctx } from '../context.js';
+import { queueEmail } from '../mailer.js';
 import { HttpError, badRequest, forbidden, newId, notFound, now, parse, parseJson, randomToken, sha256 } from '../util.js';
 
 const RoleEnum = z.enum(['owner', 'admin', 'lead', 'member', 'guest']);
@@ -323,8 +324,39 @@ export function workspaceRouter(ctx: Ctx) {
       created_at: now(),
     });
     audit(ctx, auth.workspaceId, auth.userId, 'invitation.created', 'invitation', id, { email: body.email, role: body.role, guestDays });
-    // Email delivery is an integration point; the link is returned so it can be shared directly.
-    res.status(201).json({ id, token, url: `/invite/${token}` });
+    sendInvitationEmail(auth, body.email, body.role, token, guestDays);
+    // The link is also returned once so it can be shared directly (e.g. when email is not configured).
+    res.status(201).json({ id, token, url: `/invite/${token}`, emailed: true });
+  });
+
+  const sendInvitationEmail = (auth: Auth, email: string, role: string, token: string, guestDays: number | null) => {
+    const inviter = db.get('SELECT name FROM users WHERE id = ?', auth.userId)!.name;
+    const workspace = db.get('SELECT name FROM workspaces WHERE id = ?', auth.workspaceId)!.name;
+    queueEmail(ctx, {
+      workspaceId: auth.workspaceId,
+      kind: 'invitation',
+      to: email,
+      subject: `${inviter} invited you to ${workspace} on SoftEX`,
+      text:
+        `${inviter} invited you to join ${workspace} on SoftEX${role === 'guest' ? ' as a guest' : ''}.\n\n` +
+        `SoftEX keeps your team’s conversations, projects, knowledge and meetings in one place.` +
+        (guestDays ? `\n\nYour guest access lasts ${guestDays} days and covers only what was shared with you.` : '') +
+        `\n\nThis invitation expires in 14 days.`,
+      action: { label: 'Accept invitation', url: `${ctx.config.publicUrl}/invite/${token}` },
+    });
+  };
+
+  r.post('/admin/invitations/:id/resend', (req, res) => {
+    const auth = authOf(req);
+    requireRole(auth, 'lead');
+    const invite = db.get('SELECT * FROM invitations WHERE id = ? AND workspace_id = ? AND accepted_at IS NULL AND revoked_at IS NULL', req.params.id, auth.workspaceId);
+    if (!invite) throw notFound('Invitation');
+    // Only token hashes are stored, so resending issues a fresh link and invalidates the old one.
+    const token = randomToken();
+    db.update('invitations', invite.id, { token_hash: sha256(token), expires_at: new Date(Date.now() + 14 * 86_400_000).toISOString() });
+    sendInvitationEmail(auth, invite.email, invite.role, token, invite.guest_days);
+    audit(ctx, auth.workspaceId, auth.userId, 'invitation.resent', 'invitation', invite.id, { email: invite.email });
+    res.json({ id: invite.id, token, url: `/invite/${token}`, emailed: true });
   });
 
   r.delete('/admin/invitations/:id', (req, res) => {
@@ -346,6 +378,7 @@ export function workspaceRouter(ctx: Ctx) {
         messageEditPolicy: z.enum(['author', 'admins', 'none']).optional(),
         guestDefaultDays: z.number().int().min(1).max(365).optional(),
         requireMfa: z.boolean().optional(),
+        aiEnabled: z.boolean().optional(),
       }),
       req.body,
     );
@@ -358,6 +391,7 @@ export function workspaceRouter(ctx: Ctx) {
       message_edit_policy: body.messageEditPolicy,
       guest_default_days: body.guestDefaultDays,
       require_mfa: body.requireMfa,
+      ai_enabled: body.aiEnabled,
     });
     audit(ctx, auth.workspaceId, auth.userId, 'workspace.settings_changed', 'workspace', auth.workspaceId, body);
     res.json({ ok: true });

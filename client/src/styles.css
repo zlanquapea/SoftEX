@@ -3209,3 +3209,64 @@ a.activity:hover {
 .meeting-head > .grow {
   flex: 1 1 360px;
 }
+
+.auth-links {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: 13px;
+  flex-wrap: wrap;
+}
+.ai-box {
+  border: 1px solid #d9d3ff;
+  background: linear-gradient(180deg, var(--accent-soft), var(--surface));
+  border-radius: 12px;
+  padding: 12px 14px;
+  margin: 10px 0;
+}
+.ai-box header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-weight: 700;
+  font-size: 12px;
+  color: var(--accent-ink);
+  margin-bottom: 6px;
+}
+.ai-box footer {
+  margin-top: 8px;
+  font-size: 11px;
+  color: var(--muted);
+}
+.token-reveal {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+.token-reveal code {
+  word-break: break-all;
+}
+
+.thread-ai {
+  padding: 8px 16px;
+  border-bottom: 1px solid var(--line-2);
+}
+.suggestion {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--line-2);
+}
+.suggestion input[type='checkbox'] {
+  margin-top: 10px;
+}
+.suggestion .row-gap {
+  margin: 6px 0 2px;
+}
+.suggestion select,
+.suggestion input[type='date'] {
+  font-size: 12px;
+  padding: 4px 8px;
+}

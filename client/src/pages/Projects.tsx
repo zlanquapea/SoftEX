@@ -1,6 +1,7 @@
 import { useRef, useState, type FormEvent } from 'react';
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { api, qs, type Decision, type Project, type Task, type TaskStatus } from '../api';
+import { useAiEnabled } from '../components/Ai';
 import { Avatar, AvatarStack } from '../components/Avatar';
 import { Icon } from '../components/Icon';
 import { useShell } from '../components/Layout';
@@ -98,6 +99,7 @@ interface ProjectFull extends Project {
   latest_update: { id: string; health: string; body: string; user_name: string; user_color: string; created_at: string } | null;
   can_contribute: boolean;
   can_manage: boolean;
+  ai_excluded: boolean;
 }
 
 type Tab = 'overview' | 'tasks' | 'decisions' | 'risks' | 'resources' | 'checkins' | 'activity';
@@ -180,6 +182,18 @@ function Overview({ project, reload }: { project: ProjectFull; reload: () => voi
   );
   const [update, setUpdate] = useState({ health: project.health as string, body: '' });
 
+  const aiEnabled = useAiEnabled();
+  const [aiBusy, setAiBusy] = useState(false);
+  const aiBrief = async () => {
+    setAiBusy(true);
+    const res = await act(() => api.post<{ brief: string }>(`/ai/projects/${project.id}/brief`));
+    setAiBusy(false);
+    if (res) {
+      setSummary({ draft: res.brief, suggested_health: project.health });
+      setUpdate({ health: project.health, body: res.brief });
+      setUpdating(true);
+    }
+  };
   const draftSummary = async () => {
     const s = await act(() => api.get(`/projects/${project.id}/summary`));
     if (s) {
@@ -226,8 +240,13 @@ function Overview({ project, reload }: { project: ProjectFull; reload: () => voi
             {project.can_contribute && (
               <div className="row-gap">
                 <button className="btn sm" onClick={draftSummary} title="Build a draft from this week's tasks, decisions and risks">
-                  <Icon name="spark" size={15} /> Draft weekly summary
+                  <Icon name="list" size={15} /> Draft weekly summary
                 </button>
+                {aiEnabled && !project.ai_excluded && (
+                  <button className="btn sm" onClick={aiBrief} disabled={aiBusy} title="Draft a readable brief with AI from this week's project records">
+                    <Icon name="spark" size={15} /> {aiBusy ? 'Drafting…' : 'AI brief'}
+                  </button>
+                )}
                 <button className="btn primary sm" onClick={() => setUpdating(true)}>
                   Post update
                 </button>
@@ -1052,6 +1071,20 @@ function ProjectSettings({ open, onClose, project, onSaved }: { open: boolean; o
             </div>
           </Field>
         </div>
+        <label className="check-row">
+          <input
+            type="checkbox"
+            checked={!project.ai_excluded}
+            onChange={async (e) => {
+              await act(() => api.patch('/ai/exclusions', { projectId: project.id, excluded: !e.target.checked }), e.target.checked ? 'AI assistance allowed' : 'AI assistance turned off for this project');
+              onSaved();
+            }}
+          />
+          <span>
+            <strong>Allow AI assistance</strong>
+            <small className="muted block">When off, AI summaries and briefs never read this project’s content.</small>
+          </span>
+        </label>
         <div className="form-actions spread">
           <button
             type="button"
