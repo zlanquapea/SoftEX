@@ -1,10 +1,16 @@
 import express, { type Express } from 'express';
+import { rateLimit } from 'express-rate-limit';
 import { existsSync } from 'node:fs';
 import { createServer, type Server } from 'node:http';
 import { join } from 'node:path';
 import { canViewChannel } from './access.js';
 import { Database } from './db.js';
-import type { Config, Ctx } from './context.js';
+import type { AiClient, Config, Ctx, MailTransport } from './context.js';
+import { createClaudeClient } from './ai.js';
+import { startBackgroundJobs } from './jobs.js';
+import { aiRouter } from './routes/ai.js';
+import { integrationsRouter } from './routes/integrations.js';
+import { ssoAdminRouter, ssoPublicRouter } from './routes/sso.js';
 import { RealtimeHub } from './realtime.js';
 import { authRouter, authenticate, meRouter, requireAuth } from './routes/auth.js';
 import { channelsRouter } from './routes/channels.js';
@@ -19,6 +25,13 @@ import { HttpError, errorHandler } from './util.js';
 export interface AppOptions extends Partial<Config> {
   dbPath?: string;
   staticDir?: string;
+  /** Requests per minute per client address across the API (default 1200). */
+  rateLimitPerMinute?: number;
+  /** Start the in-process email/webhook/digest scheduler (default true; tests drive jobs manually). */
+  startJobs?: boolean;
+  anthropicApiKey?: string;
+  mail?: MailTransport;
+  ai?: AiClient;
 }
 
 export interface SoftexApp {
@@ -34,10 +47,24 @@ export function createApp(options: AppOptions = {}): SoftexApp {
     meetingBaseUrl: options.meetingBaseUrl ?? 'https://meet.jit.si',
     maxUploadBytes: options.maxUploadBytes ?? 25 * 1024 * 1024,
     secureCookies: options.secureCookies ?? false,
+    publicUrl: (options.publicUrl ?? 'http://localhost:4000').replace(/\/$/, ''),
+    smtpUrl: options.smtpUrl,
+    mailFrom: options.mailFrom ?? 'SoftEX <no-reply@softex.local>',
+    secretKey: options.secretKey,
+    clamav: options.clamav,
+    allowPrivateWebhooks: options.allowPrivateWebhooks ?? false,
+    aiModel: options.aiModel ?? 'claude-opus-5',
   };
   const db = new Database(options.dbPath ?? join(process.cwd(), 'data', 'softex.db'));
   const hub = new RealtimeHub();
-  const ctx: Ctx = { db, hub, config };
+  const ctx: Ctx = {
+    db,
+    hub,
+    config,
+    mail: options.mail,
+    ai: options.ai ?? (options.anthropicApiKey ? createClaudeClient(options.anthropicApiKey, config.aiModel) : undefined),
+  };
+  const stopJobs = options.startJobs === false ? () => {} : startBackgroundJobs(ctx);
 
   const app = express();
   app.disable('x-powered-by');
@@ -54,6 +81,18 @@ export function createApp(options: AppOptions = {}): SoftexApp {
     }
     next();
   });
+  // Abuse protection for the whole API: generous enough for normal use of the app
+  // (which polls and reacts to live events), strict enough to blunt floods and scraping.
+  app.use(
+    '/api',
+    rateLimit({
+      windowMs: 60_000,
+      limit: options.rateLimitPerMinute ?? 1200,
+      standardHeaders: 'draft-8',
+      legacyHeaders: false,
+      message: { error: 'Too many requests. Please slow down and try again shortly.' },
+    }),
+  );
   app.use(express.json({ limit: '1mb' }));
 
   app.get('/api/health', (_req, res) => {
@@ -61,6 +100,7 @@ export function createApp(options: AppOptions = {}): SoftexApp {
     res.json({ ok: true, time: new Date().toISOString() });
   });
   app.use('/api', authRouter(ctx));
+  app.use('/api', ssoPublicRouter(ctx));
   const api = express.Router();
   api.use(requireAuth(ctx));
   api.use(meRouter(ctx));
@@ -71,6 +111,9 @@ export function createApp(options: AppOptions = {}): SoftexApp {
   api.use(knowledgeRouter(ctx));
   api.use(meetingsRouter(ctx));
   api.use(workspaceRouter(ctx));
+  api.use(ssoAdminRouter(ctx));
+  api.use(integrationsRouter(ctx));
+  api.use(aiRouter(ctx));
   app.use('/api', api);
   app.use('/api', (_req, _res, next) => next(new HttpError(404, 'Not found')));
 
@@ -102,6 +145,7 @@ export function createApp(options: AppOptions = {}): SoftexApp {
     server,
     ctx,
     close: () => {
+      stopJobs();
       hub.close();
       server.close();
       db.close();

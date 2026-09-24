@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import multer from 'multer';
-import { createReadStream, existsSync, mkdirSync, readFileSync, renameSync, unlinkSync } from 'node:fs';
-import { extname, join } from 'node:path';
+import { createReadStream, existsSync, mkdirSync, renameSync, unlinkSync } from 'node:fs';
+import { extname, join, resolve, sep } from 'node:path';
 import { z } from 'zod';
 import {
   accessibleChannelIds,
@@ -19,15 +19,14 @@ import {
   type Auth,
 } from '../access.js';
 import type { Row } from '../db.js';
+import { extractText } from '../extract.js';
+import { scanUpload } from '../scanner.js';
 import { audit, authOf, notify, recordActivity, userSummary, type Ctx } from '../context.js';
+import { emitEvent } from '../webhooks.js';
 import { HttpError, badRequest, forbidden, newId, notFound, now, parse, today } from '../util.js';
 
 const DateStr = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'use YYYY-MM-DD');
 
-/** Upload restrictions (§5.3, §9): executable and script types are refused outright. */
-const BLOCKED_EXTENSIONS = new Set([
-  '.exe', '.msi', '.bat', '.cmd', '.com', '.scr', '.ps1', '.vbs', '.vbe', '.jse', '.wsf', '.jar', '.dll', '.sh', '.app', '.dmg', '.hta', '.cpl', '.lnk', '.reg',
-]);
 const INLINE_TYPES: Record<string, string> = {
   '.png': 'image/png',
   '.jpg': 'image/jpeg',
@@ -39,28 +38,18 @@ const INLINE_TYPES: Record<string, string> = {
   '.md': 'text/plain; charset=utf-8',
   '.csv': 'text/plain; charset=utf-8',
 };
-const EICAR = 'X5O!P%@AP[4\\PZX54(P^)7CC)7}$EICAR-STANDARD-ANTIVIRUS-TEST-FILE!$H+H*';
-
-/**
- * Pluggable content scan. The default implementation rejects the EICAR test
- * signature and executable headers; production deployments should call out to
- * a real scanning service here before the file becomes visible.
- */
-function scanUpload(path: string, originalName: string) {
-  const ext = extname(originalName).toLowerCase();
-  if (BLOCKED_EXTENSIONS.has(ext)) throw badRequest(`Files of type ${ext} are not allowed`);
-  const head = readFileSync(path).subarray(0, 4096);
-  if (head.includes(Buffer.from(EICAR))) throw badRequest('This file was flagged by the malware scanner');
-  if (head.subarray(0, 2).toString('latin1') === 'MZ' || head.subarray(0, 4).toString('latin1') === '\x7fELF') {
-    throw badRequest('Executable files are not allowed');
-  }
-}
-
 export function knowledgeRouter(ctx: Ctx) {
   const r = Router();
   const { db } = ctx;
   mkdirSync(ctx.config.uploadDir, { recursive: true });
-  const upload = multer({ dest: join(ctx.config.uploadDir, 'incoming'), limits: { fileSize: ctx.config.maxUploadBytes, files: 1 } });
+  const incomingDir = resolve(ctx.config.uploadDir, 'incoming');
+  const upload = multer({ dest: incomingDir, limits: { fileSize: ctx.config.maxUploadBytes, files: 1 } });
+  /** Multer picks a random temporary name; still, only ever touch files inside the incoming folder. */
+  const tempPath = (file: Express.Multer.File) => {
+    const path = resolve(file.path);
+    if (!path.startsWith(incomingDir + sep)) throw badRequest('Invalid upload');
+    return path;
+  };
 
   // ======================= Knowledge pages =======================
 
@@ -308,22 +297,23 @@ export function knowledgeRouter(ctx: Ctx) {
     };
   };
 
-  const storeUpload = (auth: Auth, file: Express.Multer.File) => {
+  const storeUpload = async (auth: Auth, file: Express.Multer.File) => {
     try {
-      scanUpload(file.path, file.originalname);
+      await scanUpload(ctx.config, tempPath(file), file.originalname);
     } catch (e) {
-      unlinkSync(file.path);
+      unlinkSync(tempPath(file));
       audit(ctx, auth.workspaceId, auth.userId, 'file.upload_rejected', 'file', 'n/a', { name: file.originalname, reason: (e as Error).message });
       throw e;
     }
     const key = newId();
-    renameSync(file.path, join(ctx.config.uploadDir, key));
+    const text = extractText(tempPath(file), file.originalname);
+    renameSync(tempPath(file), join(ctx.config.uploadDir, key));
     const ext = extname(file.originalname).toLowerCase();
     const mime = INLINE_TYPES[ext]?.split(';')[0] ?? (file.mimetype || 'application/octet-stream');
-    return { key, mime, size: file.size };
+    return { key, mime, size: file.size, text };
   };
 
-  r.post('/files', upload.single('file'), (req, res) => {
+  r.post('/files', upload.single('file'), async (req, res) => {
     const auth = authOf(req);
     if (!req.file) throw badRequest('Attach a file');
     const body = parse(
@@ -334,10 +324,10 @@ export function knowledgeRouter(ctx: Ctx) {
     try {
       projectId = checkPlacement(auth, body);
     } catch (e) {
-      unlinkSync(req.file.path);
+      unlinkSync(tempPath(req.file));
       throw e;
     }
-    const stored = storeUpload(auth, req.file);
+    const stored = await storeUpload(auth, req.file);
     const id = newId();
     const name = req.file.originalname.slice(0, 200);
     db.transaction(() => {
@@ -350,11 +340,13 @@ export function knowledgeRouter(ctx: Ctx) {
         owner_id: auth.userId,
         name,
         label: body.label,
+        content_text: stored.text,
         created_at: now(),
         updated_at: now(),
       });
       db.insert('file_versions', { id: newId(), file_id: id, version: 1, storage_key: stored.key, mime: stored.mime, size: stored.size, uploaded_by: auth.userId, created_at: now() });
     });
+    emitEvent(ctx, auth.workspaceId, 'document.version_added', { file_id: id, name, version: 1, project_id: projectId, channel_id: body.channelId ?? null }, { projectId, channelId: body.channelId });
     if (projectId || !body.channelId) {
       recordActivity(ctx, auth.workspaceId, {
         actorId: auth.userId,
@@ -433,7 +425,7 @@ export function knowledgeRouter(ctx: Ctx) {
     res.json({ ...fileSummary(file), versions, project, channel, task, can_edit: file.owner_id === auth.userId || isAdmin(auth) || (!!file.project_id && canContributeProject(db, auth, db.get('SELECT * FROM projects WHERE id = ?', file.project_id)!)) });
   });
 
-  r.post('/files/:id/versions', upload.single('file'), (req, res) => {
+  r.post('/files/:id/versions', upload.single('file'), async (req, res) => {
     const auth = authOf(req);
     if (!req.file) throw badRequest('Attach a file');
     let file: Row;
@@ -443,13 +435,14 @@ export function knowledgeRouter(ctx: Ctx) {
       if (file.project_id && !canContributeProject(db, auth, db.get('SELECT * FROM projects WHERE id = ?', file.project_id)!)) throw forbidden();
       if (!file.project_id && file.owner_id !== auth.userId && !isAdmin(auth)) throw forbidden('Only the owner can add versions');
     } catch (e) {
-      unlinkSync(req.file.path);
+      unlinkSync(tempPath(req.file));
       throw e;
     }
-    const stored = storeUpload(auth, req.file);
+    const stored = await storeUpload(auth, req.file);
     const version = file.current_version + 1;
     db.insert('file_versions', { id: newId(), file_id: file.id, version, storage_key: stored.key, mime: stored.mime, size: stored.size, uploaded_by: auth.userId, created_at: now() });
-    db.update('files', file.id, { current_version: version, updated_at: now() });
+    db.update('files', file.id, { current_version: version, content_text: stored.text, updated_at: now() });
+    emitEvent(ctx, auth.workspaceId, 'document.version_added', { file_id: file.id, name: file.name, version, project_id: file.project_id, channel_id: file.channel_id }, { projectId: file.project_id, channelId: file.channel_id });
     recordActivity(ctx, auth.workspaceId, {
       actorId: auth.userId,
       verb: 'versioned',

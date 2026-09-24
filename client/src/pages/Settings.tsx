@@ -7,7 +7,7 @@ import { useApi } from '../hooks';
 import { useSession } from '../session';
 import { MfaSetup } from './Auth';
 
-type Tab = 'profile' | 'notifications' | 'security' | 'onboarding';
+type Tab = 'profile' | 'notifications' | 'security' | 'api' | 'onboarding';
 
 export function Settings() {
   const [params, setParams] = useSearchParams();
@@ -27,12 +27,14 @@ export function Settings() {
           { id: 'profile', label: 'Profile' },
           { id: 'notifications', label: 'Notifications & focus' },
           { id: 'security', label: 'Security' },
+          { id: 'api', label: 'API tokens' },
           { id: 'onboarding', label: 'Onboarding' },
         ]}
       />
       {tab === 'profile' && <Profile />}
       {tab === 'notifications' && <Notifications />}
       {tab === 'security' && <Security />}
+      {tab === 'api' && <ApiTokens />}
       {tab === 'onboarding' && <Onboarding />}
     </div>
   );
@@ -179,6 +181,38 @@ function Notifications() {
         </div>
       </form>
       <div className="card form">
+        <h2>Email</h2>
+        <label className="check-row">
+          <input
+            type="checkbox"
+            checked={me!.user.email_digest}
+            onChange={async (e) => {
+              const updated = await act(() => api.patch<Me>('/me', { email_digest: e.target.checked }), 'Email preference saved');
+              if (updated) setMe(updated);
+            }}
+          />
+          <span>
+            <strong>Morning digest</strong>
+            <small className="muted block">At 8am in your time zone, if you have unread notifications.</small>
+          </span>
+        </label>
+        <label className="check-row">
+          <input
+            type="checkbox"
+            checked={me!.user.email_urgent}
+            onChange={async (e) => {
+              const updated = await act(() => api.patch<Me>('/me', { email_urgent: e.target.checked }), 'Email preference saved');
+              if (updated) setMe(updated);
+            }}
+          />
+          <span>
+            <strong>Urgent messages while I am away</strong>
+            <small className="muted block">Only when you are not connected to SoftEX.</small>
+          </span>
+        </label>
+        <p className="muted small">Invitations, password resets and meeting invitations are always emailed.</p>
+      </div>
+      <div className="card form">
         <h2>Desktop notifications</h2>
         <p className="muted">Show a system notification when SoftEX is in the background.</p>
         {permission === 'granted' && <p>Enabled for this browser.</p>}
@@ -309,5 +343,102 @@ function Onboarding() {
         <p className="muted">Your workspace has not set up an onboarding checklist.</p>
       )}
     </div>
+  );
+}
+
+function ApiTokens() {
+  const { me } = useSession();
+  const act = useAction();
+  const { data, reload } = useApi<{ id: string; name: string; prefix: string; scope: string; last_used_at: string | null; expires_at: string | null; revoked_at: string | null; created_at: string }[]>(
+    '/integrations/tokens',
+  );
+  const [form, setForm] = useState({ name: '', scope: 'read', expiresInDays: '90' });
+  const [created, setCreated] = useState<string | null>(null);
+  if (me!.role === 'guest') return <div className="card muted">Guests cannot create API tokens.</div>;
+  return (
+    <>
+      <form
+        className="card form"
+        onSubmit={async (e) => {
+          e.preventDefault();
+          const res = await act(() =>
+            api.post<{ token: string }>('/integrations/tokens', { name: form.name, scope: form.scope, expiresInDays: form.expiresInDays ? Number(form.expiresInDays) : null }),
+          );
+          if (res) {
+            setCreated(res.token);
+            setForm({ ...form, name: '' });
+            reload();
+          }
+        }}
+      >
+        <h2>Personal API tokens</h2>
+        <p className="muted">
+          Tokens let scripts and other tools use the SoftEX API as you, with your permissions. Send them as <code>Authorization: Bearer sx_…</code>. See{' '}
+          <a href="https://github.com/zlanquapea/SoftEX/blob/main/docs/API.md" target="_blank" rel="noopener noreferrer">
+            the API guide
+          </a>
+          .
+        </p>
+        <div className="form-row">
+          <Field label="Name">
+            <input required value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder="e.g. Weekly report script" />
+          </Field>
+          <Field label="Access">
+            <select value={form.scope} onChange={(e) => setForm({ ...form, scope: e.target.value })}>
+              <option value="read">Read only</option>
+              <option value="write">Read and write</option>
+            </select>
+          </Field>
+          <Field label="Expires">
+            <select value={form.expiresInDays} onChange={(e) => setForm({ ...form, expiresInDays: e.target.value })}>
+              <option value="30">In 30 days</option>
+              <option value="90">In 90 days</option>
+              <option value="365">In a year</option>
+              <option value="">Never</option>
+            </select>
+          </Field>
+        </div>
+        <div className="form-actions">
+          <button className="btn primary">Create token</button>
+        </div>
+        {created && (
+          <div className="hint-box token-reveal">
+            <strong>Copy your token now — it will not be shown again.</strong>
+            <code className="secret">{created}</code>
+            <button type="button" className="btn sm" onClick={() => navigator.clipboard?.writeText(created)}>
+              Copy
+            </button>
+          </div>
+        )}
+      </form>
+      <div className="card">
+        {!data && <Loading />}
+        {data && !data.length && <p className="muted">No tokens yet.</p>}
+        {data?.map((t) => (
+          <div key={t.id} className={`list-row ${t.revoked_at ? 'muted-row' : ''}`}>
+            <span className="grow">
+              <strong>{t.name}</strong> <span className="pill">{t.scope === 'write' ? 'Read & write' : 'Read only'}</span>
+              <small className="muted block">
+                <code>{t.prefix}…</code> · created {new Date(t.created_at).toLocaleDateString()} · {t.last_used_at ? `last used ${new Date(t.last_used_at).toLocaleString()}` : 'never used'}
+                {t.expires_at && ` · expires ${new Date(t.expires_at).toLocaleDateString()}`}
+                {t.revoked_at && ' · revoked'}
+              </small>
+            </span>
+            {!t.revoked_at && (
+              <button
+                className="btn sm danger-text"
+                onClick={async () => {
+                  if (!confirm(`Revoke “${t.name}”? Anything using it will stop working immediately.`)) return;
+                  await act(() => api.del(`/integrations/tokens/${t.id}`), 'Token revoked');
+                  reload();
+                }}
+              >
+                Revoke
+              </button>
+            )}
+          </div>
+        ))}
+      </div>
+    </>
   );
 }

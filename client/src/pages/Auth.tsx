@@ -29,8 +29,20 @@ export function Login() {
   const [password, setPassword] = useState('');
   const [code, setCode] = useState('');
   const [needCode, setNeedCode] = useState(false);
-  const [error, setError] = useState('');
+  const [error, setError] = useState(() => new URLSearchParams(location.search).get('sso_error') ?? '');
   const [busy, setBusy] = useState(false);
+  const [ssoMode, setSsoMode] = useState(false);
+  const startSso = async () => {
+    setError('');
+    if (!email) return setError('Enter your work email first');
+    try {
+      const found = await api.get<{ sso: boolean }>(`/auth/sso/discover?email=${encodeURIComponent(email)}`);
+      if (!found.sso) return setError('Single sign-on is not set up for this email domain. Sign in with your password instead.');
+      window.location.href = `/api/auth/sso/start?email=${encodeURIComponent(email)}`;
+    } catch (err) {
+      setError((err as Error).message);
+    }
+  };
   const submit = async (e: FormEvent) => {
     e.preventDefault();
     setBusy(true);
@@ -40,6 +52,7 @@ export function Login() {
     } catch (err) {
       const apiErr = err as ApiError;
       if (apiErr.details?.code === 'mfa_required') setNeedCode(true);
+      if (apiErr.details?.code === 'sso_required') setSsoMode(true);
       setError(apiErr.details?.code === 'mfa_required' && !needCode ? '' : apiErr.message);
     } finally {
       setBusy(false);
@@ -52,17 +65,31 @@ export function Login() {
         <Field label="Work email">
           <input type="email" autoComplete="email" required value={email} onChange={(e) => setEmail(e.target.value)} autoFocus />
         </Field>
-        <Field label="Password">
-          <input type="password" autoComplete="current-password" required value={password} onChange={(e) => setPassword(e.target.value)} />
-        </Field>
+        {!ssoMode && (
+          <Field label="Password">
+            <input type="password" autoComplete="current-password" required value={password} onChange={(e) => setPassword(e.target.value)} />
+          </Field>
+        )}
         {needCode && (
           <Field label="Authenticator code" hint="Open your authenticator app and enter the 6-digit code.">
             <input inputMode="numeric" autoComplete="one-time-code" pattern="\d{6}" required value={code} onChange={(e) => setCode(e.target.value)} autoFocus />
           </Field>
         )}
-        <button className="btn primary block" disabled={busy}>
-          {busy ? 'Signing in…' : 'Sign in'}
-        </button>
+        {ssoMode ? (
+          <button type="button" className="btn primary block" onClick={startSso}>
+            Continue with single sign-on
+          </button>
+        ) : (
+          <button className="btn primary block" disabled={busy}>
+            {busy ? 'Signing in…' : 'Sign in'}
+          </button>
+        )}
+        <div className="auth-links">
+          <button type="button" className="link-btn" onClick={() => (ssoMode ? setSsoMode(false) : (setSsoMode(true), setError('')))}>
+            {ssoMode ? 'Use a password instead' : 'Sign in with SSO'}
+          </button>
+          <Link to="/forgot-password">Forgot password?</Link>
+        </div>
       </form>
       <p className="muted center">
         New to SoftEX? <Link to="/register">Create a workspace</Link>
@@ -227,6 +254,89 @@ export function MfaSetup({ required = false, onDone }: { required?: boolean; onD
       <button className="link-btn center" onClick={logout}>
         Sign out
       </button>
+    </AuthFrame>
+  );
+}
+
+export function ForgotPassword() {
+  const [email, setEmail] = useState('');
+  const [sent, setSent] = useState(false);
+  const [error, setError] = useState('');
+  return (
+    <AuthFrame title="Reset your password" subtitle="We will email you a link to choose a new password.">
+      {sent ? (
+        <div className="form">
+          <p className="hint-box">If an account exists for {email}, a reset link is on its way. It works for one hour.</p>
+          <Link className="btn block" to="/">
+            Back to sign in
+          </Link>
+        </div>
+      ) : (
+        <form
+          className="form"
+          onSubmit={async (e) => {
+            e.preventDefault();
+            try {
+              await api.post('/auth/forgot', { email });
+              setSent(true);
+            } catch (err) {
+              setError((err as Error).message);
+            }
+          }}
+        >
+          {error && <p className="form-error" role="alert">{error}</p>}
+          <Field label="Work email">
+            <input type="email" required autoFocus value={email} onChange={(e) => setEmail(e.target.value)} />
+          </Field>
+          <button className="btn primary block">Email me a reset link</button>
+          <Link className="center" to="/">
+            Back to sign in
+          </Link>
+        </form>
+      )}
+    </AuthFrame>
+  );
+}
+
+export function ResetPassword() {
+  const { token } = useParams();
+  const [password, setPassword] = useState('');
+  const [confirm, setConfirm] = useState('');
+  const [done, setDone] = useState(false);
+  const [error, setError] = useState('');
+  return (
+    <AuthFrame title="Choose a new password">
+      {done ? (
+        <div className="form">
+          <p className="hint-box">Your password was changed and you were signed out everywhere.</p>
+          <Link className="btn primary block" to="/">
+            Sign in
+          </Link>
+        </div>
+      ) : (
+        <form
+          className="form"
+          onSubmit={async (e) => {
+            e.preventDefault();
+            if (password !== confirm) return setError('The passwords do not match');
+            try {
+              await api.post('/auth/reset', { token, password });
+              setDone(true);
+            } catch (err) {
+              setError((err as Error).message);
+            }
+          }}
+        >
+          {error && <p className="form-error" role="alert">{error}</p>}
+          <Field label="New password" hint="At least 8 characters.">
+            <input type="password" required minLength={8} autoComplete="new-password" autoFocus value={password} onChange={(e) => setPassword(e.target.value)} />
+          </Field>
+          <Field label="Repeat new password">
+            <input type="password" required minLength={8} autoComplete="new-password" value={confirm} onChange={(e) => setConfirm(e.target.value)} />
+          </Field>
+          <button className="btn primary block">Change password</button>
+        </form>
+      )}
     </AuthFrame>
   );
 }

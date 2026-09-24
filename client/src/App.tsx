@@ -3,7 +3,7 @@ import { Navigate, Route, Routes, useLocation, useParams } from 'react-router-do
 import { Layout } from './components/Layout';
 import { TaskDetail } from './components/TaskDrawer';
 import { Loading } from './components/ui';
-import { AcceptInvite, Login, MfaSetup, Register } from './pages/Auth';
+import { AcceptInvite, ForgotPassword, Login, MfaSetup, Register, ResetPassword } from './pages/Auth';
 import { Admin } from './pages/Admin';
 import { ChannelView, ChannelsBrowser, Chats } from './pages/Chats';
 import { Decisions } from './pages/Decisions';
@@ -62,6 +62,8 @@ export function App() {
       <Routes>
         <Route path="/register" element={<Register />} />
         <Route path="/invite/:token" element={<AcceptInvite />} />
+        <Route path="/forgot-password" element={<ForgotPassword />} />
+        <Route path="/reset-password/:token" element={<ResetPassword />} />
         <Route path="*" element={<Login />} />
       </Routes>
     );

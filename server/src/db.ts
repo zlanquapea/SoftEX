@@ -428,7 +428,102 @@ CREATE TABLE IF NOT EXISTS audit_events (
   created_at TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_audit_ws ON audit_events(workspace_id, created_at);
+CREATE TABLE IF NOT EXISTS outbound_emails (
+  id TEXT PRIMARY KEY,
+  workspace_id TEXT REFERENCES workspaces(id) ON DELETE CASCADE,
+  kind TEXT NOT NULL,
+  to_email TEXT NOT NULL,
+  subject TEXT NOT NULL,
+  text TEXT NOT NULL,
+  html TEXT NOT NULL DEFAULT '',
+  attachments TEXT NOT NULL DEFAULT '[]',
+  status TEXT NOT NULL DEFAULT 'queued',            -- queued | sent | failed | logged (no SMTP configured)
+  attempts INTEGER NOT NULL DEFAULT 0,
+  last_error TEXT,
+  next_attempt_at TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  sent_at TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_outbound_status ON outbound_emails(status, next_attempt_at);
+
+CREATE TABLE IF NOT EXISTS password_resets (
+  token_hash TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  expires_at TEXT NOT NULL,
+  used_at TEXT,
+  created_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS sso_states (
+  state TEXT PRIMARY KEY,
+  workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+  nonce TEXT NOT NULL,
+  code_verifier TEXT NOT NULL,
+  created_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS api_tokens (
+  id TEXT PRIMARY KEY,
+  workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  name TEXT NOT NULL,
+  token_hash TEXT NOT NULL UNIQUE,
+  prefix TEXT NOT NULL,
+  scope TEXT NOT NULL DEFAULT 'read',               -- read | write
+  last_used_at TEXT,
+  expires_at TEXT,
+  revoked_at TEXT,
+  created_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS webhooks (
+  id TEXT PRIMARY KEY,
+  workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+  url TEXT NOT NULL,
+  events TEXT NOT NULL DEFAULT '[]',
+  secret TEXT NOT NULL,
+  active INTEGER NOT NULL DEFAULT 1,
+  description TEXT NOT NULL DEFAULT '',
+  created_by TEXT NOT NULL REFERENCES users(id),
+  created_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS webhook_deliveries (
+  id TEXT PRIMARY KEY,
+  webhook_id TEXT NOT NULL REFERENCES webhooks(id) ON DELETE CASCADE,
+  event TEXT NOT NULL,
+  payload TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'pending',           -- pending | delivered | failed
+  attempts INTEGER NOT NULL DEFAULT 0,
+  response_status INTEGER,
+  last_error TEXT,
+  next_attempt_at TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  delivered_at TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_webhook_deliveries ON webhook_deliveries(status, next_attempt_at);
 `;
+
+/**
+ * Columns added after the first release. Applied idempotently on start-up so
+ * existing databases upgrade in place without a separate migration step.
+ */
+const ADDED_COLUMNS: [table: string, column: string, definition: string][] = [
+  ['users', 'email_digest', 'INTEGER NOT NULL DEFAULT 1'],
+  ['users', 'email_urgent', 'INTEGER NOT NULL DEFAULT 1'],
+  ['users', 'last_digest_at', 'TEXT'],
+  ['workspaces', 'sso_enabled', 'INTEGER NOT NULL DEFAULT 0'],
+  ['workspaces', 'sso_issuer', 'TEXT'],
+  ['workspaces', 'sso_client_id', 'TEXT'],
+  ['workspaces', 'sso_client_secret', 'TEXT'],
+  ['workspaces', 'sso_domain', 'TEXT'],
+  ['workspaces', 'sso_required', 'INTEGER NOT NULL DEFAULT 0'],
+  ['workspaces', 'sso_auto_provision', 'INTEGER NOT NULL DEFAULT 1'],
+  ['workspaces', 'ai_enabled', 'INTEGER NOT NULL DEFAULT 0'],
+  ['channels', 'ai_excluded', 'INTEGER NOT NULL DEFAULT 0'],
+  ['projects', 'ai_excluded', 'INTEGER NOT NULL DEFAULT 0'],
+  ['files', 'content_text', 'TEXT'],
+];
 
 export type Row = Record<string, any>;
 
@@ -440,6 +535,10 @@ export class Database {
     this.raw = new DatabaseSync(path);
     this.raw.exec('PRAGMA journal_mode = WAL;');
     this.raw.exec(SCHEMA);
+    for (const [table, column, definition] of ADDED_COLUMNS) {
+      const exists = (this.raw.prepare(`PRAGMA table_info(${table})`).all() as Row[]).some((c) => c.name === column);
+      if (!exists) this.raw.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
+    }
   }
 
   all<T = Row>(sql: string, ...params: SQLInputValue[]): T[] {

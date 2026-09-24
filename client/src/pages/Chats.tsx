@@ -1,6 +1,7 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type FormEvent } from 'react';
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { api, qs, type Channel, type Message } from '../api';
+import { ThreadAi } from '../components/Ai';
 import { Avatar } from '../components/Avatar';
 import { Icon } from '../components/Icon';
 import { useShell } from '../components/Layout';
@@ -187,6 +188,7 @@ interface ChannelDetail extends Channel {
   can_manage: boolean;
   created_by: string;
   archived_at: string | null;
+  ai_excluded: boolean;
 }
 
 export function ChannelView() {
@@ -432,6 +434,7 @@ export function ChannelView() {
           members={channel.members}
           actions={actions}
           isAnnouncement={channel.kind === 'announcement'}
+          aiExcluded={channel.ai_excluded}
         />
       )}
       {!threadId && panel && (
@@ -520,6 +523,17 @@ function ChannelSettings({ channel, onSaved }: { channel: ChannelDetail; onSaved
       >
         Save topic
       </button>
+      <label className="check-inline">
+        <input
+          type="checkbox"
+          checked={!channel.ai_excluded}
+          onChange={async (e) => {
+            await act(() => api.patch('/ai/exclusions', { channelId: channel.id, excluded: !e.target.checked }), e.target.checked ? 'AI assistance allowed' : 'AI assistance turned off here');
+            onSaved();
+          }}
+        />{' '}
+        Allow AI assistance in this channel
+      </label>
       <button
         className="btn sm danger-text"
         onClick={async () => {
@@ -852,12 +866,14 @@ function ThreadPanel({
   members,
   actions,
   isAnnouncement,
+  aiExcluded,
 }: {
   messageId: string;
   onClose: () => void;
   members: { id: string; name: string; color: string }[];
   actions: Actions;
   isAnnouncement: boolean;
+  aiExcluded: boolean;
 }) {
   const { data, error, reload } = useApi<{ root: Message; replies: Message[]; channel: { id: string; name: string } }>(`/messages/${messageId}/thread`);
   const end = useRef<HTMLDivElement>(null);
@@ -877,6 +893,7 @@ function ThreadPanel({
       {!data && !error && <Loading />}
       {data && (
         <>
+          {data.replies.length > 0 && <ThreadAi messageId={data.root.id} excluded={aiExcluded} />}
           <div className="thread-messages">
             <MessageItem message={data.root} grouped={false} isAnnouncement={isAnnouncement} canPost actions={actions} inThread />
             <div className="thread-count">

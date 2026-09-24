@@ -17,6 +17,7 @@ import {
 } from '../access.js';
 import type { Database, Row } from '../db.js';
 import { authOf, notify, recordActivity, userSummary, type Ctx } from '../context.js';
+import { emitEvent } from '../webhooks.js';
 import { badRequest, forbidden, newId, notFound, now, parse, today } from '../util.js';
 
 const DateStr = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'use YYYY-MM-DD');
@@ -194,6 +195,9 @@ export function tasksRouter(ctx: Ctx) {
       summary: `created the task “${body.title}”`,
       link: `/tasks/${id}`,
     });
+    const eventData = { id, title: body.title, project_id: body.projectId ?? null, owner_id: ownerId ?? null, status: body.status, priority: body.priority, due_date: body.dueDate ?? null };
+    emitEvent(ctx, auth.workspaceId, 'task.created', eventData, { projectId: body.projectId });
+    if (ownerId) emitEvent(ctx, auth.workspaceId, 'task.assigned', eventData, { projectId: body.projectId });
     if (ownerId && ownerId !== auth.userId) {
       notify(ctx, auth.workspaceId, {
         userId: ownerId,
@@ -422,6 +426,10 @@ export function tasksRouter(ctx: Ctx) {
 
     const actor = db.get('SELECT name FROM users WHERE id = ?', auth.userId)!;
     const link = `/tasks/${task.id}`;
+    const fresh = db.get('SELECT * FROM tasks WHERE id = ?', task.id)!;
+    const eventData = { id: task.id, title: fresh.title, project_id: fresh.project_id, owner_id: fresh.owner_id, status: fresh.status, previous_status: task.status, priority: fresh.priority, due_date: fresh.due_date };
+    if (statusChanged) emitEvent(ctx, auth.workspaceId, 'task.status_changed', eventData, { projectId: task.project_id });
+    if (body.ownerId && body.ownerId !== task.owner_id) emitEvent(ctx, auth.workspaceId, 'task.assigned', eventData, { projectId: task.project_id });
     if (statusChanged) {
       const label = body.status!.replace('_', ' ');
       recordActivity(ctx, auth.workspaceId, {

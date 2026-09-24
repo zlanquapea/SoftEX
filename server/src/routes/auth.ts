@@ -5,6 +5,7 @@ import type { Auth, Role } from '../access.js';
 import type { Row } from '../db.js';
 import { audit, authOf, type Ctx } from '../context.js';
 import { generateSecret, otpauthUrl, verifyTotp } from '../totp.js';
+import { queueEmail } from '../mailer.js';
 import {
   HttpError,
   badRequest,
@@ -40,6 +41,7 @@ function tokenFrom(req: IncomingMessage) {
 export function authenticate(ctx: Ctx, req: IncomingMessage): Auth | null {
   const token = tokenFrom(req);
   if (!token) return null;
+  if (token.startsWith('sx_')) return authenticateApiToken(ctx, token);
   const row = ctx.db.get(
     `SELECT s.user_id, s.workspace_id, m.role FROM sessions s
        JOIN memberships m ON m.workspace_id = s.workspace_id AND m.user_id = s.user_id
@@ -53,11 +55,41 @@ export function authenticate(ctx: Ctx, req: IncomingMessage): Auth | null {
   return { userId: row.user_id, workspaceId: row.workspace_id, role: row.role as Role };
 }
 
+/** Personal API tokens (§5.7 public API): act as the user, limited by the token's scope. */
+function authenticateApiToken(ctx: Ctx, token: string): Auth | null {
+  const row = ctx.db.get(
+    `SELECT t.id, t.user_id, t.workspace_id, t.scope, m.role FROM api_tokens t
+       JOIN memberships m ON m.workspace_id = t.workspace_id AND m.user_id = t.user_id
+      WHERE t.token_hash = ? AND t.revoked_at IS NULL AND (t.expires_at IS NULL OR t.expires_at > ?)
+        AND m.deactivated_at IS NULL AND (m.guest_expires_at IS NULL OR m.guest_expires_at > ?)`,
+    sha256(token),
+    now(),
+    now(),
+  );
+  if (!row) return null;
+  ctx.db.run('UPDATE api_tokens SET last_used_at = ? WHERE id = ?', now(), row.id);
+  return { userId: row.user_id, workspaceId: row.workspace_id, role: row.role as Role, tokenScope: row.scope };
+}
+
+const tokenWindows = new Map<string, { count: number; reset: number }>();
+
 export function requireAuth(ctx: Ctx) {
   return (req: Request, _res: Response, next: NextFunction) => {
     const auth = authenticate(ctx, req);
     if (!auth) return next(new HttpError(401, 'Please sign in'));
     req.auth = auth;
+    if (auth.tokenScope) {
+      if (auth.tokenScope === 'read' && req.method !== 'GET') return next(new HttpError(403, 'This API token is read-only'));
+      if (req.path.startsWith('/me/') || req.path.startsWith('/integrations')) {
+        return next(new HttpError(403, 'API tokens cannot manage account settings or integrations'));
+      }
+      // 600 requests per minute per token.
+      const key = sha256(tokenFrom(req)!);
+      const t = Date.now();
+      const w = tokenWindows.get(key);
+      if (!w || w.reset < t) tokenWindows.set(key, { count: 1, reset: t + 60_000 });
+      else if (++w.count > 600) return next(new HttpError(429, 'Rate limit exceeded for this API token'));
+    }
     // Workspaces that require MFA block everything except MFA enrolment until it is set up.
     const needsMfa = ctx.db.get(
       `SELECT 1 FROM workspaces w, users u WHERE w.id = ? AND u.id = ? AND w.require_mfa = 1 AND u.mfa_enabled = 0`,
@@ -71,7 +103,7 @@ export function requireAuth(ctx: Ctx) {
   };
 }
 
-function startSession(ctx: Ctx, res: Response, userId: string, workspaceId: string) {
+export function startSession(ctx: Ctx, res: Response, userId: string, workspaceId: string) {
   const token = randomToken();
   const expires = new Date(Date.now() + SESSION_DAYS * 86_400_000);
   ctx.db.insert('sessions', {
@@ -112,7 +144,7 @@ const Name = z.string().trim().min(1).max(80);
 export function mePayload(ctx: Ctx, auth: Auth) {
   const user = ctx.db.get(
     `SELECT id, name, email, title, timezone, working_hours, expertise, status, status_text, focus_until,
-            quiet_start, quiet_end, color, mfa_enabled FROM users WHERE id = ?`,
+            quiet_start, quiet_end, color, mfa_enabled, email_digest, email_urgent FROM users WHERE id = ?`,
     auth.userId,
   )!;
   const workspace = ctx.db.get('SELECT * FROM workspaces WHERE id = ?', auth.workspaceId)!;
@@ -131,7 +163,13 @@ export function mePayload(ctx: Ctx, auth: Auth) {
     auth.workspaceId,
   )!.n;
   return {
-    user: { ...user, expertise: parseJson<string[]>(user.expertise, []), mfa_enabled: !!user.mfa_enabled } as Row,
+    user: {
+      ...user,
+      expertise: parseJson<string[]>(user.expertise, []),
+      mfa_enabled: !!user.mfa_enabled,
+      email_digest: !!user.email_digest,
+      email_urgent: !!user.email_urgent,
+    } as Row,
     workspace: {
       id: workspace.id,
       name: workspace.name,
@@ -139,6 +177,10 @@ export function mePayload(ctx: Ctx, auth: Auth) {
       guest_default_days: workspace.guest_default_days,
       require_mfa: !!workspace.require_mfa,
       member_count: memberCount,
+      sso_enabled: !!workspace.sso_enabled,
+      sso_required: !!workspace.sso_required,
+      ai_enabled: !!workspace.ai_enabled,
+      ai_available: !!ctx.ai,
     },
     role: membership.role,
     guest_expires_at: membership.guest_expires_at,
@@ -223,6 +265,10 @@ export function authRouter(ctx: Ctx) {
     );
     const membership = memberships.find((m) => m.workspace_id === body.workspaceId) ?? memberships[0];
     if (!membership) throw new HttpError(403, 'Your access to SoftEX has ended. Contact your workspace administrator.');
+    const ws = db.get('SELECT sso_enabled, sso_required FROM workspaces WHERE id = ?', membership.workspace_id)!;
+    if (ws.sso_enabled && ws.sso_required && membership.role !== 'owner') {
+      throw new HttpError(403, 'Your workspace requires single sign-on. Use “Sign in with SSO”.', { code: 'sso_required' });
+    }
     startSession(ctx, res, user.id, membership.workspace_id);
     audit(ctx, membership.workspace_id, user.id, 'auth.login', 'user', user.id, { ip: req.ip });
     res.json(mePayload(ctx, { userId: user.id, workspaceId: membership.workspace_id, role: membership.role }));
@@ -232,6 +278,43 @@ export function authRouter(ctx: Ctx) {
     const token = tokenFrom(req);
     if (token) db.run('DELETE FROM sessions WHERE token_hash = ?', sha256(token));
     res.clearCookie(COOKIE, { path: '/' });
+    res.json({ ok: true });
+  });
+
+  // ----- Password reset by email -----
+
+  r.post('/auth/forgot', (req, res) => {
+    const { email } = parse(z.object({ email: Email }), req.body);
+    rateLimit(`forgot:${req.ip}`, 10);
+    const user = db.get('SELECT id, name, email FROM users WHERE email = ?', email);
+    if (user) {
+      const token = randomToken();
+      db.insert('password_resets', { token_hash: sha256(token), user_id: user.id, expires_at: new Date(Date.now() + 3_600_000).toISOString(), created_at: now() });
+      queueEmail(ctx, {
+        kind: 'password_reset',
+        to: user.email,
+        subject: 'Reset your SoftEX password',
+        text: `Hi ${user.name.split(' ')[0]},\n\nSomeone asked to reset the password for your SoftEX account. The link below works for one hour. If this wasn’t you, you can ignore this email — your password stays the same.`,
+        action: { label: 'Choose a new password', url: `${ctx.config.publicUrl}/reset-password/${token}` },
+      });
+    }
+    // Same answer either way so the endpoint cannot be used to discover accounts.
+    res.json({ ok: true });
+  });
+
+  r.post('/auth/reset', (req, res) => {
+    const body = parse(z.object({ token: z.string().min(10), password: Password }), req.body);
+    rateLimit(`reset:${req.ip}`, 20);
+    const reset = db.get('SELECT * FROM password_resets WHERE token_hash = ? AND used_at IS NULL AND expires_at > ?', sha256(body.token), now());
+    if (!reset) throw new HttpError(400, 'This reset link has expired or was already used. Request a new one.');
+    db.transaction(() => {
+      db.run('UPDATE password_resets SET used_at = ? WHERE token_hash = ?', now(), reset.token_hash);
+      db.update('users', reset.user_id, { password_hash: hashPassword(body.password) });
+      db.run('DELETE FROM sessions WHERE user_id = ?', reset.user_id);
+      for (const m of db.all('SELECT workspace_id FROM memberships WHERE user_id = ?', reset.user_id)) {
+        audit(ctx, m.workspace_id, reset.user_id, 'user.password_reset', 'user', reset.user_id);
+      }
+    });
     res.json({ ok: true });
   });
 
@@ -357,6 +440,8 @@ export function meRouter(ctx: Ctx) {
         focus_until: z.string().datetime().nullable().optional(),
         quiet_start: Time.optional(),
         quiet_end: Time.optional(),
+        email_digest: z.boolean().optional(),
+        email_urgent: z.boolean().optional(),
       }),
       req.body,
     );

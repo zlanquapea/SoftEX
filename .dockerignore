@@ -3,3 +3,7 @@ node_modules
 **/dist
 server/data
 .git
+e2e/.data
+test-results
+playwright-report
+.env*

@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { api, qs, type Decision, type Meeting, type Task } from '../api';
+import { AiDraft, useAiEnabled } from '../components/Ai';
 import { Avatar, AvatarStack } from '../components/Avatar';
 import { Icon } from '../components/Icon';
 import { useShell } from '../components/Layout';
@@ -93,6 +94,9 @@ export function MeetingDetail() {
   const [addingTask, setAddingTask] = useState(false);
   const [decision, setDecision] = useState('');
   const [editPeople, setEditPeople] = useState<string[] | null>(null);
+  const aiEnabled = useAiEnabled();
+  const [aiSummary, setAiSummary] = useState<string | null>(null);
+  const [aiBusy, setAiBusy] = useState(false);
   useRealtime((e) => e.type === 'meeting.updated' && e.meetingId === id && notes === null && agenda === null && reload());
 
   if (error) return <ErrorState error={error} retry={reload} />;
@@ -214,12 +218,43 @@ export function MeetingDetail() {
           <article className="card">
             <div className="section-heading compact">
               <h2>Notes</h2>
-              {m.can_take_notes && notes === null && (
-                <button className="link-btn" onClick={() => setNotes(m.notes)}>
-                  {m.notes ? 'Edit' : 'Take notes'}
-                </button>
-              )}
+              <div className="row-gap">
+                {aiEnabled && (m.notes || m.decisions.length > 0 || m.tasks.length > 0) && (
+                  <button
+                    className="btn sm"
+                    disabled={aiBusy}
+                    onClick={async () => {
+                      setAiBusy(true);
+                      const res = await act(() => api.post<{ summary: string }>(`/ai/meetings/${m.id}/summary`));
+                      setAiBusy(false);
+                      if (res) setAiSummary(res.summary);
+                    }}
+                  >
+                    <Icon name="spark" size={14} /> {aiBusy ? 'Drafting…' : 'Draft summary'}
+                  </button>
+                )}
+                {m.can_take_notes && notes === null && (
+                  <button className="link-btn" onClick={() => setNotes(m.notes)}>
+                    {m.notes ? 'Edit' : 'Take notes'}
+                  </button>
+                )}
+              </div>
             </div>
+            {aiSummary && (
+              <AiDraft
+                text={aiSummary}
+                useLabel="Add to notes"
+                onUse={
+                  m.can_take_notes
+                    ? async () => {
+                        await act(() => api.patch(`/meetings/${m.id}`, { notes: `${m.notes ? `${m.notes}\n\n` : ''}## Summary\n\n${aiSummary}` }), 'Summary added to notes');
+                        setAiSummary(null);
+                        reload();
+                      }
+                    : undefined
+                }
+              />
+            )}
             {notes !== null ? (
               <>
                 <textarea rows={12} value={notes} onChange={(e) => setNotes(e.target.value)} autoFocus aria-label="Meeting notes" placeholder="Capture discussion points. Record decisions and follow-ups below so they are tracked." />

@@ -1,0 +1,82 @@
+# SoftEX API and webhooks
+
+SoftEX has a JSON REST API under `/api`. The web app uses the same API, so anything you can do in the app you can script.
+
+## Authentication
+
+Create a **personal API token** in *Settings → API tokens*. Send it as a bearer token:
+
+```bash
+curl -H "Authorization: Bearer sx_…" https://softex.example.com/api/my-work
+```
+
+- A token acts **as you**, with exactly your permissions. It can never see private channels, projects or files that you can't see.
+- Read-only tokens can only make `GET` requests. Read-and-write tokens can also create and update records.
+- Tokens can't manage your account (`/api/me/*`) or integrations (`/api/integrations/*`).
+- The limit is 600 requests per minute per token. Revoke a token at any time. Revoked, expired and deactivated users' tokens stop working immediately.
+
+Errors use standard HTTP status codes with a JSON body: `{"error": "message", "details": …}`.
+
+## Common endpoints
+
+| Method & path | Purpose |
+| --- | --- |
+| `GET /api/me` | Your profile, workspace and role |
+| `GET /api/home` | Today's focus, blocked work, meetings, mentions, decisions, recent changes |
+| `GET /api/my-work` | Your tasks grouped into overdue, today, upcoming, blocked, review and later |
+| `GET /api/search?q=…&type=all\|messages\|tasks\|pages\|files\|projects\|decisions\|meetings\|people` | Permission-aware search, including text inside uploaded files |
+| `GET /api/projects` · `POST /api/projects` · `GET/PATCH /api/projects/:id` | Projects |
+| `GET /api/tasks?projectId=…` · `POST /api/tasks` · `GET/PATCH/DELETE /api/tasks/:id` | Tasks (`title`, `projectId`, `ownerId`, `dueDate` as YYYY-MM-DD, `priority`, `status`) |
+| `POST /api/tasks/:id/comments` · `POST /api/tasks/:id/checklist` | Task comments and checklist items |
+| `GET /api/channels` · `GET /api/channels/:id/messages` · `POST /api/channels/:id/messages` | Channels and messages (`body`, optional `parentId` for thread replies) |
+| `POST /api/messages/:id/task` · `POST /api/decisions` | Turn a message into a task, or record a decision |
+| `GET /api/pages` · `POST /api/pages` · `GET/PATCH /api/pages/:id` | Knowledge pages (Markdown `body`) |
+| `GET /api/files` · `POST /api/files` (multipart `file`) · `GET /api/files/:id/download` | Files |
+| `GET /api/meetings?range=upcoming\|past` · `POST /api/meetings` · `GET /api/meetings/:id/ics` | Meetings and calendar invites |
+| `GET /api/people` · `GET /api/teams` | Directory |
+| `GET /api/notifications` | Inbox |
+| `GET /api/export` | Everything you can access, as JSON |
+
+Example: create a task in a project.
+
+```bash
+curl -X POST https://softex.example.com/api/tasks \
+  -H "Authorization: Bearer sx_…" -H "Content-Type: application/json" \
+  -d '{"title":"Renew SSL certificate","projectId":"<project id>","dueDate":"2026-10-15","priority":"high"}'
+```
+
+## Webhooks
+
+Admins add webhooks in *Administration → Webhooks*. SoftEX sends an HTTPS `POST` for each subscribed event:
+
+```json
+{
+  "id": "b7c0…",
+  "type": "task.status_changed",
+  "created_at": "2026-09-24T15:04:05.000Z",
+  "workspace_id": "…",
+  "data": { "id": "…", "title": "Ship beta", "status": "done", "previous_status": "review", "project_id": "…" }
+}
+```
+
+The events are `message.created`, `task.created`, `task.assigned`, `task.status_changed`, `document.version_added`, `meeting.ended`, `decision.recorded` and `project.created`. You can also subscribe to `*` for all of them.
+
+- **Privacy:** events about private channels, private projects, direct messages and personal tasks are never sent.
+- **Delivery:** at least once. If your endpoint doesn't reply with a 2xx status within 10 seconds, SoftEX retries up to 8 times with exponential backoff. Use `id` (also sent as `X-SoftEX-Delivery`) to ignore duplicates.
+- **Security:** webhook URLs must be public `https` addresses. Private and internal network addresses are refused.
+
+### Verifying signatures
+
+Every request carries `X-SoftEX-Timestamp` and `X-SoftEX-Signature: sha256=<hex>`. The signature is the HMAC-SHA256 of `"<timestamp>.<raw body>"`, keyed with the webhook's signing secret. Reject requests with a bad signature, and requests whose timestamp is more than 5 minutes old.
+
+```js
+import { createHmac, timingSafeEqual } from 'node:crypto';
+
+function verify(req, rawBody, secret) {
+  const ts = req.headers['x-softex-timestamp'];
+  if (Math.abs(Date.now() / 1000 - Number(ts)) > 300) return false;
+  const expected = 'sha256=' + createHmac('sha256', secret).update(`${ts}.${rawBody}`).digest('hex');
+  const given = String(req.headers['x-softex-signature'] ?? '');
+  return given.length === expected.length && timingSafeEqual(Buffer.from(given), Buffer.from(expected));
+}
+```

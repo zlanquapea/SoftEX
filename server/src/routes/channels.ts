@@ -14,6 +14,7 @@ import {
 } from '../access.js';
 import type { Database, Row } from '../db.js';
 import { audit, authOf, notify, publishToChannel, recordActivity, type Ctx } from '../context.js';
+import { emitEvent } from '../webhooks.js';
 import { badRequest, extractMentionIds, forbidden, newId, notFound, now, parse } from '../util.js';
 
 const ChannelName = z
@@ -232,6 +233,7 @@ export function channelsRouter(ctx: Ctx) {
       members,
       can_post: canPostChannel(db, auth, channel),
       can_manage: channel.created_by === auth.userId || isAdmin(auth),
+      ai_excluded: !!channel.ai_excluded,
     });
   });
 
@@ -462,6 +464,13 @@ export function channelsRouter(ctx: Ctx) {
     });
     const [message] = serializeMessages(db, auth, [db.get('SELECT * FROM messages WHERE id = ?', id)!]);
     publishToChannel(ctx, channel, { type: 'message.created', message });
+    emitEvent(
+      ctx,
+      auth.workspaceId,
+      'message.created',
+      { id, channel_id: channel.id, channel_name: channel.name, parent_id: parent?.id ?? null, user_id: auth.userId, body: body.body, created_at: createdAt },
+      { channelId: channel.id },
+    );
 
     // Notifications: mentions, DMs, thread replies and announcements, respecting channel preferences.
     const actor = db.get('SELECT name FROM users WHERE id = ?', auth.userId)!;
