@@ -4,6 +4,7 @@ import { api, qs, type Channel, type Message } from '../api';
 import { ThreadAi } from '../components/Ai';
 import { Avatar } from '../components/Avatar';
 import { Icon } from '../components/Icon';
+import { RemindModal, WhenModal } from '../components/Later';
 import { useShell } from '../components/Layout';
 import { Markdown } from '../components/Markdown';
 import { NewMeetingForm, NewTaskForm } from '../components/QuickCreate';
@@ -677,6 +678,7 @@ function MessageItem({
   const [draft, setDraft] = useState(m.body);
   const [picker, setPicker] = useState(false);
   const [menu, setMenu] = useState(false);
+  const [remind, setRemind] = useState(false);
   const mine = m.user?.id === me!.user.id;
   const isAdmin = me!.role === 'admin' || me!.role === 'owner';
   const policy = me!.workspace.message_edit_policy;
@@ -834,6 +836,9 @@ function MessageItem({
             <button role="menuitem" onClick={() => actions.save(m)}>
               <Icon name="bookmark" size={15} /> {m.saved ? 'Remove from saved' : 'Save for later'}
             </button>
+            <button role="menuitem" onClick={() => setRemind(true)}>
+              <Icon name="clock" size={15} /> Remind me about this
+            </button>
             <button role="menuitem" onClick={() => navigator.clipboard?.writeText(`${location.origin}/channels/${m.channel_id}?message=${m.parent_id ?? m.id}`)}>
               <Icon name="link" size={15} /> Copy link
             </button>
@@ -856,6 +861,7 @@ function MessageItem({
           </div>
         )}
       </div>
+      <RemindModal open={remind} onClose={() => setRemind(false)} messageId={m.id} />
     </article>
   );
 }
@@ -942,6 +948,7 @@ function Composer({
   const [urgent, setUrgent] = useState(false);
   const [sending, setSending] = useState(false);
   const [uploading, setUploading] = useState(false);
+  const [later, setLater] = useState(false);
   const ref = useRef<HTMLTextAreaElement>(null);
   const fileInput = useRef<HTMLInputElement>(null);
   const lastTyping = useRef(0);
@@ -995,6 +1002,17 @@ function Composer({
       setUrgent(false);
       onSent?.();
     }
+  };
+
+  const schedule = async (sendAt: string) => {
+    let body = text.trim();
+    for (const [name, id] of Object.entries(mentions)) body = body.split(`@${name}`).join(`@[${name}](${id})`);
+    const ok = await act(() => api.post(`/channels/${channelId}/scheduled-messages`, { body, parentId, sendAt }), 'Message scheduled. Find it under Later.');
+    if (ok) {
+      setText('');
+      setMentions({});
+    }
+    return ok;
   };
 
   const upload = async (file: File) => {
@@ -1070,10 +1088,20 @@ function Composer({
           <input type="checkbox" checked={urgent} onChange={(e) => setUrgent(e.target.checked)} /> Urgent
         </label>
         <span className="muted small hide-mobile">**bold**, *italic*, `code` · Shift+Enter for a new line</span>
+        <button
+          className="icon-btn xs"
+          onClick={() => setLater(true)}
+          disabled={!text.trim() || files.length > 0}
+          aria-label="Send later"
+          title={files.length ? 'Attachments cannot be scheduled' : 'Send later'}
+        >
+          <Icon name="clock" size={16} />
+        </button>
         <button className="btn primary sm send" onClick={send} disabled={sending || uploading || (!text.trim() && !files.length)} aria-label="Send">
           <Icon name="send" size={15} />
         </button>
       </div>
+      <WhenModal open={later} onClose={() => setLater(false)} eyebrow="SEND LATER" title="Schedule this message" confirmLabel="Schedule" onPick={schedule} />
     </div>
   );
 }

@@ -1,11 +1,21 @@
 import type { Ctx } from './context.js';
 import { processEmailQueue, queueDigests } from './mailer.js';
 import { processWebhookQueue } from './webhooks.js';
+import { applyRetention, processDeadlines, processReminders, processScheduledMessages } from './routes/productivity.js';
 
 /** Run every background job once. Used by the scheduler and by tests. */
 export async function runJobsOnce(ctx: Ctx) {
+  processScheduledMessages(ctx);
+  processReminders(ctx);
   await processEmailQueue(ctx);
   await processWebhookQueue(ctx);
+}
+
+/** Slower jobs: deadline reminders, retention and digests. */
+export function runPeriodicJobs(ctx: Ctx) {
+  processDeadlines(ctx);
+  applyRetention(ctx);
+  queueDigests(ctx);
 }
 
 /**
@@ -27,13 +37,15 @@ export function startBackgroundJobs(ctx: Ctx) {
     }
   };
   const queues = setInterval(tick, 5_000);
-  const digests = setInterval(() => {
+  const periodic = () => {
     try {
-      queueDigests(ctx);
+      runPeriodicJobs(ctx);
     } catch (error) {
-      console.error('Digest job failed', error);
+      console.error('Periodic job failed', error);
     }
-  }, 10 * 60_000);
+  };
+  const digests = setInterval(periodic, 10 * 60_000);
+  setTimeout(periodic, 15_000).unref();
   queues.unref();
   digests.unref();
   return () => {

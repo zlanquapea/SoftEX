@@ -379,6 +379,8 @@ export function workspaceRouter(ctx: Ctx) {
         guestDefaultDays: z.number().int().min(1).max(365).optional(),
         requireMfa: z.boolean().optional(),
         aiEnabled: z.boolean().optional(),
+        retentionDays: z.number().int().min(30).max(3650).nullable().optional(),
+        legalHold: z.boolean().optional(),
       }),
       req.body,
     );
@@ -392,6 +394,8 @@ export function workspaceRouter(ctx: Ctx) {
       guest_default_days: body.guestDefaultDays,
       require_mfa: body.requireMfa,
       ai_enabled: body.aiEnabled,
+      retention_days: body.retentionDays,
+      legal_hold: body.legalHold,
     });
     audit(ctx, auth.workspaceId, auth.userId, 'workspace.settings_changed', 'workspace', auth.workspaceId, body);
     res.json({ ok: true });

@@ -10,6 +10,7 @@ import { QuickCreate } from './QuickCreate';
 import { TaskDrawer } from './TaskDrawer';
 import { useToast } from './ui';
 import { ROLE_LABEL } from '../format';
+import { clearOfflineData } from '../pwa';
 
 interface Shell {
   openTask: (id: string) => void;
@@ -28,6 +29,17 @@ export function Layout({ children }: { children: ReactNode }) {
   const [search, setSearch] = useState<{ open: boolean; q: string }>({ open: false, q: '' });
   const [create, setCreate] = useState<{ open: boolean; kind?: 'task' | 'project' | 'message' | 'meeting' | 'page' }>({ open: false });
   const [taskId, setTaskId] = useState<string | null>(null);
+  const [online, setOnline] = useState(() => navigator.onLine);
+  useEffect(() => {
+    const on = () => setOnline(true);
+    const off = () => setOnline(false);
+    window.addEventListener('online', on);
+    window.addEventListener('offline', off);
+    return () => {
+      window.removeEventListener('online', on);
+      window.removeEventListener('offline', off);
+    };
+  }, []);
   const [menu, setMenu] = useState<'profile' | 'workspace' | null>(null);
   const { data: counts, reload: reloadCounts } = useApi<{ unread: number }>('/notifications?filter=unread&limit=1');
   const { data: channels, reload: reloadChannels } = useApi<Channel[]>('/channels');
@@ -81,6 +93,7 @@ export function Layout({ children }: { children: ReactNode }) {
 
   const switchWorkspace = async (id: string) => {
     setMenu(null);
+    await clearOfflineData();
     setMe(await api.post('/me/switch-workspace', { workspaceId: id }));
     navigate('/');
   };
@@ -99,6 +112,8 @@ export function Layout({ children }: { children: ReactNode }) {
     { to: '/directory', icon: 'users', label: 'Directory' },
     { to: '/decisions', icon: 'gavel', label: 'Decisions' },
     { to: '/requests', icon: 'inboxCheck', label: 'Requests' },
+    { to: '/workload', icon: 'board', label: 'Workload' },
+    { to: '/later', icon: 'clock', label: 'Later' },
   ];
 
   return (
@@ -286,6 +301,11 @@ export function Layout({ children }: { children: ReactNode }) {
       <SearchDialog open={search.open} initial={search.q} onClose={() => setSearch({ open: false, q: '' })} />
       <QuickCreate open={create.open} kind={create.kind} onClose={() => setCreate({ open: false })} />
       <TaskDrawer taskId={taskId} onClose={() => setTaskId(null)} />
+      {!online && (
+        <div className="offline-banner" role="status">
+          <Icon name="alert" size={15} /> You are offline. Showing what was last loaded; changes will not be saved until you reconnect.
+        </div>
+      )}
     </ShellContext.Provider>
   );
 }

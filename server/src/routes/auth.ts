@@ -180,6 +180,8 @@ export function mePayload(ctx: Ctx, auth: Auth) {
       sso_enabled: !!workspace.sso_enabled,
       sso_required: !!workspace.sso_required,
       ai_enabled: !!workspace.ai_enabled,
+      retention_days: workspace.retention_days ?? null,
+      legal_hold: !!workspace.legal_hold,
       ai_available: !!ctx.ai,
     },
     role: membership.role,

@@ -36,6 +36,12 @@ Errors use standard HTTP status codes with a JSON body: `{"error": "message", "d
 | `GET /api/people` · `GET /api/teams` | Directory |
 | `GET /api/notifications` | Inbox |
 | `GET /api/export` | Everything you can access, as JSON |
+| `GET /api/workload?weeks=4&projectId=…&teamId=…` | Open tasks per person per due week |
+| `GET/POST /api/projects/:id/automations` · `PATCH/DELETE /api/automations/:id` · `GET /api/automations/:id/runs` | Project automations and their run log |
+| `GET/POST /api/reminders` · `DELETE /api/reminders/:id` | Your reminders (`remindAt` ISO time, optional `note`, `messageId` or `taskId`) |
+| `GET /api/scheduled-messages` · `POST /api/channels/:id/scheduled-messages` · `PATCH/DELETE /api/scheduled-messages/:id` | Messages to send later (`body`, `sendAt`, optional `parentId`) |
+| `POST /api/ai/ask` | Ask a question and get an answer with cited sources (when AI is enabled) |
+| `GET /api/admin/insights` | Workspace success measures (leads and admins) |
 
 Example: create a task in a project.
 
@@ -44,6 +50,19 @@ curl -X POST https://softex.example.com/api/tasks \
   -H "Authorization: Bearer sx_…" -H "Content-Type: application/json" \
   -d '{"title":"Renew SSL certificate","projectId":"<project id>","dueDate":"2026-10-15","priority":"high"}'
 ```
+
+## SCIM 2.0 provisioning
+
+Admins generate a SCIM token under **Administration → Provisioning** and give the identity provider:
+
+- **Base URL:** `https://<your SoftEX host>/scim/v2`
+- **Authentication:** HTTP header `Authorization: Bearer scim_…`
+
+Supported: `ServiceProviderConfig`, `ResourceTypes`, and `Users` with `GET` (filters `userName eq`, `externalId eq`, `emails eq`; paging with `startIndex` and `count`), `POST`, `PUT`, `PATCH` (`replace` of `active`, `displayName`, `name`, `title`, `externalId`) and `DELETE`.
+
+- Setting `active` to `false`, or `DELETE`, deactivates the member. This signs them out everywhere, revokes their API tokens and closes their live connections. Their content is kept.
+- Workspace owners cannot be deactivated through SCIM.
+- New users join as members. Roles are managed in SoftEX.
 
 ## Webhooks
 

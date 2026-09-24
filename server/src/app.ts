@@ -1,5 +1,6 @@
 import express, { type Express } from 'express';
 import { rateLimit } from 'express-rate-limit';
+import compression from 'compression';
 import { existsSync } from 'node:fs';
 import { createServer, type Server } from 'node:http';
 import { join } from 'node:path';
@@ -11,6 +12,8 @@ import { startBackgroundJobs } from './jobs.js';
 import { aiRouter } from './routes/ai.js';
 import { integrationsRouter } from './routes/integrations.js';
 import { ssoAdminRouter, ssoPublicRouter } from './routes/sso.js';
+import { productivityRouter } from './routes/productivity.js';
+import { scimAdminRouter, scimRouter } from './routes/scim.js';
 import { RealtimeHub } from './realtime.js';
 import { authRouter, authenticate, meRouter, requireAuth } from './routes/auth.js';
 import { channelsRouter } from './routes/channels.js';
@@ -83,8 +86,10 @@ export function createApp(options: AppOptions = {}): SoftexApp {
   });
   // Abuse protection for the whole API: generous enough for normal use of the app
   // (which polls and reacts to live events), strict enough to blunt floods and scraping.
+  // Smaller responses for low-bandwidth connections (§2 goal 6).
+  app.use(compression());
   app.use(
-    '/api',
+    ['/api', '/scim'],
     rateLimit({
       windowMs: 60_000,
       limit: options.rateLimitPerMinute ?? 1200,
@@ -101,6 +106,7 @@ export function createApp(options: AppOptions = {}): SoftexApp {
   });
   app.use('/api', authRouter(ctx));
   app.use('/api', ssoPublicRouter(ctx));
+  app.use('/scim/v2', express.json({ type: ['application/json', 'application/scim+json'], limit: '1mb' }), scimRouter(ctx));
   const api = express.Router();
   api.use(requireAuth(ctx));
   api.use(meRouter(ctx));
@@ -114,16 +120,28 @@ export function createApp(options: AppOptions = {}): SoftexApp {
   api.use(ssoAdminRouter(ctx));
   api.use(integrationsRouter(ctx));
   api.use(aiRouter(ctx));
+  api.use(productivityRouter(ctx));
+  api.use(scimAdminRouter(ctx));
   app.use('/api', api);
   app.use('/api', (_req, _res, next) => next(new HttpError(404, 'Not found')));
 
   const staticDir = options.staticDir;
   if (staticDir && existsSync(join(staticDir, 'index.html'))) {
-    app.use(express.static(staticDir, { index: false, maxAge: '1h' }));
-    app.get(/^\/(?!api|ws).*/, (_req, res) => {
+    app.use(
+      express.static(staticDir, {
+        index: false,
+        maxAge: '1h',
+        setHeaders: (res, path) => {
+          // Hashed bundles never change; the service worker must always be revalidated so fixes reach installed apps.
+          if (/[\\/]assets[\\/]/.test(path)) res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+          else if (/[\\/]sw\.js$/.test(path)) res.setHeader('Cache-Control', 'no-cache');
+        },
+      }),
+    );
+    app.get(/^\/(?!api|ws|scim).*/, (_req, res) => {
       res.setHeader(
         'Content-Security-Policy',
-        "default-src 'self'; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; connect-src 'self' ws: wss:; frame-ancestors 'none'",
+        "default-src 'self'; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; connect-src 'self' ws: wss:; worker-src 'self'; manifest-src 'self'; frame-ancestors 'none'",
       );
       res.sendFile(join(staticDir, 'index.html'));
     });

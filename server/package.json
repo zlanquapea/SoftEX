@@ -13,14 +13,17 @@
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.128.0",
+    "compression": "^1.8.2",
     "express": "^5.2.1",
     "express-rate-limit": "^8.7.0",
     "multer": "^2.4.0",
     "nodemailer": "^10.0.10",
+    "unpdf": "^1.8.1",
     "ws": "^8.21.3",
     "zod": "^4.6.5"
   },
   "devDependencies": {
+    "@types/compression": "^1.8.1",
     "@types/express": "^5.0.6",
     "@types/multer": "^2.2.0",
     "@types/node": "^26.6.2",

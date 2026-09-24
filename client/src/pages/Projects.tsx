@@ -8,6 +8,7 @@ import { useShell } from '../components/Layout';
 import { Markdown } from '../components/Markdown';
 import { NewMeetingForm, NewTaskForm } from '../components/QuickCreate';
 import { TaskRow } from '../components/TaskDrawer';
+import { ProjectAutomations, ProjectTimeline } from './Planning';
 import { Empty, ErrorState, Field, HealthPill, Loading, Modal, PeoplePicker, Tabs, useAction } from '../components/ui';
 import { bytes, dateTime, dueLabel, HEALTH_LABEL, STATUS_LABEL, timeAgo } from '../format';
 import { useApi, useRealtime } from '../hooks';
@@ -102,7 +103,7 @@ interface ProjectFull extends Project {
   ai_excluded: boolean;
 }
 
-type Tab = 'overview' | 'tasks' | 'decisions' | 'risks' | 'resources' | 'checkins' | 'activity';
+type Tab = 'overview' | 'tasks' | 'timeline' | 'automations' | 'decisions' | 'risks' | 'resources' | 'checkins' | 'activity';
 
 export function ProjectDetail() {
   const { id } = useParams();
@@ -153,6 +154,8 @@ export function ProjectDetail() {
         tabs={[
           { id: 'overview', label: 'Overview' },
           { id: 'tasks', label: 'Tasks', count: project.stats.total - project.stats.done },
+          { id: 'timeline', label: 'Timeline' },
+          { id: 'automations', label: 'Automations' },
           { id: 'decisions', label: 'Decisions' },
           { id: 'risks', label: 'Risks' },
           { id: 'resources', label: 'Resources' },
@@ -162,6 +165,8 @@ export function ProjectDetail() {
       />
       {tab === 'overview' && <Overview project={project} reload={reload} />}
       {tab === 'tasks' && <ProjectTasks project={project} />}
+      {tab === 'timeline' && <ProjectTimeline projectId={project.id} milestones={project.milestones} canEdit={project.can_contribute} />}
+      {tab === 'automations' && <ProjectAutomations projectId={project.id} />}
       {tab === 'decisions' && <ProjectDecisions project={project} />}
       {tab === 'risks' && <Risks project={project} />}
       {tab === 'resources' && <Resources project={project} />}

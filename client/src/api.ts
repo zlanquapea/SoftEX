@@ -88,6 +88,8 @@ export interface Me {
     sso_required: boolean;
     ai_enabled: boolean;
     ai_available: boolean;
+    retention_days: number | null;
+    legal_hold: boolean;
   };
   role: Role;
   guest_expires_at: string | null;
@@ -142,6 +144,8 @@ export interface Task {
   status: TaskStatus;
   priority: Priority;
   due_date: string | null;
+  start_date: string | null;
+  estimate_hours: number | null;
   overdue: boolean;
   blocked_reason: string;
   recurrence: string | null;

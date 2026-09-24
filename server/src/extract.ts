@@ -1,20 +1,23 @@
 import { readFileSync } from 'node:fs';
 import { extname } from 'node:path';
 import { inflateRawSync } from 'node:zlib';
+import { extractText as pdfText, getDocumentProxy } from 'unpdf';
 
 /**
  * Full-text extraction for search (§5.3 "search ... including files where
  * extraction is supported"). Plain-text formats are read directly; Office Open
  * XML (docx/pptx/xlsx) and OpenDocument files are unzipped and their XML text
- * nodes collected. Other formats (PDF, images) are indexed by name only.
+ * nodes collected. PDFs are parsed with pdf.js (via unpdf). Scanned PDFs and
+ * images have no text layer, so they are indexed by name only.
  */
 const MAX_TEXT = 200_000;
 const TEXT_EXT = new Set(['.txt', '.md', '.markdown', '.csv', '.tsv', '.json', '.log', '.yaml', '.yml', '.xml', '.html', '.htm', '.rtf']);
 
-export function extractText(path: string, name: string): string | null {
+export async function extractText(path: string, name: string): Promise<string | null> {
   const ext = extname(name).toLowerCase();
   try {
     const data = readFileSync(path);
+    if (ext === '.pdf') return normalise(await extractPdfText(data));
     if (TEXT_EXT.has(ext)) {
       let text = data.subarray(0, 2 * MAX_TEXT).toString('utf8');
       if (ext === '.html' || ext === '.htm' || ext === '.xml') text = stripXml(text);
@@ -89,4 +92,14 @@ export function readZip(buf: Buffer): Map<string, () => Buffer> {
     p += 46 + nameLen + extraLen + commentLen;
   }
   return out;
+}
+
+async function extractPdfText(data: Buffer) {
+  const doc = await getDocumentProxy(new Uint8Array(data), { verbosity: 0 });
+  try {
+    const { text } = await pdfText(doc, { mergePages: true });
+    return Array.isArray(text) ? text.join('\n') : text;
+  } finally {
+    await (doc as unknown as { destroy?: () => Promise<void> }).destroy?.();
+  }
 }

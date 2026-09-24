@@ -306,7 +306,7 @@ export function knowledgeRouter(ctx: Ctx) {
       throw e;
     }
     const key = newId();
-    const text = extractText(tempPath(file), file.originalname);
+    const text = await extractText(tempPath(file), file.originalname);
     renameSync(tempPath(file), join(ctx.config.uploadDir, key));
     const ext = extname(file.originalname).toLowerCase();
     const mime = INLINE_TYPES[ext]?.split(';')[0] ?? (file.mimetype || 'application/octet-stream');

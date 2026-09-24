@@ -3,32 +3,36 @@ import { Navigate, useSearchParams } from 'react-router-dom';
 import { api, qs, type Channel, type Project } from '../api';
 import { Avatar } from '../components/Avatar';
 import { Icon } from '../components/Icon';
+import { WorkspaceInsights } from './Planning';
 import { Empty, Field, Loading, PeoplePicker, Tabs, useAction } from '../components/ui';
 import { dateTime, ROLE_LABEL, timeAgo } from '../format';
 import { useApi } from '../hooks';
 import { useSession } from '../session';
 
-type Tab = 'members' | 'invitations' | 'teams' | 'onboarding' | 'settings' | 'sso' | 'integrations' | 'email' | 'audit';
+type Tab = 'members' | 'invitations' | 'teams' | 'onboarding' | 'settings' | 'sso' | 'integrations' | 'email' | 'audit' | 'insights' | 'provisioning';
 
 export function Admin() {
   const { can } = useSession();
   const [params, setParams] = useSearchParams();
   const isAdmin = can('admin');
-  const tab = (params.get('tab') as Tab) ?? (isAdmin ? 'members' : 'invitations');
+  const tab = (params.get('tab') as Tab) ?? (isAdmin ? 'members' : 'insights');
   if (!can('lead')) return <Navigate to="/" replace />;
   const tabs: { id: Tab; label: string }[] = isAdmin
     ? [
         { id: 'members', label: 'Members' },
+        { id: 'insights', label: 'Insights' },
         { id: 'invitations', label: 'Invitations' },
         { id: 'teams', label: 'Teams' },
         { id: 'onboarding', label: 'Onboarding' },
         { id: 'settings', label: 'Workspace' },
         { id: 'sso', label: 'Single sign-on' },
+        { id: 'provisioning', label: 'Provisioning' },
         { id: 'integrations', label: 'Webhooks' },
         { id: 'email', label: 'Email' },
         { id: 'audit', label: 'Audit log' },
       ]
     : [
+        { id: 'insights', label: 'Insights' },
         { id: 'invitations', label: 'Invitations' },
         { id: 'teams', label: 'Teams' },
       ];
@@ -42,6 +46,8 @@ export function Admin() {
       </div>
       <Tabs value={tab} onChange={(t) => setParams({ tab: t })} tabs={tabs} />
       {tab === 'members' && isAdmin && <Members />}
+      {tab === 'insights' && <WorkspaceInsights />}
+      {tab === 'provisioning' && isAdmin && <ScimSettings />}
       {tab === 'invitations' && <Invitations />}
       {tab === 'teams' && <Teams />}
       {tab === 'onboarding' && isAdmin && <OnboardingAdmin />}
@@ -463,6 +469,8 @@ function WorkspaceSettings() {
     guestDefaultDays: ws.guest_default_days,
     requireMfa: ws.require_mfa,
     aiEnabled: ws.ai_enabled,
+    retentionDays: ws.retention_days as number | null,
+    legalHold: ws.legal_hold,
   });
   return (
     <form
@@ -502,6 +510,24 @@ function WorkspaceSettings() {
               ? 'Lets people draft thread and meeting summaries, task suggestions and project briefs with Claude. It only reads content the requesting person can already open, drafts are never shared automatically, every use is audited, and channel or project owners can exclude their spaces.'
               : 'Not available: the server administrator must set ANTHROPIC_API_KEY first.'}
           </small>
+        </span>
+      </label>
+      <h3>Retention</h3>
+      <Field label="Keep messages for" hint="Older messages are deleted automatically (a thread is kept while it has recent replies). Knowledge pages, decisions, tasks and library files are kept.">
+        <select value={form.retentionDays ?? ''} onChange={(e) => setForm({ ...form, retentionDays: e.target.value ? Number(e.target.value) : null })}>
+          <option value="">Forever</option>
+          {[30, 90, 180, 365, 730, 1095, 1825, 2555, 3650].map((d) => (
+            <option key={d} value={d}>
+              {d < 365 ? `${d} days` : `${Math.round(d / 365)} year${d >= 730 ? 's' : ''}`}
+            </option>
+          ))}
+        </select>
+      </Field>
+      <label className="check-row">
+        <input type="checkbox" checked={form.legalHold} onChange={(e) => setForm({ ...form, legalHold: e.target.checked })} />
+        <span>
+          <strong>Legal hold</strong>
+          <small className="muted block">Pauses all automatic deletion while an investigation or litigation is underway. Changes are recorded in the audit log.</small>
         </span>
       </label>
       <div className="form-actions spread">
@@ -634,6 +660,68 @@ function SsoSettings() {
         <button className="btn primary">Save</button>
       </div>
     </form>
+  );
+}
+
+function ScimSettings() {
+  const act = useAction();
+  const { data, reload } = useApi<{ enabled: boolean; base_url: string }>('/admin/scim');
+  const [token, setToken] = useState<string | null>(null);
+  if (!data) return <Loading />;
+  return (
+    <div className="card form narrow-form">
+      <h2>User provisioning (SCIM 2.0)</h2>
+      <p className="muted">
+        Let your identity provider (Okta, Microsoft Entra ID, OneLogin, JumpCloud…) create, update and deactivate SoftEX accounts automatically. Deactivating someone in
+        the provider signs them out everywhere and revokes their API tokens. Owners can never be deactivated through SCIM.
+      </p>
+      <Field label="SCIM base URL">
+        <code className="secret">{data.base_url}</code>
+      </Field>
+      <p>
+        Status: <strong>{data.enabled ? 'Enabled' : 'Not set up'}</strong>
+      </p>
+      {token && (
+        <div className="hint-box warn">
+          <p>
+            <strong>Copy this token now.</strong> It will not be shown again.
+          </p>
+          <code className="secret">{token}</code>
+          <button className="btn sm" onClick={() => navigator.clipboard?.writeText(token)}>
+            Copy
+          </button>
+        </div>
+      )}
+      <div className="form-actions spread">
+        {data.enabled && (
+          <button
+            className="btn danger"
+            onClick={async () => {
+              if (!confirm('Turn off SCIM provisioning? Your identity provider will stop syncing.')) return;
+              if (await act(() => api.del('/admin/scim/token'), 'SCIM provisioning turned off')) {
+                setToken(null);
+                reload();
+              }
+            }}
+          >
+            Turn off
+          </button>
+        )}
+        <button
+          className="btn primary"
+          onClick={async () => {
+            if (data.enabled && !confirm('Generate a new token? The current one stops working immediately.')) return;
+            const res = await act(() => api.post<{ token: string }>('/admin/scim/token'));
+            if (res) {
+              setToken(res.token);
+              reload();
+            }
+          }}
+        >
+          {data.enabled ? 'Rotate token' : 'Generate token'}
+        </button>
+      </div>
+    </div>
   );
 }
 

@@ -16,9 +16,14 @@ SoftEX is a unified workplace app for team communication, projects, documents, m
 | **Email** (5.5, 5.7) | Invitations (with resend), password reset links, meeting invitations with calendar attachments, cancellations, a morning digest of unread notifications, and urgent-message alerts for people who are offline. Every email goes through a database outbox with retries, visible to admins |
 | **Single sign-on** (5.7) | OpenID Connect (Google Workspace, Microsoft Entra ID, Okta, Auth0, Keycloak…) with PKCE, per-workspace email domain, automatic account creation, and an option to require SSO (owners keep a password fallback) |
 | **Public API & webhooks** (5.7, 12) | Personal API tokens (read-only or read/write, with expiry, rate limits and revocation). HMAC-signed webhooks for task, message, document, meeting, decision and project events, with retries, a delivery log and protection against internal-address targets. See [docs/API.md](docs/API.md) |
-| **Files** (5.3, 9) | Full-text search inside uploaded text, Markdown, CSV, HTML, Word, PowerPoint, Excel and OpenDocument files. Optional ClamAV malware scanning that refuses uploads when the scanner is unreachable |
+| **Files** (5.3, 9) | Full-text search inside uploaded PDF, text, Markdown, CSV, HTML, Word, PowerPoint, Excel and OpenDocument files. Optional ClamAV malware scanning that refuses uploads when the scanner is unreachable |
 | **Governed AI** (5.6) | Opt-in thread and meeting summaries, task suggestions a person reviews before anything is created, and weekly project brief drafts, powered by Claude. Off until the server has an API key **and** an admin enables it. It only reads what the requesting person can already open, channels and projects can opt out, and every use is audited without storing content |
-| **Clients** (8, 11) | Responsive React web app: sidebar navigation on desktop, bottom navigation on mobile, ⌘K global search, dark mode, keyboard and screen-reader-friendly controls, and an installable web-app manifest |
+| **Planning & automation** (5.2) | **Timeline** (Gantt) per project with drag-to-reschedule and milestones; a **workload** heat map of open work per person per week (with optional hour estimates); **automations** ("when a task moves to review, notify the reviewer") with templates, run logs and loop-proof execution under the creator's access; automatic **deadline reminders** the day before and when overdue |
+| **Reminders & send later** (5.1, 5.5) | "Remind me" on any message or task, free-form reminders, and **scheduled messages** that post at a chosen time (checked again for permission at send time). Everything pending is listed under **Later** |
+| **Ask SoftEX** (5.6) | Ask a question in the search box and get a short answer with numbered citations to the messages, pages, decisions, tasks, files and meetings it used, each linking back to its source. It only draws on what the person asking can open |
+| **Insights** (2) | A dashboard for leads and admins that tracks the spec's success measures: weekly active people, task ownership, decisions and status updates per project, meeting follow-through, overdue share, cycle time and notification load. Aggregates only, no individual ranking |
+| **Governance** (5.7, 9) | **SCIM 2.0** user provisioning and deprovisioning (Okta, Entra ID and others), **message retention** policies, and a **legal hold** that pauses all automatic deletion |
+| **Clients** (8, 11) | Responsive React web app: sidebar navigation on desktop, bottom navigation on mobile, ⌘K global search, dark mode, keyboard and screen-reader-friendly controls, and an installable web app that works offline: the app shell and recently viewed data stay available read-only on poor connections, and cached data is wiped on sign-out |
 
 ## Architecture
 
@@ -107,6 +112,6 @@ See [SECURITY.md](SECURITY.md) for how to report vulnerabilities.
 ## Next steps
 
 - **PostgreSQL and object storage** for running several server instances behind a load balancer. The schema is portable SQL, and all queries go through `server/src/db.ts`.
-- **SCIM provisioning** for automated account management from an identity provider. SSO already creates accounts on first sign-in.
 - **A managed video provider**, following the spec's cost and privacy review. Meeting links use Jitsi by default and can be changed with `SOFTEX_MEETING_BASE_URL`.
-- **Text extraction from PDFs and scanned images**, which today are searchable by file name only.
+- **OCR for scanned images and image-only PDFs**, which today are searchable by file name only.
+- **Queued offline writes.** Offline mode is read-only today; messages and edits need a connection.
