@@ -201,6 +201,10 @@ export function authRouter(ctx: Ctx) {
       req.body,
     );
     rateLimit(`register:${req.ip}`, 20);
+    const { registration } = ctx.config;
+    if (registration === 'closed' || (registration === 'first' && db.get('SELECT 1 FROM workspaces LIMIT 1'))) {
+      throw new HttpError(403, 'New workspaces cannot be created on this server. Ask an admin to invite you.');
+    }
     if (db.get('SELECT 1 FROM users WHERE email = ?', body.email)) {
       throw new HttpError(409, 'An account with this email already exists. Sign in instead.');
     }

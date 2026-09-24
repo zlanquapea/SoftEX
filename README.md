@@ -64,6 +64,8 @@ Or with Docker Compose, which bundles ClamAV and a local test inbox (Mailpit at 
 SOFTEX_SECRET_KEY=$(openssl rand -hex 32) docker compose up -d
 ```
 
+**Railway:** see [docs/DEPLOY_RAILWAY.md](docs/DEPLOY_RAILWAY.md) for a step-by-step guide (`railway.json` is included).
+
 Every push to `main` publishes an image to `ghcr.io/zlanquapea/softex` (see *CI/CD* below).
 
 | Variable | Default | Purpose |
@@ -80,6 +82,8 @@ Every push to `main` publishes an image to `ghcr.io/zlanquapea/softex` (see *CI/
 | `SOFTEX_CLAMAV_HOST` / `SOFTEX_CLAMAV_PORT` | *(unset)* / `3310` | ClamAV daemon for malware scanning of uploads |
 | `ANTHROPIC_API_KEY` | *(unset)* | Makes AI assistance available (admins still have to enable it) |
 | `SOFTEX_AI_MODEL` | `claude-opus-5` | Claude model used for AI assistance |
+| `SOFTEX_REGISTRATION` | `open` | Who may create a workspace from the sign-up page: `open` (anyone), `first` (only the first person on a new server) or `closed` |
+| `SOFTEX_TRUST_PROXY` | `loopback` | Express *trust proxy* setting. Behind a hosting proxy (Railway, Render, a load balancer) set a hop count such as `1` so rate limits and the audit log see real client addresses |
 | `SOFTEX_ALLOW_PRIVATE_WEBHOOKS` | `false` | Development only: allow webhooks to local addresses |
 
 ### Checks

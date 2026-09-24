@@ -26,6 +26,8 @@ import { workspaceRouter } from './routes/workspace.js';
 import { HttpError, errorHandler } from './util.js';
 
 export interface AppOptions extends Partial<Config> {
+  /** Express "trust proxy" setting: a hop count, true/false, or an address list. */
+  trustProxy?: boolean | number | string;
   dbPath?: string;
   staticDir?: string;
   /** Requests per minute per client address across the API (default 1200). */
@@ -57,6 +59,7 @@ export function createApp(options: AppOptions = {}): SoftexApp {
     clamav: options.clamav,
     allowPrivateWebhooks: options.allowPrivateWebhooks ?? false,
     aiModel: options.aiModel ?? 'claude-opus-5',
+    registration: options.registration ?? 'open',
   };
   const db = new Database(options.dbPath ?? join(process.cwd(), 'data', 'softex.db'));
   const hub = new RealtimeHub();
@@ -71,7 +74,8 @@ export function createApp(options: AppOptions = {}): SoftexApp {
 
   const app = express();
   app.disable('x-powered-by');
-  app.set('trust proxy', 'loopback');
+  // Behind a hosting proxy (Railway, Render, Fly, a load balancer) set trustProxy so rate limits see real client addresses.
+  app.set('trust proxy', options.trustProxy ?? 'loopback');
   app.use((req, res, next) => {
     res.setHeader('X-Content-Type-Options', 'nosniff');
     res.setHeader('Referrer-Policy', 'same-origin');

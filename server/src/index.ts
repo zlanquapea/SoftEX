@@ -1,3 +1,4 @@
+import { accessSync, constants, mkdirSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createApp } from './app.js';
@@ -5,6 +6,32 @@ import { createApp } from './app.js';
 const here = dirname(fileURLToPath(import.meta.url));
 const root = resolve(here, '..');
 const dataDir = process.env.SOFTEX_DATA_DIR ?? join(root, 'data');
+
+// Fail fast with a useful hint when the data directory (usually a mounted volume) is not writable.
+try {
+  mkdirSync(dataDir, { recursive: true });
+  accessSync(dataDir, constants.W_OK);
+} catch (error) {
+  console.error(
+    `SoftEX cannot write to its data directory ${dataDir} (${(error as Error).message}).\n` +
+      'If it is a mounted volume owned by root (for example on Railway), give the app user write access, ' +
+      'or on Railway set the service variable RAILWAY_RUN_UID=0.',
+  );
+  process.exit(1);
+}
+
+const registration = process.env.SOFTEX_REGISTRATION ?? 'open';
+if (!['open', 'first', 'closed'].includes(registration)) throw new Error('SOFTEX_REGISTRATION must be open, first or closed');
+
+const trustProxyEnv = process.env.SOFTEX_TRUST_PROXY;
+const trustProxy =
+  trustProxyEnv === undefined || trustProxyEnv === ''
+    ? undefined
+    : trustProxyEnv === 'true' || trustProxyEnv === 'false'
+      ? trustProxyEnv === 'true'
+      : /^\d+$/.test(trustProxyEnv)
+        ? Number(trustProxyEnv)
+        : trustProxyEnv;
 
 const { server } = createApp({
   dbPath: process.env.SOFTEX_DB ?? join(dataDir, 'softex.db'),
@@ -23,6 +50,8 @@ const { server } = createApp({
   allowPrivateWebhooks: process.env.SOFTEX_ALLOW_PRIVATE_WEBHOOKS === 'true',
   anthropicApiKey: process.env.ANTHROPIC_API_KEY || undefined,
   aiModel: process.env.SOFTEX_AI_MODEL || undefined,
+  registration: registration as 'open' | 'first' | 'closed',
+  trustProxy,
 });
 
 if (process.env.NODE_ENV === 'production' && !process.env.SOFTEX_PUBLIC_URL) {

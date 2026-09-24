@@ -23,6 +23,8 @@ export interface Config {
   /** Allow webhooks to private network addresses (only for development and tests). */
   allowPrivateWebhooks: boolean;
   aiModel: string;
+  /** Who may create new workspaces from the sign-up page: anyone, only the very first person, or nobody. */
+  registration: 'open' | 'first' | 'closed';
 }
 
 /** Minimal mail transport interface (nodemailer-compatible) so tests can inject a fake. */
