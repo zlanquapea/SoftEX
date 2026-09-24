@@ -59,10 +59,10 @@ What each one does:
 | `SOFTEX_SECURE_COOKIES` | Sign-in cookies are only sent over HTTPS. Railway serves HTTPS for you. |
 | `SOFTEX_TRUST_PROXY` | Railway puts a proxy in front of the app. `1` tells SoftEX to read the visitor's real address from it, so sign-in rate limits and the audit log work per person. |
 | `SOFTEX_SECRET_KEY` | Encrypts stored secrets such as the single sign-on client secret. **Keep it safe and never change it** once set, or saved secrets can't be decrypted. |
-| `SOFTEX_REGISTRATION` | `first` lets only the first person create a workspace (you, in step 5). After that, people join by invitation. Use `closed` to block sign-up entirely, or `open` to let anyone create a workspace. |
+| `SOFTEX_REGISTRATION` | `first` lets only the first person create a workspace (you, in step 5); after that, people join by invitation. Use this for a private, internal deployment. For a public service where customers sign themselves up, use `open`, but read *Running SoftEX as a public service* below first. `closed` blocks sign-up entirely. |
 | `RAILWAY_RUN_UID` | Railway mounts volumes as root, and SoftEX's image runs as an unprivileged user. `0` lets the app write to the volume. If it is missing, the logs say *SoftEX cannot write to its data directory*. |
 | `SOFTEX_SMTP_URL`, `SOFTEX_MAIL_FROM` | Without them, emails are kept in **Administration → Email** but not sent. URL-encode special characters in the password (for example `@` → `%40`). Use port 465 with `smtps://`, or port 587 with `smtp://`. |
-| `ANTHROPIC_API_KEY` | Makes Ask SoftEX, summaries and task suggestions available. |
+| `ANTHROPIC_API_KEY` | Makes Ask SoftEX, summaries and task suggestions available. Every workspace's AI use is billed to this key. |
 
 To make a secret key, run this on your computer and paste the output:
 
@@ -111,6 +111,18 @@ Railway redeploys automatically when `main` changes, because the service is conn
 ## Backups
 
 Your data lives in the volume. If your Railway plan offers volume **Backups** (in the volume's settings), schedule them, and take a manual backup before big changes. People can also export what they can access from **Administration → Workspace → Export data**.
+
+## Running SoftEX as a public service
+
+`SOFTEX_REGISTRATION=open` lets anyone on the internet create a workspace. SoftEX keeps workspaces isolated from each other, but it does not yet have the controls a public service needs:
+
+- **No email verification** at sign-up, so anyone can register with an address they don't own.
+- **No usage limits per workspace.** There are no limits on AI use, storage or members. Any workspace admin can switch on AI assistance, and it is billed to your `ANTHROPIC_API_KEY`.
+- **No billing, plans or trials.**
+- **No way to delete a workspace or an account, and no operator console** for seeing or suspending customer workspaces.
+- **One server instance** (see below).
+
+Until those are in place, either keep sign-up at `first` or `closed` and create customer workspaces by invitation, or run with `open` **without** `ANTHROPIC_API_KEY` for a closed beta with people you trust.
 
 ## Limits of this setup
 
