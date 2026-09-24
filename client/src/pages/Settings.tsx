@@ -1,0 +1,313 @@
+import { useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
+import { api, type Me } from '../api';
+import { Icon } from '../components/Icon';
+import { Field, Loading, Tabs, useAction } from '../components/ui';
+import { useApi } from '../hooks';
+import { useSession } from '../session';
+import { MfaSetup } from './Auth';
+
+type Tab = 'profile' | 'notifications' | 'security' | 'onboarding';
+
+export function Settings() {
+  const [params, setParams] = useSearchParams();
+  const tab = (params.get('tab') as Tab) ?? 'profile';
+  return (
+    <div className="page narrow">
+      <div className="page-head">
+        <div>
+          <h1>Settings</h1>
+          <p className="muted">Your profile, notifications and account security.</p>
+        </div>
+      </div>
+      <Tabs
+        value={tab}
+        onChange={(t) => setParams({ tab: t })}
+        tabs={[
+          { id: 'profile', label: 'Profile' },
+          { id: 'notifications', label: 'Notifications & focus' },
+          { id: 'security', label: 'Security' },
+          { id: 'onboarding', label: 'Onboarding' },
+        ]}
+      />
+      {tab === 'profile' && <Profile />}
+      {tab === 'notifications' && <Notifications />}
+      {tab === 'security' && <Security />}
+      {tab === 'onboarding' && <Onboarding />}
+    </div>
+  );
+}
+
+const ZONES: string[] = (() => {
+  try {
+    return (Intl as unknown as { supportedValuesOf: (k: string) => string[] }).supportedValuesOf('timeZone');
+  } catch {
+    return ['UTC'];
+  }
+})();
+
+function Profile() {
+  const { me, setMe, reloadPeople } = useSession();
+  const act = useAction();
+  const u = me!.user;
+  const [form, setForm] = useState({
+    name: u.name,
+    title: u.title,
+    timezone: u.timezone,
+    working_hours: u.working_hours,
+    status_text: u.status_text,
+    expertise: u.expertise.join(', '),
+  });
+  return (
+    <form
+      className="card form"
+      onSubmit={async (e) => {
+        e.preventDefault();
+        const updated = await act(
+          () => api.patch<Me>('/me', { ...form, expertise: form.expertise.split(',').map((s) => s.trim()).filter(Boolean) }),
+          'Profile saved',
+        );
+        if (updated) {
+          setMe(updated);
+          reloadPeople();
+        }
+      }}
+    >
+      <div className="form-row">
+        <Field label="Name">
+          <input required value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} />
+        </Field>
+        <Field label="Title">
+          <input value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} placeholder="e.g. Product designer" />
+        </Field>
+      </div>
+      <div className="form-row">
+        <Field label="Time zone">
+          <select value={form.timezone} onChange={(e) => setForm({ ...form, timezone: e.target.value })}>
+            {ZONES.map((z) => (
+              <option key={z} value={z}>
+                {z}
+              </option>
+            ))}
+          </select>
+        </Field>
+        <Field label="Working hours">
+          <input value={form.working_hours} onChange={(e) => setForm({ ...form, working_hours: e.target.value })} placeholder="09:00-17:00" />
+        </Field>
+      </div>
+      <Field label="Status message">
+        <input value={form.status_text} onChange={(e) => setForm({ ...form, status_text: e.target.value })} placeholder="e.g. In workshops until 2pm" maxLength={100} />
+      </Field>
+      <Field label="Expertise" hint="Comma separated. Helps colleagues find you in the directory.">
+        <input value={form.expertise} onChange={(e) => setForm({ ...form, expertise: e.target.value })} placeholder="Research, Figma, Accessibility" />
+      </Field>
+      {form.timezone !== Intl.DateTimeFormat().resolvedOptions().timeZone && (
+        <p className="hint-box">
+          This device is in {Intl.DateTimeFormat().resolvedOptions().timeZone}.{' '}
+          <button type="button" className="link-btn" onClick={() => setForm({ ...form, timezone: Intl.DateTimeFormat().resolvedOptions().timeZone })}>
+            Use it
+          </button>
+        </p>
+      )}
+      <div className="form-actions">
+        <button className="btn primary">Save profile</button>
+      </div>
+    </form>
+  );
+}
+
+function Notifications() {
+  const { me, setMe } = useSession();
+  const act = useAction();
+  const [quiet, setQuiet] = useState({ start: me!.user.quiet_start ?? '', end: me!.user.quiet_end ?? '' });
+  const [permission, setPermission] = useState(typeof Notification !== 'undefined' ? Notification.permission : 'unsupported');
+  const focusActive = me!.user.focus_until && new Date(me!.user.focus_until) > new Date();
+  const setFocus = async (minutes: number | null) => {
+    const updated = await act(
+      () => api.patch<Me>('/me', minutes ? { status: 'focus', focus_until: new Date(Date.now() + minutes * 60_000).toISOString() } : { status: 'available', focus_until: null }),
+      minutes ? `Focus time on for ${minutes >= 60 ? `${minutes / 60} hour${minutes > 60 ? 's' : ''}` : `${minutes} minutes`}` : 'Focus time ended',
+    );
+    if (updated) setMe(updated);
+  };
+  return (
+    <>
+      <div className="card form">
+        <h2>Focus time</h2>
+        <p className="muted">During focus time, notifications are collected in your Inbox without interrupting you. Urgent messages still come through.</p>
+        {focusActive ? (
+          <p>
+            <strong>Focusing until {new Date(me!.user.focus_until!).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })}.</strong>{' '}
+            <button className="link-btn" onClick={() => setFocus(null)}>
+              End now
+            </button>
+          </p>
+        ) : (
+          <div className="row-gap wrap">
+            {[30, 60, 120, 240].map((m) => (
+              <button key={m} className="btn" onClick={() => setFocus(m)}>
+                <Icon name="moon" size={15} /> {m >= 60 ? `${m / 60} h` : `${m} min`}
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
+      <form
+        className="card form"
+        onSubmit={async (e) => {
+          e.preventDefault();
+          const updated = await act(() => api.patch<Me>('/me', { quiet_start: quiet.start || null, quiet_end: quiet.end || null }), 'Quiet hours saved');
+          if (updated) setMe(updated);
+        }}
+      >
+        <h2>Quiet hours</h2>
+        <p className="muted">A daily window, in your time zone ({me!.user.timezone}), when non-urgent notifications stay silent.</p>
+        <div className="form-row">
+          <Field label="From">
+            <input type="time" value={quiet.start} onChange={(e) => setQuiet({ ...quiet, start: e.target.value })} />
+          </Field>
+          <Field label="Until">
+            <input type="time" value={quiet.end} onChange={(e) => setQuiet({ ...quiet, end: e.target.value })} />
+          </Field>
+        </div>
+        <div className="form-actions">
+          {(quiet.start || quiet.end) && (
+            <button type="button" className="btn" onClick={() => setQuiet({ start: '', end: '' })}>
+              Clear
+            </button>
+          )}
+          <button className="btn primary">Save quiet hours</button>
+        </div>
+      </form>
+      <div className="card form">
+        <h2>Desktop notifications</h2>
+        <p className="muted">Show a system notification when SoftEX is in the background.</p>
+        {permission === 'granted' && <p>Enabled for this browser.</p>}
+        {permission === 'denied' && <p className="muted">Blocked in your browser settings.</p>}
+        {permission === 'default' && (
+          <button className="btn" onClick={async () => setPermission(await Notification.requestPermission())}>
+            Enable desktop notifications
+          </button>
+        )}
+        {permission === 'unsupported' && <p className="muted">Not supported in this browser.</p>}
+        <p className="muted small">Per-channel preferences (all, mentions only, muted) are in each channel’s header.</p>
+      </div>
+    </>
+  );
+}
+
+function Security() {
+  const { me, setMe } = useSession();
+  const act = useAction();
+  const [pw, setPw] = useState({ current: '', next: '' });
+  const [disablePw, setDisablePw] = useState('');
+  const [setup, setSetup] = useState(false);
+  return (
+    <>
+      <div className="card form">
+        <h2>Multifactor authentication</h2>
+        {me!.user.mfa_enabled ? (
+          <>
+            <p>
+              <Icon name="shield" size={16} /> Enabled — you will be asked for a code from your authenticator app when you sign in.
+            </p>
+            {!me!.workspace.require_mfa && (
+              <form
+                className="row-gap"
+                onSubmit={async (e) => {
+                  e.preventDefault();
+                  const updated = await act(() => api.post<Me>('/me/mfa/disable', { password: disablePw }), 'Multifactor authentication turned off');
+                  if (updated) setMe(updated);
+                }}
+              >
+                <input type="password" placeholder="Password to confirm" value={disablePw} onChange={(e) => setDisablePw(e.target.value)} aria-label="Password" required />
+                <button className="btn danger-text">Turn off</button>
+              </form>
+            )}
+          </>
+        ) : setup ? (
+          <MfaSetup onDone={() => setSetup(false)} />
+        ) : (
+          <>
+            <p className="muted">Protect your account with a second step at sign-in.</p>
+            <button className="btn primary" onClick={() => setSetup(true)}>
+              Set up MFA
+            </button>
+          </>
+        )}
+      </div>
+      <form
+        className="card form"
+        onSubmit={async (e) => {
+          e.preventDefault();
+          const ok = await act(() => api.post('/me/password', pw), 'Password changed. Other sessions were signed out.');
+          if (ok) setPw({ current: '', next: '' });
+        }}
+      >
+        <h2>Password</h2>
+        <div className="form-row">
+          <Field label="Current password">
+            <input type="password" autoComplete="current-password" required value={pw.current} onChange={(e) => setPw({ ...pw, current: e.target.value })} />
+          </Field>
+          <Field label="New password" hint="At least 8 characters.">
+            <input type="password" autoComplete="new-password" required minLength={8} value={pw.next} onChange={(e) => setPw({ ...pw, next: e.target.value })} />
+          </Field>
+        </div>
+        <div className="form-actions">
+          <button className="btn primary">Change password</button>
+        </div>
+      </form>
+      <div className="card form">
+        <h2>Your data</h2>
+        <p className="muted">Download everything you can access — messages, tasks, pages, file metadata, meetings and decisions — as JSON.</p>
+        <a className="btn" href="/api/export">
+          <Icon name="download" size={16} /> Export my data
+        </a>
+      </div>
+    </>
+  );
+}
+
+function Onboarding() {
+  const act = useAction();
+  const { data, reload } = useApi<{ id: string; title: string; description: string; link: string; done_at: string | null }[]>('/onboarding');
+  if (!data) return <Loading />;
+  const done = data.filter((d) => d.done_at).length;
+  return (
+    <div className="card">
+      <h2>Getting started</h2>
+      {data.length ? (
+        <>
+          <p className="muted">
+            {done} of {data.length} complete
+          </p>
+          <div className="progress">
+            <i style={{ width: `${data.length ? (done / data.length) * 100 : 0}%` }} />
+          </div>
+          {data.map((item) => (
+            <label key={item.id} className="check-row onboarding-item">
+              <input
+                type="checkbox"
+                checked={!!item.done_at}
+                onChange={async () => {
+                  await act(() => api.post(`/onboarding/${item.id}/toggle`));
+                  reload();
+                }}
+              />
+              <span className="grow">
+                <strong className={item.done_at ? 'done' : ''}>{item.title}</strong>
+                {item.description && <small className="muted block">{item.description}</small>}
+              </span>
+              {item.link && (
+                <a href={item.link} className="link-btn" target={item.link.startsWith('/') ? undefined : '_blank'} rel="noopener noreferrer">
+                  Open
+                </a>
+              )}
+            </label>
+          ))}
+        </>
+      ) : (
+        <p className="muted">Your workspace has not set up an onboarding checklist.</p>
+      )}
+    </div>
+  );
+}
