@@ -502,6 +502,66 @@ CREATE TABLE IF NOT EXISTS webhook_deliveries (
   delivered_at TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_webhook_deliveries ON webhook_deliveries(status, next_attempt_at);
+
+CREATE TABLE IF NOT EXISTS automations (
+  id TEXT PRIMARY KEY,
+  workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+  project_id TEXT REFERENCES projects(id) ON DELETE CASCADE,
+  name TEXT NOT NULL,
+  trigger_type TEXT NOT NULL,                       -- task.status_changed | task.created | task.overdue
+  trigger_config TEXT NOT NULL DEFAULT '{}',
+  action_type TEXT NOT NULL,                        -- assign | set_priority | notify | post_message | add_checklist
+  action_config TEXT NOT NULL DEFAULT '{}',
+  enabled INTEGER NOT NULL DEFAULT 1,
+  run_count INTEGER NOT NULL DEFAULT 0,
+  last_run_at TEXT,
+  created_by TEXT NOT NULL REFERENCES users(id),
+  created_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS automation_runs (
+  id TEXT PRIMARY KEY,
+  automation_id TEXT NOT NULL REFERENCES automations(id) ON DELETE CASCADE,
+  task_id TEXT,
+  outcome TEXT NOT NULL,                            -- done | skipped | error
+  detail TEXT NOT NULL DEFAULT '',
+  created_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS reminders (
+  id TEXT PRIMARY KEY,
+  workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  message_id TEXT REFERENCES messages(id) ON DELETE CASCADE,
+  task_id TEXT REFERENCES tasks(id) ON DELETE CASCADE,
+  note TEXT NOT NULL DEFAULT '',
+  remind_at TEXT NOT NULL,
+  sent_at TEXT,
+  created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_reminders_due ON reminders(sent_at, remind_at);
+
+CREATE TABLE IF NOT EXISTS scheduled_messages (
+  id TEXT PRIMARY KEY,
+  workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+  channel_id TEXT NOT NULL REFERENCES channels(id) ON DELETE CASCADE,
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  parent_id TEXT REFERENCES messages(id) ON DELETE CASCADE,
+  body TEXT NOT NULL,
+  send_at TEXT NOT NULL,
+  sent_message_id TEXT,
+  failed_reason TEXT,
+  created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_scheduled_due ON scheduled_messages(sent_message_id, send_at);
+
+CREATE TABLE IF NOT EXISTS deadline_reminders (
+  task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+  due_date TEXT NOT NULL,
+  kind TEXT NOT NULL,                               -- due_soon | overdue
+  created_at TEXT NOT NULL,
+  PRIMARY KEY (task_id, due_date, kind)
+);
 `;
 
 /**
@@ -523,6 +583,12 @@ const ADDED_COLUMNS: [table: string, column: string, definition: string][] = [
   ['channels', 'ai_excluded', 'INTEGER NOT NULL DEFAULT 0'],
   ['projects', 'ai_excluded', 'INTEGER NOT NULL DEFAULT 0'],
   ['files', 'content_text', 'TEXT'],
+  ['tasks', 'start_date', 'TEXT'],
+  ['tasks', 'estimate_hours', 'REAL'],
+  ['workspaces', 'retention_days', 'INTEGER'],
+  ['workspaces', 'legal_hold', 'INTEGER NOT NULL DEFAULT 0'],
+  ['workspaces', 'scim_token_hash', 'TEXT'],
+  ['memberships', 'scim_external_id', 'TEXT'],
 ];
 
 export type Row = Record<string, any>;

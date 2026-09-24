@@ -6,6 +6,7 @@ import { useApi, useRealtime } from '../hooks';
 import { useSession } from '../session';
 import { Avatar } from './Avatar';
 import { Icon } from './Icon';
+import { RemindButton } from './Later';
 import { Markdown } from './Markdown';
 import { NewTaskForm } from './QuickCreate';
 import { ErrorState, Loading, StatusPill, useAction } from './ui';
@@ -151,6 +152,37 @@ export function TaskDetail({ taskId, onDeleted }: { taskId: string; onDeleted?: 
           <input type="date" value={task.due_date ?? ''} disabled={disabled} onChange={(e) => update({ dueDate: e.target.value || null })} aria-label="Due date" />
           {task.overdue && <span className="due overdue">Overdue</span>}
         </dd>
+        <dt>Start</dt>
+        <dd>
+          <input
+            type="date"
+            value={task.start_date ?? ''}
+            max={task.due_date ?? undefined}
+            disabled={disabled}
+            onChange={(e) => update({ startDate: e.target.value || null })}
+            aria-label="Start date"
+          />
+        </dd>
+        <dt>Estimate</dt>
+        <dd>
+          <input
+            type="number"
+            min={0}
+            max={1000}
+            step={0.5}
+            className="narrow-input"
+            defaultValue={task.estimate_hours ?? ''}
+            key={`est-${task.estimate_hours}`}
+            disabled={disabled}
+            placeholder="hours"
+            aria-label="Estimate in hours"
+            onBlur={(e) => {
+              const v = e.target.value === '' ? null : Number(e.target.value);
+              if (v !== task.estimate_hours && (v === null || (v >= 0 && v <= 1000))) update({ estimateHours: v });
+            }}
+          />{' '}
+          <small className="muted">hours</small>
+        </dd>
         <dt>Priority</dt>
         <dd>
           <select value={task.priority} disabled={disabled} onChange={(e) => update({ priority: e.target.value })} aria-label="Priority">
@@ -198,6 +230,9 @@ export function TaskDetail({ taskId, onDeleted }: { taskId: string; onDeleted?: 
           </select>
         </dd>
       </dl>
+      <div className="row-gap">
+        <RemindButton taskId={task.id} />
+      </div>
 
       {(task.source_message || task.meeting) && (
         <div className="linked">

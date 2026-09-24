@@ -1,5 +1,6 @@
 import { createContext, useCallback, useContext, useEffect, useState, type ReactNode } from 'react';
 import { api, type Me, type Person } from './api';
+import { clearOfflineData } from './pwa';
 import { realtime } from './realtime';
 
 interface Session {
@@ -41,7 +42,10 @@ export function SessionProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     refresh();
-    const onUnauthorized = () => setMe(null);
+    const onUnauthorized = () => {
+      clearOfflineData();
+      setMe(null);
+    };
     window.addEventListener('softex:unauthorized', onUnauthorized);
     return () => window.removeEventListener('softex:unauthorized', onUnauthorized);
   }, [refresh]);
@@ -67,6 +71,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
 
   const logout = useCallback(async () => {
     await api.post('/auth/logout');
+    await clearOfflineData();
     setMe(null);
   }, []);
 

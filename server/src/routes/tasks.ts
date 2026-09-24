@@ -18,6 +18,7 @@ import {
 import type { Database, Row } from '../db.js';
 import { authOf, notify, recordActivity, userSummary, type Ctx } from '../context.js';
 import { emitEvent } from '../webhooks.js';
+import { runAutomations } from '../automations.js';
 import { badRequest, forbidden, newId, notFound, now, parse, today } from '../util.js';
 
 const DateStr = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'use YYYY-MM-DD');
@@ -63,6 +64,8 @@ export function serializeTasks(db: Database, rows: Row[]) {
       status: t.status,
       priority: t.priority,
       due_date: t.due_date,
+      start_date: t.start_date ?? null,
+      estimate_hours: t.estimate_hours ?? null,
       overdue: !!t.due_date && t.due_date < t0 && t.status !== 'done',
       blocked_reason: t.blocked_reason,
       recurrence: t.recurrence,
@@ -105,6 +108,8 @@ const TaskInput = z.object({
   status: Status.default('todo'),
   priority: Priority.default('medium'),
   dueDate: DateStr.nullish(),
+  startDate: DateStr.nullish(),
+  estimateHours: z.number().min(0).max(1000).nullish(),
   recurrence: z.enum(['daily', 'weekly', 'monthly']).nullish(),
   sourceMessageId: z.string().nullish(),
   meetingId: z.string().nullish(),
@@ -172,6 +177,8 @@ export function tasksRouter(ctx: Ctx) {
         status: body.status,
         priority: body.priority,
         due_date: body.dueDate ?? null,
+        start_date: body.startDate ?? null,
+        estimate_hours: body.estimateHours ?? null,
         recurrence: body.recurrence ?? null,
         position,
         source_message_id: body.sourceMessageId ?? null,
@@ -213,6 +220,7 @@ export function tasksRouter(ctx: Ctx) {
       const message = db.get('SELECT * FROM messages WHERE id = ?', body.sourceMessageId)!;
       ctx.hub.publish(auth.workspaceId, { type: 'message.updated', messageId: message.id, channelId: message.channel_id, parentId: message.parent_id });
     }
+    runAutomations(ctx, 'task.created', db.get('SELECT * FROM tasks WHERE id = ?', id)!);
     publishTask(auth, id);
     return id;
   };
@@ -393,6 +401,8 @@ export function tasksRouter(ctx: Ctx) {
         status: Status.optional(),
         priority: Priority.optional(),
         dueDate: DateStr.nullable().optional(),
+        startDate: DateStr.nullable().optional(),
+        estimateHours: z.number().min(0).max(1000).nullable().optional(),
         milestoneId: z.string().nullable().optional(),
         blockedReason: z.string().max(500).optional(),
         recurrence: z.enum(['daily', 'weekly', 'monthly']).nullable().optional(),
@@ -415,6 +425,8 @@ export function tasksRouter(ctx: Ctx) {
       status: body.status,
       priority: body.priority,
       due_date: body.dueDate,
+      start_date: body.startDate,
+      estimate_hours: body.estimateHours,
       milestone_id: body.milestoneId,
       blocked_reason: body.blockedReason ?? (body.status && body.status !== 'blocked' ? '' : undefined),
       recurrence: body.recurrence,
@@ -488,6 +500,7 @@ export function tasksRouter(ctx: Ctx) {
     if (body.dueDate !== undefined && body.dueDate !== task.due_date && task.owner_id) {
       notify(ctx, auth.workspaceId, { userId: task.owner_id, kind: 'status', title: `Due date for “${task.title}” changed to ${body.dueDate ?? 'none'}`, link, actorId: auth.userId });
     }
+    if (statusChanged) runAutomations(ctx, 'task.status_changed', db.get('SELECT * FROM tasks WHERE id = ?', task.id)!, task.status);
     publishTask(auth, task.id);
     res.json(serializeTasks(db, [db.get('SELECT * FROM tasks WHERE id = ?', task.id)!])[0]);
   });

@@ -1,6 +1,18 @@
 import { Router } from 'express';
 import { z } from 'zod';
-import { canContributeProject, canViewDecision, canViewMeeting, canViewTask, loadChannel, loadProject, type Auth } from '../access.js';
+import {
+  accessibleChannelIds,
+  accessibleProjectIds,
+  canContributeProject,
+  canViewDecision,
+  canViewFile,
+  canViewMeeting,
+  canViewPage,
+  canViewTask,
+  loadChannel,
+  loadProject,
+  type Auth,
+} from '../access.js';
 import type { Row } from '../db.js';
 import { audit, authOf, type Ctx } from '../context.js';
 import { HttpError, forbidden, notFound, parse, today } from '../util.js';
@@ -215,6 +227,101 @@ Check-ins: ${checkins.map((c) => `done: ${fence(c.done)}; next: ${fence(c.next)}
     });
     audit(ctx, auth.workspaceId, auth.userId, 'ai.project_brief', 'project', project.id);
     res.json({ brief, generated_at: new Date().toISOString() });
+  });
+
+  // ======================= Ask SoftEX: cited answers (§5.6) =======================
+
+  const STOP = new Set(
+    'the and for are but not you all any can had her was one our out has him his how its may new now old see two way who did get let put say she too use what when where which while with this that from have they will your about into than then them these those there their been were would could should what why who whom does done our ours also just like want need know tell show give find please'.split(
+      ' ',
+    ),
+  );
+
+  const retrieve = (auth: Auth, question: string) => {
+    const terms = [...new Set(question.toLowerCase().match(/[\p{L}\p{N}][\p{L}\p{N}'-]{2,}/gu) ?? [])].filter((t) => !STOP.has(t)).slice(0, 8);
+    if (!terms.length) throw new HttpError(400, 'Ask a more specific question');
+    const likeAny = (col: string) => `(${terms.map(() => `lower(${col}) LIKE ?`).join(' OR ')})`;
+    const likes = terms.map((t) => `%${t.replace(/[\\%_]/g, '')}%`);
+    const score = (text: string) => {
+      const lower = text.toLowerCase();
+      return terms.reduce((n, t) => n + (lower.includes(t) ? 1 : 0), 0);
+    };
+    const snippet = (text: string) => {
+      const lower = text.toLowerCase();
+      const hit = Math.max(0, Math.min(...terms.map((t) => lower.indexOf(t)).filter((i) => i >= 0)));
+      return plain(text).slice(Math.max(0, hit - 250), hit + 450).replace(/\s+/g, ' ').trim();
+    };
+    type Source = { type: string; title: string; link: string; text: string; date: string; score: number };
+    const out: Source[] = [];
+    const channelIds = accessibleChannelIds(db, auth).filter((id) => {
+      const c = db.get('SELECT ai_excluded, project_id FROM channels WHERE id = ?', id)!;
+      return !c.ai_excluded && !(c.project_id && db.get('SELECT ai_excluded FROM projects WHERE id = ?', c.project_id)?.ai_excluded);
+    });
+    const projectIds = accessibleProjectIds(db, auth).filter((id) => !db.get('SELECT ai_excluded FROM projects WHERE id = ?', id)!.ai_excluded);
+    const projectOk = (id: string | null) => !id || projectIds.includes(id);
+    if (channelIds.length) {
+      for (const m of db.all(
+        `SELECT m.id, m.parent_id, m.body, m.created_at, m.channel_id, c.name AS channel_name, c.kind, u.name AS user_name FROM messages m
+           JOIN channels c ON c.id = m.channel_id JOIN users u ON u.id = m.user_id
+          WHERE m.deleted_at IS NULL AND m.channel_id IN (${channelIds.map(() => '?').join(',')}) AND ${likeAny('m.body')}
+          ORDER BY m.created_at DESC LIMIT 300`,
+        ...channelIds,
+        ...likes,
+      )) {
+        out.push({
+          type: 'message',
+          title: `${m.user_name} in ${m.kind === 'dm' ? 'a direct message' : `#${m.channel_name}`}`,
+          link: `/channels/${m.channel_id}?message=${m.parent_id ?? m.id}`,
+          text: snippet(m.body),
+          date: m.created_at,
+          score: score(m.body),
+        });
+      }
+    }
+    for (const p of db.all(`SELECT * FROM pages WHERE workspace_id = ? AND archived_at IS NULL AND (${likeAny('title')} OR ${likeAny('body')}) LIMIT 200`, auth.workspaceId, ...likes, ...likes)) {
+      if (!canViewPage(db, auth, p) || !projectOk(p.project_id)) continue;
+      out.push({ type: 'page', title: `${p.title}${p.status === 'approved' ? ' (approved)' : ' (draft)'}`, link: `/knowledge/${p.id}`, text: snippet(`${p.title}. ${p.body}`), date: p.updated_at, score: score(`${p.title} ${p.body}`) + (p.status === 'approved' ? 1 : 0) });
+    }
+    for (const d of db.all(`SELECT * FROM decisions WHERE workspace_id = ? AND (${likeAny('title')} OR ${likeAny('rationale')}) LIMIT 200`, auth.workspaceId, ...likes, ...likes)) {
+      if (!canViewDecision(db, auth, d) || !projectOk(d.project_id)) continue;
+      out.push({ type: 'decision', title: `Decision: ${d.title}`, link: d.project_id ? `/projects/${d.project_id}?tab=decisions` : '/decisions', text: `${d.title}. ${d.rationale}`, date: d.created_at, score: score(`${d.title} ${d.rationale}`) + 1 });
+    }
+    for (const t of db.all(`SELECT * FROM tasks WHERE workspace_id = ? AND (${likeAny('title')} OR ${likeAny('description')}) LIMIT 200`, auth.workspaceId, ...likes, ...likes)) {
+      if (!canViewTask(db, auth, t) || !projectOk(t.project_id)) continue;
+      const owner = t.owner_id ? db.get('SELECT name FROM users WHERE id = ?', t.owner_id)?.name : 'nobody';
+      out.push({ type: 'task', title: `Task: ${t.title}`, link: `/tasks/${t.id}`, text: `${t.title} — status ${t.status}, owner ${owner}${t.due_date ? `, due ${t.due_date}` : ''}. ${snippet(t.description)}`, date: t.updated_at, score: score(`${t.title} ${t.description}`) });
+    }
+    for (const f of db.all(`SELECT * FROM files WHERE workspace_id = ? AND archived_at IS NULL AND (${likeAny('name')} OR ${likeAny("COALESCE(content_text, '')")}) LIMIT 100`, auth.workspaceId, ...likes, ...likes)) {
+      if (!canViewFile(db, auth, f) || !projectOk(f.project_id)) continue;
+      out.push({ type: 'file', title: `File: ${f.name}`, link: `/files/${f.id}`, text: snippet(`${f.name}. ${f.content_text ?? ''}`), date: f.updated_at, score: score(`${f.name} ${f.content_text ?? ''}`) });
+    }
+    for (const m of db.all(`SELECT * FROM meetings WHERE workspace_id = ? AND (${likeAny('title')} OR ${likeAny('notes')}) LIMIT 100`, auth.workspaceId, ...likes, ...likes)) {
+      if (!canViewMeeting(db, auth, m) || !projectOk(m.project_id)) continue;
+      out.push({ type: 'meeting', title: `Meeting: ${m.title} (${m.starts_at.slice(0, 10)})`, link: `/meetings/${m.id}`, text: snippet(`${m.title}. ${m.agenda} ${m.notes}`), date: m.starts_at, score: score(`${m.title} ${m.agenda} ${m.notes}`) });
+    }
+    return out.sort((a, b) => b.score - a.score || b.date.localeCompare(a.date)).slice(0, 15);
+  };
+
+  r.post('/ai/ask', async (req, res) => {
+    const auth = authOf(req);
+    requireAi(auth);
+    const { question } = parse(z.object({ question: z.string().trim().min(3).max(500) }), req.body);
+    const sources = retrieve(auth, question);
+    if (!sources.length) {
+      audit(ctx, auth.workspaceId, auth.userId, 'ai.ask', 'workspace', auth.workspaceId, { sources: 0 });
+      return res.json({ answer: 'I could not find anything you have access to that answers this. Try different words, or ask a colleague in a channel.', sources: [] });
+    }
+    const answer = await run(auth, {
+      prompt: `Question from a colleague: "${fence(question)}"
+
+Answer using only the numbered records below. Cite the records you rely on with their numbers in square brackets, like [2] or [1][4], right after the statement they support. Prefer approved pages and recorded decisions over chat when they disagree, and mention the disagreement. If the records do not answer the question, say so plainly instead of guessing. Keep it under 180 words.
+
+<records>
+${sources.map((s, i) => `[${i + 1}] ${s.type.toUpperCase()} · ${fence(s.title)} · ${s.date.slice(0, 10)}\n${fence(s.text)}`).join('\n\n')}
+</records>`,
+    });
+    audit(ctx, auth.workspaceId, auth.userId, 'ai.ask', 'workspace', auth.workspaceId, { sources: sources.length });
+    res.json({ answer, sources: sources.map((s, i) => ({ n: i + 1, type: s.type, title: s.title, link: s.link, snippet: s.text.slice(0, 240), date: s.date })) });
   });
 
   // Exclusion controls: channel creators/admins and project managers.

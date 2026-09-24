@@ -154,6 +154,99 @@ function channelList(db: Database, auth: Auth) {
     });
 }
 
+export interface NewMessage {
+  body: string;
+  parentId?: string | null;
+  urgent?: boolean;
+  fileIds?: string[];
+}
+
+/**
+ * Post a message as `auth`: permission checks, persistence, live delivery,
+ * webhooks and notifications. Used by the API and by scheduled messages.
+ */
+export function postMessage(ctx: Ctx, auth: Auth, channel: Row, input: NewMessage) {
+  const { db } = ctx;
+  const body = { body: input.body, parentId: input.parentId ?? null, urgent: !!input.urgent, fileIds: input.fileIds ?? [] };
+  if (!body.body && !body.fileIds.length) throw badRequest('Write a message or attach a file');
+  if (!canPostChannel(db, auth, channel)) {
+    // Anyone who can read an announcement may reply in its thread.
+    if (!(channel.kind === 'announcement' && body.parentId && canViewChannel(db, auth, channel))) {
+      throw forbidden(channel.kind === 'announcement' ? 'Only leads and admins can post announcements' : 'You cannot post here');
+    }
+  }
+  let parent: Row | undefined;
+  if (body.parentId) {
+    parent = db.get('SELECT * FROM messages WHERE id = ? AND channel_id = ?', body.parentId, channel.id);
+    if (!parent || parent.parent_id) throw badRequest('Replies must target a top-level message in this channel');
+  }
+  const id = newId();
+  const createdAt = now();
+  db.transaction(() => {
+    if (channel.kind !== 'dm' && !isChannelMember(db, channel.id, auth.userId)) {
+      db.run('INSERT OR IGNORE INTO channel_members (channel_id, user_id, joined_at, last_read_at) VALUES (?, ?, ?, ?)', channel.id, auth.userId, now(), now());
+    }
+    db.insert('messages', {
+      id,
+      channel_id: channel.id,
+      user_id: auth.userId,
+      parent_id: parent?.id ?? null,
+      body: body.body,
+      urgent: body.urgent,
+      created_at: createdAt,
+    });
+    for (const fileId of body.fileIds) {
+      db.run('UPDATE files SET message_id = ?, channel_id = ? WHERE id = ? AND owner_id = ? AND message_id IS NULL', id, channel.id, fileId, auth.userId);
+    }
+    db.run('UPDATE channel_members SET last_read_at = ? WHERE channel_id = ? AND user_id = ?', createdAt, channel.id, auth.userId);
+  });
+  const [message] = serializeMessages(db, auth, [db.get('SELECT * FROM messages WHERE id = ?', id)!]);
+  publishToChannel(ctx, channel, { type: 'message.created', message });
+  emitEvent(
+    ctx,
+    auth.workspaceId,
+    'message.created',
+    { id, channel_id: channel.id, channel_name: channel.name, parent_id: parent?.id ?? null, user_id: auth.userId, body: body.body, created_at: createdAt },
+    { channelId: channel.id },
+  );
+
+  // Notifications: mentions, DMs, thread replies and announcements, respecting channel preferences.
+  const actor = db.get('SELECT name FROM users WHERE id = ?', auth.userId)!;
+  const where = channel.kind === 'dm' ? 'a direct message' : `#${channel.name}`;
+  const link = `/channels/${channel.id}?message=${parent?.id ?? id}`;
+  const preview = body.body.replace(/@\[([^\]]+)\]\([0-9a-f-]{36}\)/g, '@$1');
+  const notified = new Set<string>([auth.userId]);
+  const prefs = new Map(db.all('SELECT user_id, notify FROM channel_members WHERE channel_id = ?', channel.id).map((m) => [m.user_id, m.notify]));
+  for (const userId of extractMentionIds(body.body)) {
+    if (notified.has(userId) || !isActiveMember(db, auth.workspaceId, userId)) continue;
+    const role = db.get('SELECT role FROM memberships WHERE workspace_id = ? AND user_id = ?', auth.workspaceId, userId)!.role;
+    if (!canViewChannel(db, { userId, workspaceId: auth.workspaceId, role }, channel)) continue;
+    if (prefs.get(userId) === 'none' && !body.urgent) continue;
+    notified.add(userId);
+    notify(ctx, auth.workspaceId, { userId, kind: 'mention', title: `${actor.name} mentioned you in ${where}`, body: preview, link, actorId: auth.userId, urgent: body.urgent });
+  }
+  const recipients = (ids: string[], kind: string, title: string) => {
+    for (const userId of ids) {
+      if (notified.has(userId)) continue;
+      const pref = prefs.get(userId) ?? 'all';
+      if (pref !== 'all' && !body.urgent && kind !== 'announcement') continue;
+      notified.add(userId);
+      notify(ctx, auth.workspaceId, { userId, kind, title, body: preview, link, actorId: auth.userId, urgent: body.urgent });
+    }
+  };
+  const memberIds = [...prefs.keys()];
+  if (channel.kind === 'dm') recipients(memberIds, 'dm', `New message from ${actor.name}`);
+  if (parent) {
+    const threadPeople = db.all('SELECT DISTINCT user_id FROM messages WHERE parent_id = ? OR id = ?', parent.id, parent.id).map((m) => m.user_id);
+    recipients(threadPeople.filter((u) => prefs.has(u)), 'thread', `${actor.name} replied to a thread in ${where}`);
+  } else if (channel.kind === 'announcement') {
+    recipients(memberIds, 'announcement', `New announcement in #${channel.name}`);
+  } else if (body.urgent) {
+    recipients(memberIds, 'urgent', `Urgent message from ${actor.name} in ${where}`);
+  }
+  return message;
+}
+
 export function channelsRouter(ctx: Ctx) {
   const r = Router();
   const { db } = ctx;
@@ -432,80 +525,7 @@ export function channelsRouter(ctx: Ctx) {
       }),
       req.body,
     );
-    if (!body.body && !body.fileIds.length) throw badRequest('Write a message or attach a file');
-    if (!canPostChannel(db, auth, channel)) {
-      // Anyone who can read an announcement may reply in its thread.
-      if (!(channel.kind === 'announcement' && body.parentId && canViewChannel(db, auth, channel))) {
-        throw forbidden(channel.kind === 'announcement' ? 'Only leads and admins can post announcements' : 'You cannot post here');
-      }
-    }
-    let parent: Row | undefined;
-    if (body.parentId) {
-      parent = db.get('SELECT * FROM messages WHERE id = ? AND channel_id = ?', body.parentId, channel.id);
-      if (!parent || parent.parent_id) throw badRequest('Replies must target a top-level message in this channel');
-    }
-    const id = newId();
-    const createdAt = now();
-    db.transaction(() => {
-      if (channel.kind !== 'dm' && !isChannelMember(db, channel.id, auth.userId)) addMember(channel.id, auth.userId);
-      db.insert('messages', {
-        id,
-        channel_id: channel.id,
-        user_id: auth.userId,
-        parent_id: parent?.id ?? null,
-        body: body.body,
-        urgent: body.urgent,
-        created_at: createdAt,
-      });
-      for (const fileId of body.fileIds) {
-        db.run('UPDATE files SET message_id = ?, channel_id = ? WHERE id = ? AND owner_id = ? AND message_id IS NULL', id, channel.id, fileId, auth.userId);
-      }
-      db.run('UPDATE channel_members SET last_read_at = ? WHERE channel_id = ? AND user_id = ?', createdAt, channel.id, auth.userId);
-    });
-    const [message] = serializeMessages(db, auth, [db.get('SELECT * FROM messages WHERE id = ?', id)!]);
-    publishToChannel(ctx, channel, { type: 'message.created', message });
-    emitEvent(
-      ctx,
-      auth.workspaceId,
-      'message.created',
-      { id, channel_id: channel.id, channel_name: channel.name, parent_id: parent?.id ?? null, user_id: auth.userId, body: body.body, created_at: createdAt },
-      { channelId: channel.id },
-    );
-
-    // Notifications: mentions, DMs, thread replies and announcements, respecting channel preferences.
-    const actor = db.get('SELECT name FROM users WHERE id = ?', auth.userId)!;
-    const where = channel.kind === 'dm' ? 'a direct message' : `#${channel.name}`;
-    const link = `/channels/${channel.id}?message=${parent?.id ?? id}`;
-    const preview = body.body.replace(/@\[([^\]]+)\]\([0-9a-f-]{36}\)/g, '@$1');
-    const notified = new Set<string>([auth.userId]);
-    const prefs = new Map(db.all('SELECT user_id, notify FROM channel_members WHERE channel_id = ?', channel.id).map((m) => [m.user_id, m.notify]));
-    for (const userId of extractMentionIds(body.body)) {
-      if (notified.has(userId) || !isActiveMember(db, auth.workspaceId, userId)) continue;
-      const role = db.get('SELECT role FROM memberships WHERE workspace_id = ? AND user_id = ?', auth.workspaceId, userId)!.role;
-      if (!canViewChannel(db, { userId, workspaceId: auth.workspaceId, role }, channel)) continue;
-      if (prefs.get(userId) === 'none' && !body.urgent) continue;
-      notified.add(userId);
-      notify(ctx, auth.workspaceId, { userId, kind: 'mention', title: `${actor.name} mentioned you in ${where}`, body: preview, link, actorId: auth.userId, urgent: body.urgent });
-    }
-    const recipients = (ids: string[], kind: string, title: string) => {
-      for (const userId of ids) {
-        if (notified.has(userId)) continue;
-        const pref = prefs.get(userId) ?? 'all';
-        if (pref !== 'all' && !body.urgent && kind !== 'announcement') continue;
-        notified.add(userId);
-        notify(ctx, auth.workspaceId, { userId, kind, title, body: preview, link, actorId: auth.userId, urgent: body.urgent });
-      }
-    };
-    const memberIds = [...prefs.keys()];
-    if (channel.kind === 'dm') recipients(memberIds, 'dm', `New message from ${actor.name}`);
-    if (parent) {
-      const threadPeople = db.all('SELECT DISTINCT user_id FROM messages WHERE parent_id = ? OR id = ?', parent.id, parent.id).map((m) => m.user_id);
-      recipients(threadPeople.filter((u) => prefs.has(u)), 'thread', `${actor.name} replied to a thread in ${where}`);
-    } else if (channel.kind === 'announcement') {
-      recipients(memberIds, 'announcement', `New announcement in #${channel.name}`);
-    } else if (body.urgent) {
-      recipients(memberIds, 'urgent', `Urgent message from ${actor.name} in ${where}`);
-    }
+    const message = postMessage(ctx, auth, channel, body);
     res.status(201).json(message);
   });
 

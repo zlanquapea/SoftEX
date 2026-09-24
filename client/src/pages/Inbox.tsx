@@ -9,6 +9,9 @@ import { useApi, useRealtime } from '../hooks';
 
 type Filter = 'all' | 'unread' | 'mentions' | 'assigned' | 'meetings';
 const KIND_ICON: Record<string, string> = {
+  reminder: 'clock',
+  deadline: 'calendar',
+  automation: 'refresh',
   mention: 'chat',
   dm: 'chat',
   thread: 'thread',

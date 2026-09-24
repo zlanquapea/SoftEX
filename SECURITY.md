@@ -18,6 +18,10 @@ Please **do not open a public issue** for security problems. Use GitHub's *Repor
   - Files are scanned with ClamAV when `SOFTEX_CLAMAV_HOST` is set. If the scanner is unreachable, the upload is refused.
   - Files are served with `nosniff` and a sandboxing Content-Security-Policy.
 - **Outbound requests:** webhook targets must be public HTTPS addresses, which prevents server-side request forgery. Webhook payloads are signed with HMAC.
+- **Automations and scheduled messages** run with their creator's current access, checked again every time they run. Automations never trigger other automations, and can only post to private channels in their own project.
+- **Provisioning:** SCIM tokens are stored only as hashes and can be rotated or revoked at any time. Deprovisioning revokes sessions and tokens immediately.
+- **Retention:** workspaces can delete messages older than a set period. A legal hold pauses all automatic deletion, and every retention run is audited.
+- **Offline cache:** the service worker keeps recently loaded workspace data for read-only offline use. It never caches sign-in, exports, downloads, admin or AI responses, and it deletes cached data on sign-out, on workspace switch and whenever the server reports the session has ended.
 - **Audit:** sign-ins, role changes, exports, integrations and AI use are recorded in the audit log. AI entries record which item was used, never its content.
 
 ## Automated checks (GitHub Actions)

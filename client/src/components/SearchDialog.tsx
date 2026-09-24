@@ -4,9 +4,24 @@ import { api, qs } from '../api';
 import { dateTime, plainMentions, timeAgo } from '../format';
 import { useDebounced } from '../hooks';
 import { useSession } from '../session';
+import { useAiEnabled } from './Ai';
 import { Avatar } from './Avatar';
 import { Icon } from './Icon';
 import { StatusPill } from './ui';
+
+interface AskResult {
+  question: string;
+  answer: string;
+  sources: { n: number; type: string; title: string; link: string; snippet: string; date: string | null }[];
+}
+
+/** Sources the answer cites, or all of them when it cites none. */
+function citedSources(a: AskResult) {
+  const cited = new Set([...a.answer.matchAll(/\[(\d+)\]/g)].map((m) => Number(m[1])));
+  return cited.size ? a.sources.filter((s) => cited.has(s.n)) : a.sources;
+}
+
+const SOURCE_ICON: Record<string, string> = { message: 'chat', page: 'book', decision: 'gavel', task: 'task', file: 'file', meeting: 'video' };
 
 type SearchType = 'all' | 'messages' | 'tasks' | 'projects' | 'pages' | 'files' | 'people' | 'decisions' | 'meetings';
 const TYPES: { id: SearchType; label: string }[] = [
@@ -33,11 +48,26 @@ export function SearchDialog({ open, initial, onClose }: { open: boolean; initia
   const [results, setResults] = useState<Record<string, any[]> | null>(null);
   const [loading, setLoading] = useState(false);
   const debounced = useDebounced(q, 200);
+  const aiEnabled = useAiEnabled();
+  const [ask, setAsk] = useState<AskResult | { question: string; loading: true } | { question: string; error: string } | null>(null);
+
+  const runAsk = async () => {
+    const question = q.trim();
+    if (question.length < 3) return;
+    setAsk({ question, loading: true });
+    try {
+      const res = await api.post<Omit<AskResult, 'question'>>('/ai/ask', { question });
+      setAsk({ question, ...res });
+    } catch (e) {
+      setAsk({ question, error: (e as Error).message });
+    }
+  };
 
   useEffect(() => {
     const d = ref.current!;
     if (open) {
       setQ(initial);
+      setAsk(null);
       if (!d.open) d.showModal();
       window.setTimeout(() => input.current?.focus(), 10);
     } else if (d.open) d.close();
@@ -85,9 +115,14 @@ export function SearchDialog({ open, initial, onClose }: { open: boolean; initia
               ref={input}
               value={q}
               onChange={(e) => setQ(e.target.value)}
-              placeholder="Search messages, tasks, files, knowledge and people…"
+              placeholder={aiEnabled ? 'Search, or ask a question ending with “?”' : 'Search messages, tasks, files, knowledge and people…'}
               aria-label="Search"
               onKeyDown={(e) => {
+                if (e.key === 'Enter' && aiEnabled && (e.shiftKey || q.trim().endsWith('?'))) {
+                  e.preventDefault();
+                  runAsk();
+                  return;
+                }
                 if (e.key === 'Enter') {
                   const first = ref.current?.querySelector<HTMLButtonElement>('.search-result');
                   first?.click();
@@ -120,6 +155,60 @@ export function SearchDialog({ open, initial, onClose }: { open: boolean; initia
             )}
           </div>
           <div className="search-results">
+            {aiEnabled && q.trim().length >= 3 && (!ask || ask.question !== q.trim()) && (
+              <button className="search-result ask-row" onClick={runAsk}>
+                <Icon name="spark" />
+                <span>
+                  <strong>Ask SoftEX: “{q.trim()}”</strong>
+                  <small>Get an answer with sources from messages, knowledge, decisions and files you can access. Shift+Enter</small>
+                </span>
+              </button>
+            )}
+            {ask && (
+              <section className="ask-answer" aria-live="polite">
+                <header>
+                  <Icon name="spark" size={14} /> {ask.question}
+                </header>
+                {'loading' in ask && (
+                  <p className="muted">
+                    <span className="spinner sm" aria-hidden="true" /> Reading what you have access to…
+                  </p>
+                )}
+                {'error' in ask && <p className="danger-text">{ask.error}</p>}
+                {'answer' in ask && (
+                  <>
+                    {ask.answer.split(/\n{2,}/).map((para, i) => (
+                      <p key={i}>
+                        {para.split(/(\[\d+\])/g).map((part, j) => {
+                          const m = part.match(/^\[(\d+)\]$/);
+                          const src = m ? ask.sources.find((s) => s.n === Number(m[1])) : undefined;
+                          return src ? (
+                            <button key={j} className="cite" onClick={() => go(src.link)} title={src.title}>
+                              {src.n}
+                            </button>
+                          ) : (
+                            <span key={j}>{part}</span>
+                          );
+                        })}
+                      </p>
+                    ))}
+                    {ask.sources.length > 0 && (
+                      <ol className="ask-sources">
+                        {citedSources(ask).map((s) => (
+                          <li key={s.n}>
+                            <button className="link-btn" onClick={() => go(s.link)}>
+                              <span className="cite">{s.n}</span> <Icon name={SOURCE_ICON[s.type] ?? 'file'} size={13} /> {s.title}
+                            </button>
+                            {s.date && <small className="muted"> · {timeAgo(s.date)}</small>}
+                          </li>
+                        ))}
+                      </ol>
+                    )}
+                    <small className="muted">AI answer — check the sources before relying on it. Only you can see this.</small>
+                  </>
+                )}
+              </section>
+            )}
             {!results && <p className="muted pad">Type at least two characters. Results only include items you have access to.</p>}
             {results && total === 0 && !loading && <p className="muted pad">No results for “{debounced}”.</p>}
             {section('pages', 'Knowledge', (p) => (

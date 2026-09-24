@@ -15,6 +15,7 @@ import { FileView, Knowledge, PageView } from './pages/Knowledge';
 import { MeetingDetail, Meetings } from './pages/Meetings';
 import { MyWork } from './pages/MyWork';
 import { ProjectDetail, Projects } from './pages/Projects';
+import { Later, Workload } from './pages/Planning';
 import { Requests } from './pages/Requests';
 import { Settings } from './pages/Settings';
 import { useSession } from './session';
@@ -41,6 +42,8 @@ const TITLES: [RegExp, string][] = [
   [/^\/directory|^\/people/, 'Directory'],
   [/^\/decisions/, 'Decisions'],
   [/^\/requests/, 'Requests'],
+  [/^\/workload/, 'Workload'],
+  [/^\/later/, 'Later'],
   [/^\/settings/, 'Settings'],
   [/^\/admin/, 'Administration'],
   [/^\/help/, 'Help'],
@@ -92,6 +95,8 @@ export function App() {
         <Route path="/people/:id" element={<PersonView />} />
         <Route path="/decisions" element={<Decisions />} />
         <Route path="/requests" element={<Requests />} />
+        <Route path="/workload" element={<Workload />} />
+        <Route path="/later" element={<Later />} />
         <Route path="/settings" element={<Settings />} />
         <Route path="/admin" element={<Admin />} />
         <Route path="/help" element={<Help />} />
