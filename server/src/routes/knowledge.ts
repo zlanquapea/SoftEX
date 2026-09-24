@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import multer from 'multer';
 import { createReadStream, existsSync, mkdirSync, renameSync, unlinkSync } from 'node:fs';
-import { extname, join } from 'node:path';
+import { extname, join, resolve, sep } from 'node:path';
 import { z } from 'zod';
 import {
   accessibleChannelIds,
@@ -42,7 +42,14 @@ export function knowledgeRouter(ctx: Ctx) {
   const r = Router();
   const { db } = ctx;
   mkdirSync(ctx.config.uploadDir, { recursive: true });
-  const upload = multer({ dest: join(ctx.config.uploadDir, 'incoming'), limits: { fileSize: ctx.config.maxUploadBytes, files: 1 } });
+  const incomingDir = resolve(ctx.config.uploadDir, 'incoming');
+  const upload = multer({ dest: incomingDir, limits: { fileSize: ctx.config.maxUploadBytes, files: 1 } });
+  /** Multer picks a random temporary name; still, only ever touch files inside the incoming folder. */
+  const tempPath = (file: Express.Multer.File) => {
+    const path = resolve(file.path);
+    if (!path.startsWith(incomingDir + sep)) throw badRequest('Invalid upload');
+    return path;
+  };
 
   // ======================= Knowledge pages =======================
 
@@ -292,15 +299,15 @@ export function knowledgeRouter(ctx: Ctx) {
 
   const storeUpload = async (auth: Auth, file: Express.Multer.File) => {
     try {
-      await scanUpload(ctx.config, file.path, file.originalname);
+      await scanUpload(ctx.config, tempPath(file), file.originalname);
     } catch (e) {
-      unlinkSync(file.path);
+      unlinkSync(tempPath(file));
       audit(ctx, auth.workspaceId, auth.userId, 'file.upload_rejected', 'file', 'n/a', { name: file.originalname, reason: (e as Error).message });
       throw e;
     }
     const key = newId();
-    const text = extractText(file.path, file.originalname);
-    renameSync(file.path, join(ctx.config.uploadDir, key));
+    const text = extractText(tempPath(file), file.originalname);
+    renameSync(tempPath(file), join(ctx.config.uploadDir, key));
     const ext = extname(file.originalname).toLowerCase();
     const mime = INLINE_TYPES[ext]?.split(';')[0] ?? (file.mimetype || 'application/octet-stream');
     return { key, mime, size: file.size, text };
@@ -317,7 +324,7 @@ export function knowledgeRouter(ctx: Ctx) {
     try {
       projectId = checkPlacement(auth, body);
     } catch (e) {
-      unlinkSync(req.file.path);
+      unlinkSync(tempPath(req.file));
       throw e;
     }
     const stored = await storeUpload(auth, req.file);
@@ -428,7 +435,7 @@ export function knowledgeRouter(ctx: Ctx) {
       if (file.project_id && !canContributeProject(db, auth, db.get('SELECT * FROM projects WHERE id = ?', file.project_id)!)) throw forbidden();
       if (!file.project_id && file.owner_id !== auth.userId && !isAdmin(auth)) throw forbidden('Only the owner can add versions');
     } catch (e) {
-      unlinkSync(req.file.path);
+      unlinkSync(tempPath(req.file));
       throw e;
     }
     const stored = await storeUpload(auth, req.file);

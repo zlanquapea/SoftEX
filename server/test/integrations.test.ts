@@ -355,3 +355,14 @@ describe('governed AI assistance', () => {
     expect(JSON.stringify(audit)).not.toContain('contract');
   });
 });
+
+describe('abuse protection', () => {
+  it('rate limits the API per client', async () => {
+    env = setup({ rateLimitPerMinute: 5 });
+    const { agent } = await registerOwner(env); // 1 request
+    for (let i = 0; i < 4; i++) expect((await agent.get('/api/me')).status).toBe(200);
+    const limited = await agent.get('/api/me');
+    expect(limited.status).toBe(429);
+    expect(limited.body.error).toContain('Too many requests');
+  });
+});

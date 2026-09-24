@@ -35,17 +35,29 @@ function inline(text: string, keyBase: string): ReactNode[] {
   return out;
 }
 
+/** Returns a normalised http(s) URL, or null for anything else (javascript:, data:, relative…). */
+function safeExternalUrl(href: string): string | null {
+  try {
+    const url = new URL(href);
+    return url.protocol === 'http:' || url.protocol === 'https:' ? url.href : null;
+  } catch {
+    return null;
+  }
+}
+
 function linkEl(href: string, label: string, key: string) {
-  if (href.startsWith('/') && !href.startsWith('//')) {
+  // In-app links only: a single leading slash, never "//" or "/\\" (which browsers treat as another site).
+  if (/^\/(?![/\\])[^\s]*$/.test(href)) {
     return (
       <Link key={key} to={href}>
         {label}
       </Link>
     );
   }
-  if (/^https?:\/\//i.test(href)) {
+  const external = safeExternalUrl(href);
+  if (external) {
     return (
-      <a key={key} href={href} target="_blank" rel="noopener noreferrer nofollow">
+      <a key={key} href={external} target="_blank" rel="noopener noreferrer nofollow">
         {label}
       </a>
     );

@@ -1,4 +1,5 @@
 import express, { type Express } from 'express';
+import { rateLimit } from 'express-rate-limit';
 import { existsSync } from 'node:fs';
 import { createServer, type Server } from 'node:http';
 import { join } from 'node:path';
@@ -24,6 +25,8 @@ import { HttpError, errorHandler } from './util.js';
 export interface AppOptions extends Partial<Config> {
   dbPath?: string;
   staticDir?: string;
+  /** Requests per minute per client address across the API (default 1200). */
+  rateLimitPerMinute?: number;
   /** Start the in-process email/webhook/digest scheduler (default true; tests drive jobs manually). */
   startJobs?: boolean;
   anthropicApiKey?: string;
@@ -78,6 +81,18 @@ export function createApp(options: AppOptions = {}): SoftexApp {
     }
     next();
   });
+  // Abuse protection for the whole API: generous enough for normal use of the app
+  // (which polls and reacts to live events), strict enough to blunt floods and scraping.
+  app.use(
+    '/api',
+    rateLimit({
+      windowMs: 60_000,
+      limit: options.rateLimitPerMinute ?? 1200,
+      standardHeaders: 'draft-8',
+      legacyHeaders: false,
+      message: { error: 'Too many requests. Please slow down and try again shortly.' },
+    }),
+  );
   app.use(express.json({ limit: '1mb' }));
 
   app.get('/api/health', (_req, res) => {
