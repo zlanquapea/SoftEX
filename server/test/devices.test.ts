@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it } from 'vitest';
+import { randomBytes } from 'node:crypto';
 import request from 'supertest';
 import { invite, registerOwner, setup, type TestEnv } from './helpers.js';
 import { pushIdle, type PushSubscriptionInput } from '../src/push.js';
@@ -87,7 +88,8 @@ describe('calendar subscription', () => {
 
 describe('push notifications', () => {
   const endpoint = (n: number) => `https://fcm.googleapis.com/fcm/send/device-${n}`;
-  const keys = { p256dh: 'BNcRdreALRFXTkOOUHK1EtK2wtaz5Ry4YfYCA_0QTpQtUbVlUls0VJXg7A8u-Ts1XbjhazAkj7I99e8QcYP7DkM', auth: 'tBHItJI5svbpez7KI4CCXg' };
+  // A real device key pair isn't needed; the fake transport never encrypts. Generated so no key-like literals live in the repo.
+  const keys = { p256dh: randomBytes(65).toString('base64url'), auth: randomBytes(16).toString('base64url') };
 
   it('reaches signed-in devices when the person is away, and stops when they sign out', async () => {
     const sent: { endpoint: string; payload: any }[] = [];
