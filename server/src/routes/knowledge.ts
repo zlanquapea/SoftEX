@@ -38,7 +38,45 @@ const INLINE_TYPES: Record<string, string> = {
   '.txt': 'text/plain; charset=utf-8',
   '.md': 'text/plain; charset=utf-8',
   '.csv': 'text/plain; charset=utf-8',
+  // Video and audio play in the browser (messages show a player).
+  '.mp4': 'video/mp4',
+  '.m4v': 'video/mp4',
+  '.mov': 'video/quicktime',
+  '.webm': 'video/webm',
+  '.ogv': 'video/ogg',
+  '.mp3': 'audio/mpeg',
+  '.m4a': 'audio/mp4',
+  '.aac': 'audio/aac',
+  '.ogg': 'audio/ogg',
+  '.oga': 'audio/ogg',
+  '.opus': 'audio/ogg',
+  '.wav': 'audio/wav',
 };
+
+/**
+ * Parse a single-range "Range: bytes=…" header against a file size. Returns the byte range,
+ * 'invalid' when it can't be satisfied, or null for no (or an unsupported multi-) range.
+ */
+export function parseRange(header: string | undefined, size: number): { start: number; end: number } | 'invalid' | null {
+  if (!header) return null;
+  const m = /^bytes=(\d*)-(\d*)$/.exec(header.trim());
+  if (!m) return null;
+  let start: number;
+  let end: number;
+  if (m[1] === '' && m[2] === '') return 'invalid';
+  if (m[1] === '') {
+    // Suffix range: the last N bytes.
+    const n = Number(m[2]);
+    if (n === 0) return 'invalid';
+    start = Math.max(0, size - n);
+    end = size - 1;
+  } else {
+    start = Number(m[1]);
+    end = m[2] === '' ? size - 1 : Math.min(Number(m[2]), size - 1);
+  }
+  if (!Number.isSafeInteger(start) || !Number.isSafeInteger(end) || start > end || start >= size) return 'invalid';
+  return { start, end };
+}
 export function knowledgeRouter(ctx: Ctx) {
   const r = Router();
   const { db } = ctx;
@@ -471,14 +509,27 @@ export function knowledgeRouter(ctx: Ctx) {
     const q = parse(z.object({ version: z.coerce.number().int().optional(), inline: z.enum(['1', '0']).default('0') }), req.query);
     const v = await db.get('SELECT * FROM file_versions WHERE file_id = ? AND version = ?', file.id, q.version ?? file.current_version);
     if (!v) throw notFound('Version');
-    const stream = await ctx.files.open(v.storage_key);
+    // Byte ranges let videos start quickly and seek (iPhones require them to play video at all).
+    const range = parseRange(req.get('range'), v.size);
+    if (range === 'invalid') {
+      res.setHeader('Content-Range', `bytes */${v.size}`);
+      return res.status(416).end();
+    }
+    const stream = await ctx.files.open(v.storage_key, range ?? undefined);
     if (!stream) throw new HttpError(410, 'The stored file is no longer available');
     const inlineType = INLINE_TYPES[extname(file.name).toLowerCase()];
     const inline = q.inline === '1' && !!inlineType;
     res.setHeader('Content-Type', inline ? inlineType : 'application/octet-stream');
-    res.setHeader('Content-Length', String(v.size));
+    res.setHeader('Accept-Ranges', 'bytes');
+    if (range) {
+      res.status(206);
+      res.setHeader('Content-Range', `bytes ${range.start}-${range.end}/${v.size}`);
+      res.setHeader('Content-Length', String(range.end - range.start + 1));
+    } else {
+      res.setHeader('Content-Length', String(v.size));
+    }
     res.setHeader('X-Content-Type-Options', 'nosniff');
-    res.setHeader('Content-Security-Policy', "default-src 'none'; img-src 'self'; style-src 'unsafe-inline'; sandbox");
+    res.setHeader('Content-Security-Policy', "default-src 'none'; img-src 'self'; media-src 'self'; style-src 'unsafe-inline'; sandbox");
     res.setHeader('Content-Disposition', `${inline ? 'inline' : 'attachment'}; filename*=UTF-8''${encodeURIComponent(file.name)}`);
     stream.on('error', (error) => {
       console.error('File download failed', error);
