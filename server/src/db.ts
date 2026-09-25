@@ -2,7 +2,9 @@ import { AsyncLocalStorage } from 'node:async_hooks';
 import { mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { DatabaseSync, type SQLInputValue } from 'node:sqlite';
+import { randomUUID } from 'node:crypto';
 import pg from 'pg';
+import type { PeerLink } from './realtime.js';
 
 /**
  * Relational schema for the SoftEX core records (see §4 and §12 of the product
@@ -606,6 +608,20 @@ CREATE TABLE IF NOT EXISTS billing_notices (
   PRIMARY KEY (workspace_id, kind, ref)
 );
 
+-- Large realtime events passed between servers by reference (kept for an hour).
+CREATE TABLE IF NOT EXISTS realtime_events (
+  id TEXT PRIMARY KEY,
+  payload TEXT NOT NULL,
+  created_at TEXT NOT NULL
+);
+
+-- Sign-in and similar attempt counters, shared by every server (keys are hashes).
+CREATE TABLE IF NOT EXISTS rate_limits (
+  key TEXT PRIMARY KEY,
+  count INTEGER NOT NULL,
+  reset_at TEXT NOT NULL
+);
+
 -- Service-level log kept by the operator; outlives deleted workspaces on purpose.
 CREATE TABLE IF NOT EXISTS platform_events (
   id TEXT PRIMARY KEY,
@@ -699,6 +715,13 @@ export interface Database {
    * (a PostgreSQL advisory lock; always runs on SQLite, which has one server).
    */
   exclusive<T>(key: string, fn: () => Promise<T>): Promise<T | undefined>;
+  /**
+   * Run `fn` once the current transaction commits (dropped if it rolls back), or now when
+   * there is no transaction. Used for side effects such as realtime events.
+   */
+  afterCommit(fn: () => Promise<unknown>): Promise<void>;
+  /** Messaging between servers that share this database (PostgreSQL only). */
+  peerLink(): PeerLink | undefined;
   close(): Promise<void>;
 }
 
@@ -737,6 +760,22 @@ abstract class BaseDatabase implements Database {
   abstract transaction<T>(fn: () => Promise<T>): Promise<T>;
   abstract exclusive<T>(key: string, fn: () => Promise<T>): Promise<T | undefined>;
   abstract close(): Promise<void>;
+  protected abstract pending(): (() => Promise<unknown>)[] | undefined;
+
+  async afterCommit(fn: () => Promise<unknown>) {
+    const queue = this.pending();
+    if (queue) queue.push(fn);
+    else await fn();
+  }
+
+  /** Run queued after-commit work outside the finished transaction; failures are logged. */
+  protected async flush(queue: (() => Promise<unknown>)[]) {
+    for (const fn of queue) await fn().catch((error) => console.error('After-commit task failed', error));
+  }
+
+  peerLink(): PeerLink | undefined {
+    return undefined;
+  }
 
   async get<T = Row>(sql: string, ...params: SqlValue[]): Promise<T | undefined> {
     return (await this.all<T>(sql, ...params))[0];
@@ -768,7 +807,7 @@ class SqliteDatabase extends BaseDatabase {
   readonly dialect = 'sqlite' as const;
   readonly ready = Promise.resolve();
   private readonly raw: DatabaseSync;
-  private readonly inTx = new AsyncLocalStorage<true>();
+  private readonly inTx = new AsyncLocalStorage<{ after: (() => Promise<unknown>)[] }>();
   private active: Promise<void> | null = null;
 
   constructor(path: string) {
@@ -808,11 +847,12 @@ class SqliteDatabase extends BaseDatabase {
     await this.turn();
     let release!: () => void;
     this.active = new Promise((resolve) => (release = resolve));
+    const store = { after: [] as (() => Promise<unknown>)[] };
     this.raw.exec('BEGIN');
+    let result: T;
     try {
-      const result = await this.inTx.run(true, fn);
+      result = await this.inTx.run(store, fn);
       this.raw.exec('COMMIT');
-      return result;
     } catch (error) {
       this.raw.exec('ROLLBACK');
       throw error;
@@ -820,6 +860,12 @@ class SqliteDatabase extends BaseDatabase {
       this.active = null;
       release();
     }
+    await this.flush(store.after);
+    return result;
+  }
+
+  protected pending() {
+    return this.inTx.getStore()?.after;
   }
 
   async exclusive<T>(_key: string, fn: () => Promise<T>) {
@@ -877,7 +923,8 @@ class PostgresDatabase extends BaseDatabase {
   readonly dialect = 'postgres' as const;
   readonly ready: Promise<void>;
   private readonly pool: pg.Pool;
-  private readonly tx = new AsyncLocalStorage<pg.PoolClient>();
+  private readonly tx = new AsyncLocalStorage<{ client: pg.PoolClient; after: (() => Promise<unknown>)[] }>();
+  private readonly url: string;
 
   private readonly schema?: string;
 
@@ -889,6 +936,7 @@ class PostgresDatabase extends BaseDatabase {
     if (schema && !/^[a-z_][a-z0-9_]{0,62}$/.test(schema)) throw new Error('schema must be lowercase letters, digits and underscores');
     parsed.searchParams.delete('schema');
     this.schema = schema;
+    this.url = parsed.toString();
     this.pool = new pg.Pool({
       connectionString: parsed.toString(),
       max: Number(process.env.SOFTEX_DB_POOL_SIZE ?? 10),
@@ -925,7 +973,7 @@ class PostgresDatabase extends BaseDatabase {
 
   private async query(sql: string, params: SqlValue[]) {
     await this.ready;
-    const client = this.tx.getStore() ?? this.pool;
+    const client = this.tx.getStore()?.client ?? this.pool;
     return client.query(toPostgres(sql), params.map(toSql));
   }
 
@@ -941,17 +989,87 @@ class PostgresDatabase extends BaseDatabase {
     if (this.tx.getStore()) return fn();
     await this.ready;
     const client = await this.pool.connect();
+    const store = { client, after: [] as (() => Promise<unknown>)[] };
+    let result: T;
     try {
       await client.query('BEGIN');
-      const result = await this.tx.run(client, fn);
+      result = await this.tx.run(store, fn);
       await client.query('COMMIT');
-      return result;
     } catch (error) {
       await client.query('ROLLBACK').catch(() => {});
       throw error;
     } finally {
       client.release();
     }
+    await this.flush(store.after);
+    return result;
+  }
+
+  protected pending() {
+    return this.tx.getStore()?.after;
+  }
+
+  /**
+   * LISTEN/NOTIFY between servers on this database. Payloads over NOTIFY's size limit are
+   * stored in realtime_events and passed by reference. The listener reconnects on its own.
+   */
+  peerLink(): PeerLink {
+    const channel = `softex_rt_${this.schema ?? 'public'}`;
+    const options = this.schema ? `-c search_path=${this.schema}` : undefined;
+    return {
+      publish: async (payload) => {
+        let message = payload;
+        if (Buffer.byteLength(payload) > 7000) {
+          const id = randomUUID();
+          await this.run('INSERT INTO realtime_events (id, payload, created_at) VALUES (?, ?, ?)', id, payload, new Date().toISOString());
+          message = JSON.stringify({ ref: id });
+        }
+        await this.ready;
+        await this.pool.query('SELECT pg_notify($1, $2)', [channel, message]);
+      },
+      subscribe: async (handler) => {
+        await this.ready;
+        let client: pg.Client | undefined;
+        let closed = false;
+        let delay = 1000;
+        const connect = async (): Promise<void> => {
+          const c = new pg.Client({ connectionString: this.url, options });
+          client = c;
+          c.on('notification', (n) => {
+            if (n.channel !== channel || !n.payload) return;
+            const ref = n.payload.startsWith('{"ref":') ? (JSON.parse(n.payload) as { ref: string }).ref : null;
+            if (!ref) return handler(n.payload);
+            this.get<{ payload: string }>('SELECT payload FROM realtime_events WHERE id = ?', ref)
+              .then((row) => row && handler(row.payload))
+              .catch((error) => console.error('Could not load realtime event', error));
+          });
+          const retry = () => {
+            if (closed || client !== c) return;
+            client = undefined;
+            setTimeout(() => void connect().catch(() => {}), delay).unref();
+            delay = Math.min(delay * 2, 30_000);
+          };
+          c.on('error', (error) => {
+            console.error('Realtime listener lost its connection', error.message);
+            retry();
+          });
+          c.on('end', retry);
+          try {
+            await c.connect();
+            await c.query(`LISTEN ${channel}`);
+            delay = 1000;
+          } catch (error) {
+            retry();
+            throw error;
+          }
+        };
+        await connect();
+        return async () => {
+          closed = true;
+          await client?.end().catch(() => {});
+        };
+      },
+    };
   }
 
   async exclusive<T>(key: string, fn: () => Promise<T>) {

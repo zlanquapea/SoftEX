@@ -140,24 +140,21 @@ export function scimRouter(ctx: Ctx) {
     const filter = String(req.query.filter ?? '');
     const startIndex = Math.max(1, Number(req.query.startIndex ?? 1) || 1);
     const count = Math.min(200, Math.max(0, Number(req.query.count ?? 100) || 100));
-    let where = 'm.workspace_id = ?';
-    const params: string[] = [ws];
     const eq = filter.match(/^(userName|externalId|emails(?:\.value)?)\s+eq\s+"([^"]*)"$/i);
     if (filter && !eq) throw new ScimError(400, 'Only "userName eq", "externalId eq" and "emails eq" filters are supported', 'invalidFilter');
-    if (eq) {
-      if (/^externalId$/i.test(eq[1])) {
-        where += ' AND m.scim_external_id = ?';
-        params.push(eq[2]);
-      } else {
-        where += ' AND u.email = ?';
-        params.push(eq[2].toLowerCase());
-      }
-    }
-    const total = (await db.get(`SELECT COUNT(*) AS n FROM memberships m JOIN users u ON u.id = m.user_id WHERE ${where}`, ...params))!.n;
+    // The filter value is always a bound parameter; `IS NULL OR` makes an absent filter match everyone.
+    const byExternalId = eq && /^externalId$/i.test(eq[1]) ? eq[2] : null;
+    const byEmail = eq && !byExternalId ? eq[2].toLowerCase() : null;
+    const where = `m.workspace_id = ? AND (CAST(? AS TEXT) IS NULL OR m.scim_external_id = ?) AND (CAST(? AS TEXT) IS NULL OR u.email = ?)`;
+    const total = (await db.get(`SELECT COUNT(*) AS n FROM memberships m JOIN users u ON u.id = m.user_id WHERE ${where}`, ws, byExternalId, byExternalId, byEmail, byEmail))!.n;
     const rows = await db.all(
       `SELECT u.*, m.deactivated_at, m.scim_external_id, m.created_at AS joined_at FROM memberships m JOIN users u ON u.id = m.user_id
         WHERE ${where} ORDER BY m.created_at LIMIT ? OFFSET ?`,
-      ...params,
+      ws,
+      byExternalId,
+      byExternalId,
+      byEmail,
+      byEmail,
       count,
       startIndex - 1,
     );

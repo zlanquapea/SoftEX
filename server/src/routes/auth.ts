@@ -129,19 +129,42 @@ export async function startSession(ctx: Ctx, res: Response, userId: string, work
   return token;
 }
 
-/** Tiny in-memory limiter for credential endpoints (§9 "rate limit abuse"). */
-const attempts = new Map<string, { count: number; reset: number }>();
-function rateLimit(key: string, max = 10, windowMs = 15 * 60_000) {
-  const t = Date.now();
-  const entry = attempts.get(key);
-  if (!entry || entry.reset < t) {
-    attempts.set(key, { count: 1, reset: t + windowMs });
-    return;
-  }
-  entry.count += 1;
-  if (entry.count > max) throw new HttpError(429, 'Too many attempts. Please wait a few minutes and try again.');
+/**
+ * Limiter for credential endpoints (§9 "rate limit abuse"). Counts live in the database so the
+ * limit holds across every SoftEX server; keys are hashed so no emails or IPs are stored.
+ */
+async function rateLimit(ctx: Ctx, key: string, max = 10, windowMs = 15 * 60_000) {
+  const t = now();
+  const row = await ctx.db.get(
+    `INSERT INTO rate_limits (key, count, reset_at) VALUES (?, 1, ?)
+       ON CONFLICT (key) DO UPDATE SET
+         count = CASE WHEN rate_limits.reset_at < ? THEN 1 ELSE rate_limits.count + 1 END,
+         reset_at = CASE WHEN rate_limits.reset_at < ? THEN excluded.reset_at ELSE rate_limits.reset_at END
+       RETURNING count`,
+    sha256(key),
+    new Date(Date.now() + windowMs).toISOString(),
+    t,
+    t,
+  );
+  if (row!.count > max) throw tooMany();
 }
-export const resetRateLimits = () => attempts.clear();
+
+const tooMany = () => new HttpError(429, 'Too many attempts. Please wait a few minutes and try again.');
+
+/**
+ * Sign-in limiting counts only failed attempts (brute-force protection), so people who sign in
+ * often are never locked out; a successful sign-in clears the count.
+ */
+const loginLimit = (ctx: Ctx, key: string, max = 10) => ({
+  async check() {
+    const row = await ctx.db.get('SELECT count FROM rate_limits WHERE key = ? AND reset_at >= ?', sha256(key), now());
+    if (row && row.count >= max) throw tooMany();
+  },
+  failed: () => rateLimit(ctx, key, max),
+  async succeeded() {
+    await ctx.db.run('DELETE FROM rate_limits WHERE key = ?', sha256(key));
+  },
+});
 
 const Email = z.string().trim().toLowerCase().email().max(200);
 const Password = z.string().min(8, 'must be at least 8 characters').max(200);
@@ -233,7 +256,7 @@ export function authRouter(ctx: Ctx) {
       req.body,
     );
     if (isSaas(ctx) && !body.acceptTerms) throw badRequest('Please accept the Terms of Service and Privacy Policy to continue');
-    rateLimit(`register:${req.ip}`, 20);
+    await rateLimit(ctx, `register:${req.ip}`, 20);
     const { registration } = ctx.config;
     if (registration === 'closed' || (registration === 'first' && await db.get('SELECT 1 FROM workspaces LIMIT 1'))) {
       throw new HttpError(403, 'New workspaces cannot be created on this server. Ask an admin to invite you.');
@@ -297,15 +320,21 @@ export function authRouter(ctx: Ctx) {
       z.object({ email: Email, password: z.string().min(1).max(200), code: z.string().optional(), workspaceId: z.string().optional() }),
       req.body,
     );
-    rateLimit(`login:${req.ip}:${body.email}`);
+    const limit = loginLimit(ctx, `login:${req.ip}:${body.email}`);
+    await limit.check();
     const user = await db.get('SELECT * FROM users WHERE email = ?', body.email);
     if (!user || !verifyPassword(body.password, user.password_hash)) {
+      await limit.failed();
       throw new HttpError(401, 'Email or password is incorrect');
     }
     if (user.mfa_enabled) {
       if (!body.code) throw new HttpError(401, 'Enter the code from your authenticator app', { code: 'mfa_required' });
-      if (!verifyTotp(user.mfa_secret, body.code)) throw new HttpError(401, 'That code is not valid', { code: 'mfa_required' });
+      if (!verifyTotp(user.mfa_secret, body.code)) {
+        await limit.failed();
+        throw new HttpError(401, 'That code is not valid', { code: 'mfa_required' });
+      }
     }
+    await limit.succeeded();
     const all = await db.all(
       `SELECT m.workspace_id, m.role, w.suspended_at FROM memberships m JOIN workspaces w ON w.id = m.workspace_id
         WHERE m.user_id = ? AND m.deactivated_at IS NULL
@@ -337,7 +366,7 @@ export function authRouter(ctx: Ctx) {
 
   r.post('/auth/verify-email', async (req, res) => {
     const { token } = parse(z.object({ token: z.string().min(10).max(200) }), req.body);
-    rateLimit(`verify:${req.ip}`, 30);
+    await rateLimit(ctx, `verify:${req.ip}`, 30);
     const row = await db.get('SELECT * FROM email_verifications WHERE token_hash = ? AND expires_at > ?', sha256(token), now());
     const user = row ? await db.get('SELECT id, email FROM users WHERE id = ?', row.user_id) : undefined;
     // The link only counts for the address it was sent to.
@@ -353,7 +382,7 @@ export function authRouter(ctx: Ctx) {
 
   r.post('/auth/forgot', async (req, res) => {
     const { email } = parse(z.object({ email: Email }), req.body);
-    rateLimit(`forgot:${req.ip}`, 10);
+    await rateLimit(ctx, `forgot:${req.ip}`, 10);
     const user = await db.get('SELECT id, name, email FROM users WHERE email = ?', email);
     if (user) {
       const token = randomToken();
@@ -372,7 +401,7 @@ export function authRouter(ctx: Ctx) {
 
   r.post('/auth/reset', async (req, res) => {
     const body = parse(z.object({ token: z.string().min(10), password: Password }), req.body);
-    rateLimit(`reset:${req.ip}`, 20);
+    await rateLimit(ctx, `reset:${req.ip}`, 20);
     const reset = await db.get('SELECT * FROM password_resets WHERE token_hash = ? AND used_at IS NULL AND expires_at > ?', sha256(body.token), now());
     if (!reset) throw new HttpError(400, 'This reset link has expired or was already used. Request a new one.');
     await db.transaction(async () => {
@@ -547,9 +576,15 @@ export function meRouter(ctx: Ctx) {
 
   r.post('/me/verify-email/resend', async (req, res) => {
     const auth = authOf(req);
-    rateLimit(`verify-resend:${auth.userId}`, 5, 60 * 60_000);
     const user = (await db.get('SELECT id, name, email, email_verified_at FROM users WHERE id = ?', auth.userId))!;
     if (user.email_verified_at) throw badRequest('Your email address is already confirmed');
+    // At most five confirmation emails an hour, counted from the outbox (shared by every server).
+    const recent = (await db.get(
+      `SELECT COUNT(*) AS n FROM outbound_emails WHERE kind = 'verify_email' AND to_email = ? AND created_at > ?`,
+      user.email,
+      new Date(Date.now() - 60 * 60_000).toISOString(),
+    ))!.n;
+    if (recent >= 5) throw new HttpError(429, 'Too many confirmation emails. Please wait a while and check your spam folder.');
     await sendVerificationEmail(ctx, user as { id: string; name: string; email: string });
     res.json({ ok: true, email: user.email });
   });

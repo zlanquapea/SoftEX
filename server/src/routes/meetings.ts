@@ -289,7 +289,7 @@ export function meetingsRouter(ctx: Ctx) {
         await notify(ctx, auth.workspaceId, { userId: p.id, kind: 'meeting', title: `“${m.title}” was rescheduled`, body: new Date(body.startsAt).toUTCString(), link: `/meetings/${m.id}`, actorId: auth.userId });
       }
     }
-    await ctx.hub.publish(auth.workspaceId, { type: 'meeting.updated', meetingId: m.id }, (a) => canViewMeeting(db, a, m));
+    await ctx.hub.publish(auth.workspaceId, { type: 'meeting.updated', meetingId: m.id }, { kind: 'meeting', meetingId: m.id });
     res.json(await summary((await db.get('SELECT * FROM meetings WHERE id = ?', m.id))!));
   });
 
@@ -314,7 +314,7 @@ export function meetingsRouter(ctx: Ctx) {
         await notify(ctx, auth.workspaceId, { userId: p.id, kind: 'meeting', title: `“${m.title}” has started`, body: `${starter.name} started the meeting`, link: `/meetings/${m.id}`, actorId: auth.userId, urgent: true });
       }
     }
-    await ctx.hub.publish(auth.workspaceId, { type: 'meeting.updated', meetingId: m.id }, (a) => canViewMeeting(db, a, m));
+    await ctx.hub.publish(auth.workspaceId, { type: 'meeting.updated', meetingId: m.id }, { kind: 'meeting', meetingId: m.id });
     res.json({ video_url: m.video_url });
   });
 
@@ -339,7 +339,7 @@ export function meetingsRouter(ctx: Ctx) {
     for (const p of await participants(m.id)) {
       await notify(ctx, auth.workspaceId, { userId: p.id, kind: 'meeting', title: `Notes and follow-ups from “${m.title}”`, body: `${decisions} decision(s), ${followUps} follow-up task(s)`, link: `/meetings/${m.id}`, actorId: auth.userId });
     }
-    await ctx.hub.publish(auth.workspaceId, { type: 'meeting.updated', meetingId: m.id }, (a) => canViewMeeting(db, a, m));
+    await ctx.hub.publish(auth.workspaceId, { type: 'meeting.updated', meetingId: m.id }, { kind: 'meeting', meetingId: m.id });
     res.json({ ok: true });
   });
 

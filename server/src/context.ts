@@ -4,6 +4,7 @@ import { canViewChannel } from './access.js';
 import type { Database, Row } from './db.js';
 import type { BillingConfig } from './plans.js';
 import type { RealtimeHub } from './realtime.js';
+import type { FileStore } from './storage.js';
 import { queueEmail } from './mailer.js';
 import { newId, now } from './util.js';
 
@@ -54,6 +55,8 @@ export interface AiClient {
 
 export interface Ctx {
   db: Database;
+  /** Where uploaded file contents are kept (local disk or S3-compatible storage). */
+  files: FileStore;
   hub: RealtimeHub;
   config: Config;
   mail?: MailTransport;
@@ -220,5 +223,5 @@ export async function platformEvent(ctx: Ctx, actor: string, action: string, wor
 
 /** Publish an event to everyone who can currently see the given channel. */
 export async function publishToChannel(ctx: Ctx, channel: Row, event: { type: string; [k: string]: unknown }) {
-  await ctx.hub.publish(channel.workspace_id, event, (auth) => canViewChannel(ctx.db, auth, channel));
+  await ctx.hub.publish(channel.workspace_id, event, { kind: 'channel', channelId: channel.id });
 }

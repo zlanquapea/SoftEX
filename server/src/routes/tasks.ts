@@ -228,7 +228,7 @@ export function tasksRouter(ctx: Ctx) {
   const publishTask = async (auth: Auth, taskId: string) => {
     const task = await db.get('SELECT * FROM tasks WHERE id = ?', taskId);
     if (!task) return;
-    await ctx.hub.publish(auth.workspaceId, { type: 'task.updated', taskId, projectId: task.project_id }, (a) => canViewTask(db, a, task));
+    await ctx.hub.publish(auth.workspaceId, { type: 'task.updated', taskId, projectId: task.project_id }, { kind: 'task', taskId });
   };
 
   r.get('/tasks', async (req, res) => {

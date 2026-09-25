@@ -5,7 +5,6 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import request from 'supertest';
 import { createApp, type AppOptions, type SoftexApp } from '../src/app.js';
-import { resetRateLimits } from '../src/routes/auth.js';
 import { runJobsOnce } from '../src/jobs.js';
 
 export interface SentMail {
@@ -23,7 +22,6 @@ export interface TestEnv {
 }
 
 export function setup(options: Partial<AppOptions> = {}): TestEnv {
-  resetRateLimits();
   const dir = mkdtempSync(join(tmpdir(), 'softex-test-'));
   const sent: SentMail[] = [];
   // SOFTEX_TEST_DATABASE_URL runs the suite on PostgreSQL, each test in its own schema.

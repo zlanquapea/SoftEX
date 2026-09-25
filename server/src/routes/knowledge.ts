@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import multer from 'multer';
-import { createReadStream, existsSync, mkdirSync, renameSync, unlinkSync } from 'node:fs';
+import { mkdirSync, unlinkSync } from 'node:fs';
 import { extname, join, resolve, sep } from 'node:path';
 import { z } from 'zod';
 import {
@@ -313,9 +313,9 @@ export function knowledgeRouter(ctx: Ctx) {
     }
     const key = newId();
     const text = await extractText(tempPath(file), file.originalname);
-    renameSync(tempPath(file), join(ctx.config.uploadDir, key));
     const ext = extname(file.originalname).toLowerCase();
     const mime = INLINE_TYPES[ext]?.split(';')[0] ?? (file.mimetype || 'application/octet-stream');
+    await ctx.files.put(key, tempPath(file), mime);
     return { key, mime, size: file.size, text };
   };
 
@@ -471,8 +471,8 @@ export function knowledgeRouter(ctx: Ctx) {
     const q = parse(z.object({ version: z.coerce.number().int().optional(), inline: z.enum(['1', '0']).default('0') }), req.query);
     const v = await db.get('SELECT * FROM file_versions WHERE file_id = ? AND version = ?', file.id, q.version ?? file.current_version);
     if (!v) throw notFound('Version');
-    const path = join(ctx.config.uploadDir, v.storage_key);
-    if (!existsSync(path)) throw new HttpError(410, 'The stored file is no longer available');
+    const stream = await ctx.files.open(v.storage_key);
+    if (!stream) throw new HttpError(410, 'The stored file is no longer available');
     const inlineType = INLINE_TYPES[extname(file.name).toLowerCase()];
     const inline = q.inline === '1' && !!inlineType;
     res.setHeader('Content-Type', inline ? inlineType : 'application/octet-stream');
@@ -480,7 +480,11 @@ export function knowledgeRouter(ctx: Ctx) {
     res.setHeader('X-Content-Type-Options', 'nosniff');
     res.setHeader('Content-Security-Policy', "default-src 'none'; img-src 'self'; style-src 'unsafe-inline'; sandbox");
     res.setHeader('Content-Disposition', `${inline ? 'inline' : 'attachment'}; filename*=UTF-8''${encodeURIComponent(file.name)}`);
-    createReadStream(path).pipe(res);
+    stream.on('error', (error) => {
+      console.error('File download failed', error);
+      res.destroy(error);
+    });
+    stream.pipe(res);
   });
 
   r.patch('/files/:id', async (req, res) => {

@@ -52,6 +52,9 @@ SOFTEX_SUPPORT_EMAIL=billing@yourcompany.com
 SOFTEX_PRICE_STANDARD=1.50
 SOFTEX_PRICE_BUSINESS=3
 SOFTEX_LRD_PER_USD=190
+SOFTEX_COMPANY_NAME=Your Company Ltd
+SOFTEX_COMPANY_ADDRESS=Broad Street, Monrovia, Liberia
+SOFTEX_LEGAL_EMAIL=legal@yourcompany.com
 SOFTEX_PAYMENT_INSTRUCTIONS=**Orange Money:** send to 0770 000 000 (Your Company Ltd)\n\n**MTN MoMo:** send to 0880 000 000 (Your Company Ltd)\n\n**Bank transfer:** Ecobank Liberia, account name Your Company Ltd, account number 0000000000
 
 # Email (required for SaaS)
@@ -77,6 +80,7 @@ What each one does:
 | `SOFTEX_SUPPORT_EMAIL` | Shown to customers on the pricing and billing pages. |
 | `SOFTEX_PRICE_STANDARD`, `SOFTEX_PRICE_BUSINESS` | Price per member per month, in US dollars. Defaults are $1.50 and $3. Paying 12 months at once gets two months free. |
 | `SOFTEX_LRD_PER_USD` | Optional exchange rate. When set, prices also show an approximate amount in Liberian dollars. Update it when the rate moves. |
+| `SOFTEX_COMPANY_NAME`, `SOFTEX_COMPANY_ADDRESS`, `SOFTEX_LEGAL_EMAIL` | Your business details. They appear on the website footer and in the Terms of Service and Privacy Policy at `/terms` and `/privacy`. Those pages are **drafts**: have a lawyer review them before you take customers. |
 | `SOFTEX_PAYMENT_INSTRUCTIONS` | What customers see when they pay: your mobile money numbers and bank details. Markdown is allowed; write `\n` for a new line. |
 | `RAILWAY_RUN_UID` | Railway mounts volumes as root, and SoftEX's image runs as an unprivileged user. `0` lets the app write to the volume. If it is missing, the logs say *SoftEX cannot write to its data directory*. |
 | `SOFTEX_SMTP_URL`, `SOFTEX_MAIL_FROM` | Without them, emails are kept in **Administration → Email** but not sent, so customers can't confirm their address. URL-encode special characters in the password (for example `@` → `%40`). Use port 465 with `smtps://`, or port 587 with `smtp://`. |
@@ -98,7 +102,7 @@ Click **Deploy** (or **Apply changes**) to redeploy with the volume and variable
 4. Open the workspace menu (top left) → **Operator console**.
 5. Your own workspace starts on a trial like everyone else's. To keep it on Business, open **Workspaces**, click it, set **Plan** to *Business* and **Paid through** to a date far in the future, and save.
 6. Check that the proxy setting works. In **Administration → Audit log**, find your `auth.login` entry and check the IP address is your own public address, not a private one like `10.x.x.x` or `100.64.x.x`. If it is private, set `SOFTEX_TRUST_PROXY=2` and check again.
-7. Open `/pricing` on your address: this is the public pricing page to link from your website and social media.
+7. Sign out and open your address: signed-out visitors see the product website, with pricing at `/pricing`, and the terms and privacy policy at `/terms` and `/privacy`. Sign-in is at `/login`. Share the address on your social media and in your email signature.
 
 Do **not** run the demo seed (`npm run seed`) in production; it creates sample accounts with a published password.
 
@@ -125,11 +129,11 @@ When a scanner is configured and unreachable, uploads are refused rather than ac
 
 ## Updating
 
-Railway redeploys automatically when `main` changes, because the service is connected to the GitHub repository. Database changes are applied automatically when the new version starts. Services with a volume restart rather than overlap, so expect a few seconds of downtime per deploy.
+Railway redeploys automatically when `main` changes, because the service is connected to the GitHub repository. Database changes are applied automatically when the new version starts. Services with a volume restart rather than overlap, so expect a few seconds of downtime per deploy. After moving to PostgreSQL and object storage (see *Growing* below), deploys have no downtime.
 
 ## Backups
 
-Your data lives in the volume. If your Railway plan offers volume **Backups** (in the volume's settings), schedule them, and take a manual backup before big changes. People can also export what they can access from **Administration → Workspace → Export data**.
+With SQLite, your data lives in the volume. If your Railway plan offers volume **Backups** (in the volume's settings), schedule them, and take a manual backup before big changes. People can also export what they can access from **Administration → Workspace → Export data**.
 
 ## Running the service day to day
 
@@ -163,9 +167,44 @@ You see sizes, dates and counts only. The console never shows customers' message
 
 To run SoftEX just for your own organisation, leave out the *Hosted service (SaaS)* variables and set `SOFTEX_REGISTRATION=first`. The first person to sign up creates the only workspace, everyone else joins by invitation, and there are no plans or limits. Email is then optional.
 
-## Limits of this setup
+## Growing: several servers
 
-- **One instance only.** SQLite on a volume can't be shared between replicas, so keep **Replicas** at 1 (`railway.json` sets this). Scaling out needs the planned move to PostgreSQL and object storage.
+The setup above runs one server with its data in a SQLite file on the volume. That comfortably handles an early customer base. When you need more capacity or no downtime during deploys, move to **PostgreSQL** and **object storage**, and run several copies (replicas) of SoftEX:
+
+1. **Add PostgreSQL:** in the project, click **New → Database → PostgreSQL**.
+2. **Create object storage for files.** Any S3-compatible service works. Cloudflare R2 has a free tier and no download fees:
+   1. In Cloudflare, go to **R2 → Create bucket** (for example `softex-files`).
+   2. Go to **R2 → Manage API tokens → Create API token** with *Object Read & Write* on that bucket, and copy the access key ID and secret.
+   3. Note your account ID, which is shown on the R2 overview page.
+3. **Add these variables to the SoftEX service:**
+
+   ```env
+   SOFTEX_DATABASE_URL=${{Postgres.DATABASE_URL}}
+   SOFTEX_S3_BUCKET=softex-files
+   SOFTEX_S3_ENDPOINT=https://<account-id>.r2.cloudflarestorage.com
+   SOFTEX_S3_REGION=auto
+   SOFTEX_S3_ACCESS_KEY_ID=<access key id>
+   SOFTEX_S3_SECRET_ACCESS_KEY=<secret access key>
+   ```
+
+   (`Postgres` is the name of the database service. Use yours if you renamed it.) For AWS S3, leave out the endpoint and set the bucket's region. For MinIO, also set `SOFTEX_S3_FORCE_PATH_STYLE=true`.
+4. **Move existing data, if you already have customers.** Switching the variables starts with an empty PostgreSQL database and empty storage. Nothing is copied from the SQLite file automatically. Do this before launch, or plan a migration.
+5. **Remove the volume and `RAILWAY_RUN_UID`.** With PostgreSQL and object storage, nothing needs to survive on the server's own disk.
+6. **Raise the replicas:** in the service, go to **Settings → Deploy → Replicas** and choose 2 or more.
+
+What SoftEX does when several servers share one database:
+
+- Live updates, sign-outs and "who's online" pass between servers through PostgreSQL (`LISTEN/NOTIFY`), so a message posted on one server reaches people connected to another.
+- Background jobs (emails, reminders, webhooks, billing notices) run on one server at a time, using a database lock.
+- Sign-in rate limits are stored in the database, so they apply across all servers.
+- Database changes on upgrade run once, even when several servers start together.
+
+Railway deploys new versions without downtime once the service has no volume.
+
+## Limits
+
+- **SQLite:** one server only, with its data on the volume. Use PostgreSQL to run several.
+- **General API rate limit:** the limit of 1,200 requests per minute per IP address is counted separately on each server. Sign-in limits are shared.
 - **Real-time updates** use WebSockets, which Railway supports without extra configuration.
 
 ## Troubleshooting
@@ -181,4 +220,6 @@ To run SoftEX just for your own organisation, leave out the *Hosted service (Saa
 | Everyone gets *Too many attempts* at once | `SOFTEX_TRUST_PROXY` is missing, so all visitors look like the same address. Set it to `1`. |
 | Customers can't invite people or pay | They haven't confirmed their email address. They can resend the link from the banner at the top of the page. If emails never arrive, check `SOFTEX_SMTP_URL`. |
 | *Operator console* is missing from the menu | Your email address must be listed in `SOFTEX_OPERATOR_EMAILS`, and `SOFTEX_MODE` must be `saas`. Redeploy after changing variables. |
+| Logs: *SoftEX could not start: the database is not reachable* | Check `SOFTEX_DATABASE_URL`. With Railway's reference variable, the PostgreSQL service must be in the same project. |
+| Files uploaded before moving to S3 are missing | Local files aren't copied to the bucket automatically; copy the contents of `/app/server/data/uploads` into the bucket (same file names) before removing the volume. |
 | Health check fails | Open the deploy logs. The server must print `SoftEX server listening on …` within 60 seconds. |

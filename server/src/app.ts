@@ -4,8 +4,9 @@ import compression from 'compression';
 import { existsSync } from 'node:fs';
 import { createServer, type Server } from 'node:http';
 import { join } from 'node:path';
-import { canViewChannel } from './access.js';
+import { canViewChannel, canViewMeeting, canViewTask } from './access.js';
 import { openDatabase } from './db.js';
+import { LocalFileStore, S3FileStore, type FileStore, type S3Settings } from './storage.js';
 import type { AiClient, Config, Ctx, MailTransport } from './context.js';
 import type { BillingConfig } from './plans.js';
 import { createClaudeClient } from './ai.js';
@@ -34,6 +35,9 @@ export interface AppOptions extends Partial<Omit<Config, 'billing'>> {
   dbPath?: string;
   /** postgres://… to use PostgreSQL instead of the SQLite file at dbPath. */
   databaseUrl?: string;
+  /** S3-compatible storage for uploaded files (otherwise they go to uploadDir). */
+  s3?: S3Settings;
+  files?: FileStore;
   staticDir?: string;
   /** Requests per minute per client address across the API (default 1200). */
   rateLimitPerMinute?: number;
@@ -48,6 +52,8 @@ export interface SoftexApp {
   app: Express;
   server: Server;
   ctx: Ctx;
+  /** Resolves when the database is migrated and realtime is connected to other servers. */
+  ready: Promise<void>;
   close: () => Promise<void>;
 }
 
@@ -80,8 +86,10 @@ export function createApp(options: AppOptions = {}): SoftexApp {
   };
   const db = openDatabase(options.databaseUrl ?? options.dbPath ?? join(process.cwd(), 'data', 'softex.db'));
   const hub = new RealtimeHub();
+  const files: FileStore = options.files ?? (options.s3?.bucket ? new S3FileStore(options.s3) : new LocalFileStore(config.uploadDir));
   const ctx: Ctx = {
     db,
+    files,
     hub,
     config,
     mail: options.mail,
@@ -176,8 +184,39 @@ export function createApp(options: AppOptions = {}): SoftexApp {
     const channel = await db.get('SELECT * FROM channels WHERE id = ?', channelId);
     if (!channel || !await canViewChannel(db, auth, channel)) return;
     const user = await db.get('SELECT name FROM users WHERE id = ?', auth.userId);
-    await hub.publish(auth.workspaceId, { type: 'typing', channelId, userId: auth.userId, name: user?.name }, async (a) => a.userId !== auth.userId && await canViewChannel(db, a, channel));
+    await hub.publish(auth.workspaceId, { type: 'typing', channelId, userId: auth.userId, name: user?.name }, { kind: 'channel', channelId, exceptUserId: auth.userId });
   };
+
+  // Realtime audiences are checked against the database for each connected client.
+  hub.resolveAudience = async (_workspaceId, audience) => {
+    switch (audience.kind) {
+      case 'workspace':
+        return () => true;
+      case 'user':
+        return (a) => a.userId === audience.userId;
+      case 'channel': {
+        const channel = await db.get('SELECT * FROM channels WHERE id = ?', audience.channelId);
+        return (a) => !!channel && a.userId !== audience.exceptUserId && canViewChannel(db, a, channel);
+      }
+      case 'task': {
+        const task = await db.get('SELECT * FROM tasks WHERE id = ?', audience.taskId);
+        return (a) => !!task && canViewTask(db, a, task);
+      }
+      case 'meeting': {
+        const meeting = await db.get('SELECT * FROM meetings WHERE id = ?', audience.meetingId);
+        return (a) => !!meeting && canViewMeeting(db, a, meeting);
+      }
+    }
+  };
+  // Events published inside a transaction go out once it commits.
+  hub.defer = (fn) => db.afterCommit(fn);
+  // With PostgreSQL, servers sharing the database pass events, sign-outs and presence to each other.
+  const peers = db.peerLink();
+  const ready = (async () => {
+    await db.ready;
+    if (peers) await hub.connectPeers(peers);
+  })();
+  ready.catch(() => {});
 
   const server = createServer(app);
   hub.attach(server, (req) => authenticate(ctx, req));
@@ -186,9 +225,11 @@ export function createApp(options: AppOptions = {}): SoftexApp {
     app,
     server,
     ctx,
+    ready,
     close: async () => {
       stopJobs();
-      hub.close();
+      await ready.catch(() => {});
+      await hub.close();
       server.close();
       await db.close();
     },

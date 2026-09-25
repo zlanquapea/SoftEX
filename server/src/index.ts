@@ -56,9 +56,20 @@ const billing = Object.fromEntries(
   }).filter(([, v]) => v !== undefined),
 );
 
-const { server } = createApp({
+const { server, ready } = createApp({
   dbPath: process.env.SOFTEX_DB ?? join(dataDir, 'softex.db'),
   databaseUrl: process.env.SOFTEX_DATABASE_URL || undefined,
+  s3: process.env.SOFTEX_S3_BUCKET
+    ? {
+        bucket: process.env.SOFTEX_S3_BUCKET,
+        region: process.env.SOFTEX_S3_REGION || undefined,
+        endpoint: process.env.SOFTEX_S3_ENDPOINT || undefined,
+        accessKeyId: process.env.SOFTEX_S3_ACCESS_KEY_ID || undefined,
+        secretAccessKey: process.env.SOFTEX_S3_SECRET_ACCESS_KEY || undefined,
+        forcePathStyle: process.env.SOFTEX_S3_FORCE_PATH_STYLE === 'true',
+        prefix: process.env.SOFTEX_S3_PREFIX || undefined,
+      }
+    : undefined,
   uploadDir: join(dataDir, 'uploads'),
   meetingBaseUrl: process.env.SOFTEX_MEETING_BASE_URL,
   maxUploadBytes: process.env.SOFTEX_MAX_UPLOAD_MB ? Number(process.env.SOFTEX_MAX_UPLOAD_MB) * 1024 * 1024 : undefined,
@@ -91,6 +102,12 @@ if (process.env.NODE_ENV === 'production' && !process.env.SOFTEX_PUBLIC_URL) {
 }
 
 const port = Number(process.env.PORT ?? 4000);
+try {
+  await ready;
+} catch (error) {
+  console.error(`SoftEX could not start: the database is not reachable or could not be prepared.\n${(error as Error).message}`);
+  process.exit(1);
+}
 server.listen(port, () => {
   console.log(`SoftEX server listening on http://localhost:${port}`);
 });

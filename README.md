@@ -29,8 +29,10 @@ SoftEX is a unified workplace app for team communication, projects, documents, m
 ## Architecture
 
 ```
-server/   TypeScript + Express 5 API, SQLite (node:sqlite), WebSockets (ws)
-  src/db.ts        schema (portable SQL, ready to move to PostgreSQL)
+server/   TypeScript + Express 5 API, SQLite (node:sqlite) or PostgreSQL, WebSockets (ws)
+  src/db.ts        schema and the async data layer (SQLite and PostgreSQL engines)
+  src/storage.ts   uploaded files on local disk or S3-compatible storage
+  src/realtime.ts  WebSocket hub; shares events between servers over PostgreSQL
   src/access.ts    every permission rule in one place
   src/routes/*     auth, channels, projects, tasks, knowledge, meetings, workspace, home/search
   test/*           permission, isolation and workflow tests (vitest + supertest)
@@ -72,6 +74,10 @@ Every push to `main` publishes an image to `ghcr.io/zlanquapea/softex` (see *CI/
 | Variable | Default | Purpose |
 | --- | --- | --- |
 | `PORT` | `4000` | HTTP port |
+| `SOFTEX_DATABASE_URL` | *(unset)* | `postgres://…` to use PostgreSQL instead of SQLite (required to run several servers). Add `?schema=name` to keep the tables in their own schema |
+| `SOFTEX_DB_POOL_SIZE` | `10` | PostgreSQL connections per server |
+| `SOFTEX_S3_BUCKET` | *(unset)* | Store uploaded files in S3-compatible storage (AWS S3, Cloudflare R2, Backblaze B2, MinIO) instead of `SOFTEX_DATA_DIR`. Also set `SOFTEX_S3_ENDPOINT`, `SOFTEX_S3_REGION`, `SOFTEX_S3_ACCESS_KEY_ID`, `SOFTEX_S3_SECRET_ACCESS_KEY`, and optionally `SOFTEX_S3_FORCE_PATH_STYLE` and `SOFTEX_S3_PREFIX` |
+| `SOFTEX_COMPANY_NAME` / `SOFTEX_COMPANY_ADDRESS` / `SOFTEX_LEGAL_EMAIL` | *(unset)* | Business details shown on the website and in the Terms of Service and Privacy Policy (SaaS mode) |
 | `SOFTEX_DATA_DIR` | `server/data` | Database and uploaded files |
 | `SOFTEX_MEETING_BASE_URL` | `https://meet.jit.si` | Base URL for generated video meeting links |
 | `SOFTEX_MAX_UPLOAD_MB` | `25` | Upload size limit |
@@ -98,6 +104,7 @@ Every push to `main` publishes an image to `ghcr.io/zlanquapea/softex` (see *CI/
 
 ```bash
 npm test                # server test suite (permissions, workflows, email, SSO, webhooks, AI governance)
+SOFTEX_TEST_DATABASE_URL=postgres://user:pass@localhost:5432/db npm test   # the same suite on PostgreSQL, plus multi-server tests
 npm run typecheck       # server + client
 npm run build && npm run test:e2e   # browser smoke tests (Playwright)
 ```
@@ -123,7 +130,6 @@ See [SECURITY.md](SECURITY.md) for how to report vulnerabilities.
 
 ## Next steps
 
-- **PostgreSQL and object storage** for running several server instances behind a load balancer. The schema is portable SQL, and all queries go through `server/src/db.ts`.
 - **Automatic payment confirmation** through the MTN MoMo or Orange Money merchant APIs, or card payments through a processor available to your company. Today the operator confirms each mobile money or bank payment by hand.
 - **A managed video provider**, following the spec's cost and privacy review. Meeting links use Jitsi by default and can be changed with `SOFTEX_MEETING_BASE_URL`.
 - **OCR for scanned images and image-only PDFs**, which today are searchable by file name only.

@@ -594,7 +594,7 @@ export function projectsRouter(ctx: Ctx) {
     await emitEvent(ctx, auth.workspaceId, 'decision.recorded', { id, title: body.title, rationale: body.rationale, project_id: projectId, channel_id: channelId, meeting_id: body.meetingId ?? null, decided_by: auth.userId }, { projectId, channelId });
     if (channelId) {
       const channel = (await db.get('SELECT * FROM channels WHERE id = ?', channelId))!;
-      await ctx.hub.publish(auth.workspaceId, { type: 'message.updated', messageId: body.messageId, channelId }, (a) => canViewChannel(db, a, channel));
+      await ctx.hub.publish(auth.workspaceId, { type: 'message.updated', messageId: body.messageId, channelId }, { kind: 'channel', channelId: channel.id });
     }
     res.status(201).json(await db.get('SELECT * FROM decisions WHERE id = ?', id));
   });

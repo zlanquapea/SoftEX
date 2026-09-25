@@ -40,4 +40,16 @@ describe('behind a hosting proxy', () => {
     expect(last).toBe(429);
     expect((await attempt('203.0.113.2')).status).toBe(401);
   });
+
+  it('counts only failed sign-ins, and a successful one clears them', async () => {
+    env = setup();
+    const { email } = await registerOwner(env);
+    const login = (password: string) => env.agent().post('/api/auth/login').send({ email, password });
+    for (let i = 0; i < 20; i++) expect((await login('password123')).status).toBe(200);
+    for (let i = 0; i < 9; i++) expect((await login('wrong-password')).status).toBe(401);
+    expect((await login('password123')).status).toBe(200);
+    for (let i = 0; i < 10; i++) expect((await login('wrong-password')).status).toBe(401);
+    // Locked now, even with the right password.
+    expect((await login('password123')).status).toBe(429);
+  });
 });

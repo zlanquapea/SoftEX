@@ -17,8 +17,6 @@ import {
 import { audit, authOf, notify, platformEvent, type Ctx } from '../context.js';
 import { mePayload, startSession } from './auth.js';
 import { verifyTotp } from '../totp.js';
-import { unlinkSync } from 'node:fs';
-import { join } from 'node:path';
 import { queueEmail } from '../mailer.js';
 import { requireFeature, requireMemberCapacity, requireVerifiedEmail } from '../plans.js';
 import { HttpError, badRequest, forbidden, newId, notFound, now, parse, parseJson, randomToken, sha256, verifyPassword, filterAsync } from '../util.js';
@@ -254,15 +252,12 @@ export function workspaceRouter(ctx: Ctx) {
       if ((role ?? target.role) !== 'guest') throw badRequest('Only guests have an access expiry date');
       changes.guest_expires_at = body.guestExpiresAt;
     }
-    const entries = Object.entries(changes);
-    if (entries.length) {
-      await db.run(
-        `UPDATE memberships SET ${entries.map(([k]) => `${k} = ?`).join(', ')} WHERE workspace_id = ? AND user_id = ?`,
-        ...(entries.map(([, v]) => v) as (string | null)[]),
-        auth.workspaceId,
-        req.params.userId,
-      );
-    }
+    await db.transaction(async () => {
+      for (const column of ['role', 'deactivated_at', 'guest_expires_at', 'sponsor_id'] as const) {
+        if (!(column in changes)) continue;
+        await db.run(`UPDATE memberships SET ${column} = ? WHERE workspace_id = ? AND user_id = ?`, changes[column] as string | null, auth.workspaceId, req.params.userId);
+      }
+    });
     if (body.deactivated) {
       await db.run('DELETE FROM sessions WHERE user_id = ? AND workspace_id = ?', req.params.userId, auth.workspaceId);
       ctx.hub.disconnect(auth.workspaceId, req.params.userId);
@@ -430,11 +425,7 @@ export function workspaceRouter(ctx: Ctx) {
       await db.run('DELETE FROM workspaces WHERE id = ?', ws.id);
     });
     for (const key of keys) {
-      try {
-        unlinkSync(join(ctx.config.uploadDir, key));
-      } catch {
-        /* already gone */
-      }
+      await ctx.files.remove(key).catch((error) => console.error('Could not remove stored file', key, error));
     }
     for (const userId of members) ctx.hub.disconnect(ws.id, userId);
     // Continue in another workspace if the owner has one; otherwise sign out.
