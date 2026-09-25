@@ -22,6 +22,13 @@ Please **do not open a public issue** for security problems. Use GitHub's *Repor
 - **Provisioning:** SCIM tokens are stored only as hashes and can be rotated or revoked at any time. Deprovisioning revokes sessions and tokens immediately.
 - **Retention:** workspaces can delete messages older than a set period. A legal hold pauses all automatic deletion, and every retention run is audited.
 - **Offline cache:** the service worker keeps recently loaded workspace data for read-only offline use. It never caches sign-in, exports, downloads, admin or AI responses, and it deletes cached data on sign-out, on workspace switch and whenever the server reports the session has ended.
+- **Hosted service (SaaS mode):**
+  - New accounts must confirm their email address before they can invite people, create API tokens or webhooks, use AI, or pay. Confirmation, invitation and reset links are single-purpose and expire.
+  - Plan limits (members, storage, AI requests, features) are enforced on the server. AI requests are capped per workspace, so a trial can't run up the operator's AI bill.
+  - The operator console is limited to `SOFTEX_OPERATOR_EMAILS` accounts with multifactor authentication and a confirmed address. It shows metadata only — never messages, files or other workspace content. Every operator action is logged, and changes also appear in the customer's own audit log.
+  - Suspended workspaces are signed out everywhere, and their sessions, API tokens and SCIM access stop working until restored.
+  - Deleting a workspace needs the owner's password (and MFA code), plus the workspace name typed in. It removes every record and uploaded file. Deleting an account erases the person's name, email, credentials and personal settings. Their shared content stays with the team, attributed to "Deleted user".
+- **Several servers:** sign-in and password-reset rate limits are stored in the database (as hashes, never raw emails or IP addresses), so they hold across servers. Realtime events between servers carry the same audience checks as local ones: each server checks permissions for its own connected users before delivering.
 - **Audit:** sign-ins, role changes, exports, integrations and AI use are recorded in the audit log. AI entries record which item was used, never its content.
 
 ## Automated checks (GitHub Actions)

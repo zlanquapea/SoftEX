@@ -3,6 +3,7 @@ import { lookup } from 'node:dns/promises';
 import { isIP } from 'node:net';
 import type { Ctx } from './context.js';
 import { newId, now, parseJson } from './util.js';
+import { hasFeature } from './plans.js';
 
 /**
  * Outgoing webhooks (§5.7, §12). Events are queued in `webhook_deliveries` and
@@ -28,26 +29,26 @@ interface Scope {
   channelId?: string | null;
 }
 
-function isPublicScope(ctx: Ctx, scope: Scope) {
+async function isPublicScope(ctx: Ctx, scope: Scope) {
   if (scope.channelId) {
-    const c = ctx.db.get('SELECT kind FROM channels WHERE id = ?', scope.channelId);
+    const c = await ctx.db.get('SELECT kind FROM channels WHERE id = ?', scope.channelId);
     if (!c || !['public', 'announcement'].includes(c.kind)) return false;
   }
   if (scope.projectId) {
-    const p = ctx.db.get('SELECT visibility FROM projects WHERE id = ?', scope.projectId);
+    const p = await ctx.db.get('SELECT visibility FROM projects WHERE id = ?', scope.projectId);
     if (!p || p.visibility !== 'workspace') return false;
   }
   return !!(scope.channelId || scope.projectId);
 }
 
-export function emitEvent(ctx: Ctx, workspaceId: string, event: WebhookEvent, data: Record<string, unknown>, scope: Scope) {
-  const hooks = ctx.db.all('SELECT id, events FROM webhooks WHERE workspace_id = ? AND active = 1', workspaceId);
-  if (!hooks.length || !isPublicScope(ctx, scope)) return;
+export async function emitEvent(ctx: Ctx, workspaceId: string, event: WebhookEvent, data: Record<string, unknown>, scope: Scope) {
+  const hooks = await ctx.db.all('SELECT id, events FROM webhooks WHERE workspace_id = ? AND active = 1', workspaceId);
+  if (!hooks.length || !await isPublicScope(ctx, scope) || !await hasFeature(ctx, workspaceId, 'api')) return;
   const payload = JSON.stringify({ id: newId(), type: event, created_at: now(), workspace_id: workspaceId, data });
   for (const hook of hooks) {
     const events = parseJson<string[]>(hook.events, []);
     if (!events.includes(event) && !events.includes('*')) continue;
-    ctx.db.insert('webhook_deliveries', { id: newId(), webhook_id: hook.id, event, payload, next_attempt_at: now(), created_at: now() });
+    await ctx.db.insert('webhook_deliveries', { id: newId(), webhook_id: hook.id, event, payload, next_attempt_at: now(), created_at: now() });
   }
 }
 
@@ -81,7 +82,7 @@ export async function assertSafeWebhookUrl(ctx: Ctx, url: string) {
 const MAX_ATTEMPTS = 8;
 
 export async function processWebhookQueue(ctx: Ctx, limit = 20) {
-  const due = ctx.db.all(
+  const due = await ctx.db.all(
     `SELECT d.*, w.url, w.secret, w.active FROM webhook_deliveries d JOIN webhooks w ON w.id = d.webhook_id
       WHERE d.status = 'pending' AND d.next_attempt_at <= ? ORDER BY d.created_at LIMIT ?`,
     now(),
@@ -93,7 +94,7 @@ export async function processWebhookQueue(ctx: Ctx, limit = 20) {
 
 async function deliver(ctx: Ctx, d: Record<string, any>) {
   if (!d.active) {
-    ctx.db.run(`UPDATE webhook_deliveries SET status = 'failed', last_error = 'Webhook disabled' WHERE id = ?`, d.id);
+    await ctx.db.run(`UPDATE webhook_deliveries SET status = 'failed', last_error = 'Webhook disabled' WHERE id = ?`, d.id);
     return;
   }
   const timestamp = String(Math.floor(Date.now() / 1000));
@@ -116,14 +117,14 @@ async function deliver(ctx: Ctx, d: Record<string, any>) {
     });
     status = res.status;
     if (res.status >= 200 && res.status < 300) {
-      ctx.db.run(`UPDATE webhook_deliveries SET status = 'delivered', attempts = attempts + 1, response_status = ?, delivered_at = ?, last_error = NULL WHERE id = ?`, status, now(), d.id);
+      await ctx.db.run(`UPDATE webhook_deliveries SET status = 'delivered', attempts = attempts + 1, response_status = ?, delivered_at = ?, last_error = NULL WHERE id = ?`, status, now(), d.id);
       return;
     }
     throw new Error(`Endpoint responded ${res.status}`);
   } catch (error) {
     const attempts = d.attempts + 1;
     const backoff = Math.min(12 * 3_600_000, 30_000 * 2 ** attempts);
-    ctx.db.run(
+    await ctx.db.run(
       `UPDATE webhook_deliveries SET attempts = ?, response_status = ?, last_error = ?, status = ?, next_attempt_at = ? WHERE id = ?`,
       attempts,
       status,

@@ -37,6 +37,40 @@ jobs:
       - run: npm test
       - run: npm run build
 
+  postgres:
+    name: Unit tests on PostgreSQL
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: softex
+          POSTGRES_PASSWORD: softex
+          POSTGRES_DB: softex
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U softex"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+        env:
+          PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: '1'
+      # Every test gets its own schema in this database.
+      - run: npm test
+        env:
+          SOFTEX_TEST_DATABASE_URL: postgres://softex:softex@localhost:5432/softex
+
   e2e:
     name: Browser smoke tests
     runs-on: ubuntu-latest

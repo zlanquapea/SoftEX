@@ -1,18 +1,21 @@
 import { useState } from 'react';
-import { Navigate, useSearchParams } from 'react-router-dom';
-import { api, qs, type Channel, type Project } from '../api';
+import { Navigate, useNavigate, useSearchParams } from 'react-router-dom';
+import { api, qs, type Channel, type Me, type Project } from '../api';
 import { Avatar } from '../components/Avatar';
 import { Icon } from '../components/Icon';
 import { WorkspaceInsights } from './Planning';
-import { Empty, Field, Loading, PeoplePicker, Tabs, useAction } from '../components/ui';
+import { BillingSettings } from './Billing';
+import { UpgradeNotice, usePlan } from '../components/Plan';
+import { Empty, Field, Loading, Modal, PeoplePicker, Tabs, useAction } from '../components/ui';
 import { dateTime, ROLE_LABEL, timeAgo } from '../format';
 import { useApi } from '../hooks';
 import { useSession } from '../session';
 
-type Tab = 'members' | 'invitations' | 'teams' | 'onboarding' | 'settings' | 'sso' | 'integrations' | 'email' | 'audit' | 'insights' | 'provisioning';
+type Tab = 'members' | 'invitations' | 'teams' | 'onboarding' | 'settings' | 'sso' | 'integrations' | 'email' | 'audit' | 'insights' | 'provisioning' | 'billing';
 
 export function Admin() {
-  const { can } = useSession();
+  const { can, me } = useSession();
+  const { has } = usePlan();
   const [params, setParams] = useSearchParams();
   const isAdmin = can('admin');
   const tab = (params.get('tab') as Tab) ?? (isAdmin ? 'members' : 'insights');
@@ -20,6 +23,7 @@ export function Admin() {
   const tabs: { id: Tab; label: string }[] = isAdmin
     ? [
         { id: 'members', label: 'Members' },
+        ...(me?.mode === 'saas' ? [{ id: 'billing' as Tab, label: 'Billing' }] : []),
         { id: 'insights', label: 'Insights' },
         { id: 'invitations', label: 'Invitations' },
         { id: 'teams', label: 'Teams' },
@@ -46,14 +50,15 @@ export function Admin() {
       </div>
       <Tabs value={tab} onChange={(t) => setParams({ tab: t })} tabs={tabs} />
       {tab === 'members' && isAdmin && <Members />}
-      {tab === 'insights' && <WorkspaceInsights />}
-      {tab === 'provisioning' && isAdmin && <ScimSettings />}
+      {tab === 'billing' && isAdmin && <BillingSettings />}
+      {tab === 'insights' && (has('insights') ? <WorkspaceInsights /> : <UpgradeNotice feature="insights" />)}
+      {tab === 'provisioning' && isAdmin && (has('scim') ? <ScimSettings /> : <UpgradeNotice feature="scim" />)}
       {tab === 'invitations' && <Invitations />}
       {tab === 'teams' && <Teams />}
       {tab === 'onboarding' && isAdmin && <OnboardingAdmin />}
       {tab === 'settings' && isAdmin && <WorkspaceSettings />}
-      {tab === 'sso' && isAdmin && <SsoSettings />}
-      {tab === 'integrations' && isAdmin && <Webhooks />}
+      {tab === 'sso' && isAdmin && (has('sso') || me?.workspace.sso_enabled ? <SsoSettings /> : <UpgradeNotice feature="sso" />)}
+      {tab === 'integrations' && isAdmin && (has('api') ? <Webhooks /> : <UpgradeNotice feature="api" />)}
       {tab === 'email' && isAdmin && <EmailOutbox />}
       {tab === 'audit' && isAdmin && <Audit />}
     </div>
@@ -472,12 +477,17 @@ function WorkspaceSettings() {
     retentionDays: ws.retention_days as number | null,
     legalHold: ws.legal_hold,
   });
+  const { has } = usePlan();
   return (
+    <>
     <form
       className="card form narrow-form"
       onSubmit={async (e) => {
         e.preventDefault();
-        const ok = await act(() => api.patch('/admin/workspace', form), 'Workspace settings saved');
+        // Settings for features outside the current plan are left as they are.
+        const { aiEnabled, retentionDays, legalHold, ...rest } = form;
+        const payload = { ...rest, ...(has('ai') ? { aiEnabled } : {}), ...(has('retention') ? { retentionDays, legalHold } : {}) };
+        const ok = await act(() => api.patch('/admin/workspace', payload), 'Workspace settings saved');
         if (ok) refresh();
       }}
     >
@@ -502,17 +512,21 @@ function WorkspaceSettings() {
         </span>
       </label>
       <label className="check-row">
-        <input type="checkbox" checked={form.aiEnabled} disabled={!ws.ai_available} onChange={(e) => setForm({ ...form, aiEnabled: e.target.checked })} />
+        <input type="checkbox" checked={form.aiEnabled && has('ai')} disabled={!ws.ai_available || !has('ai')} onChange={(e) => setForm({ ...form, aiEnabled: e.target.checked })} />
         <span>
           <strong>AI assistance</strong>
           <small className="muted block">
-            {ws.ai_available
+            {!has('ai')
+              ? 'Available on the Business plan.'
+              : ws.ai_available
               ? 'Lets people draft thread and meeting summaries, task suggestions and project briefs with Claude. It only reads content the requesting person can already open, drafts are never shared automatically, every use is audited, and channel or project owners can exclude their spaces.'
               : 'Not available: the server administrator must set ANTHROPIC_API_KEY first.'}
           </small>
         </span>
       </label>
       <h3>Retention</h3>
+      {!has('retention') && <UpgradeNotice feature="retention" compact />}
+      <fieldset disabled={!has('retention')} className="plain-fieldset">
       <Field label="Keep messages for" hint="Older messages are deleted automatically (a thread is kept while it has recent replies). Knowledge pages, decisions, tasks and library files are kept.">
         <select value={form.retentionDays ?? ''} onChange={(e) => setForm({ ...form, retentionDays: e.target.value ? Number(e.target.value) : null })}>
           <option value="">Forever</option>
@@ -530,6 +544,7 @@ function WorkspaceSettings() {
           <small className="muted block">Pauses all automatic deletion while an investigation or litigation is underway. Changes are recorded in the audit log.</small>
         </span>
       </label>
+      </fieldset>
       <div className="form-actions spread">
         <a className="btn" href="/api/export">
           <Icon name="download" size={16} /> Export data
@@ -537,6 +552,8 @@ function WorkspaceSettings() {
         <button className="btn primary">Save settings</button>
       </div>
     </form>
+    {me!.role === 'owner' && <DeleteWorkspace />}
+    </>
   );
 }
 
@@ -586,6 +603,64 @@ function Audit() {
           ))}
         </tbody>
       </table>
+    </div>
+  );
+}
+
+function DeleteWorkspace() {
+  const { me, setMe } = useSession();
+  const act = useAction();
+  const navigate = useNavigate();
+  const [open, setOpen] = useState(false);
+  const [form, setForm] = useState({ confirmName: '', password: '', code: '' });
+  const name = me!.workspace.name;
+  return (
+    <div className="card danger-zone narrow-form">
+      <h2>Delete workspace</h2>
+      <p className="muted">
+        Permanently deletes {name} for everyone: messages, files, tasks, projects, knowledge, meetings and settings. This can't be undone. Export your data first if you
+        may need it.
+      </p>
+      <button className="btn danger" onClick={() => setOpen(true)}>
+        Delete this workspace
+      </button>
+      <Modal open={open} onClose={() => setOpen(false)} title={`Delete ${name}?`} eyebrow="DANGER">
+        <form
+          className="stack"
+          onSubmit={async (e) => {
+            e.preventDefault();
+            const res = await act(() => api.del<{ me: Me | null }>('/admin/workspace', { ...form, code: form.code || undefined }));
+            if (res) {
+              setMe(res.me);
+              navigate('/');
+            }
+          }}
+        >
+          <p>
+            Everything in <strong>{name}</strong> will be deleted, and all {me!.workspace.member_count} members lose access immediately.
+          </p>
+          <Field label={`Type the workspace name (${name}) to confirm`}>
+            <input required value={form.confirmName} onChange={(e) => setForm({ ...form, confirmName: e.target.value })} autoComplete="off" />
+          </Field>
+          <Field label="Your password">
+            <input required type="password" value={form.password} onChange={(e) => setForm({ ...form, password: e.target.value })} autoComplete="current-password" />
+          </Field>
+          {me!.user.mfa_enabled && (
+            <Field label="Authenticator code">
+              <input required inputMode="numeric" value={form.code} onChange={(e) => setForm({ ...form, code: e.target.value })} autoComplete="one-time-code" />
+            </Field>
+          )}
+          <div className="row-gap">
+            <span className="grow" />
+            <button type="button" className="btn" onClick={() => setOpen(false)}>
+              Keep workspace
+            </button>
+            <button className="btn danger" disabled={form.confirmName.trim() !== name}>
+              Delete forever
+            </button>
+          </div>
+        </form>
+      </Modal>
     </div>
   );
 }

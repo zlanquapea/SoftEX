@@ -85,3 +85,9 @@ export function extractMentionIds(body: string): string[] {
 
 export const COLORS = ['purple', 'blue', 'green', 'coral', 'gold', 'sky', 'mint', 'lilac', 'orange'];
 export const pickColor = (seed: string) => COLORS[[...seed].reduce((a, c) => a + c.charCodeAt(0), 0) % COLORS.length];
+
+/** Array.filter with an async predicate (checks run concurrently, order is kept). */
+export async function filterAsync<T>(items: readonly T[], predicate: (item: T, index: number) => boolean | Promise<boolean>): Promise<T[]> {
+  const keep = await Promise.all(items.map((item, i) => predicate(item, i)));
+  return items.filter((_, i) => keep[i] === true);
+}

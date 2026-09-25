@@ -9,6 +9,7 @@ import { Markdown } from '../components/Markdown';
 import { NewMeetingForm, NewTaskForm } from '../components/QuickCreate';
 import { TaskRow } from '../components/TaskDrawer';
 import { ProjectAutomations, ProjectTimeline } from './Planning';
+import { UpgradeNotice, usePlan } from '../components/Plan';
 import { Empty, ErrorState, Field, HealthPill, Loading, Modal, PeoplePicker, Tabs, useAction } from '../components/ui';
 import { bytes, dateTime, dueLabel, HEALTH_LABEL, STATUS_LABEL, timeAgo } from '../format';
 import { useApi, useRealtime } from '../hooks';
@@ -112,6 +113,7 @@ export function ProjectDetail() {
   const setTab = (t: Tab) => setParams(t === 'overview' ? {} : { tab: t });
   const { data: project, error, reload } = useApi<ProjectFull>(`/projects/${id}`);
   const [settings, setSettings] = useState(false);
+  const { has } = usePlan();
   useRealtime((e) => e.type === 'task.updated' && e.projectId === id && reload());
 
   if (error) return <ErrorState error={error} retry={reload} />;
@@ -165,8 +167,8 @@ export function ProjectDetail() {
       />
       {tab === 'overview' && <Overview project={project} reload={reload} />}
       {tab === 'tasks' && <ProjectTasks project={project} />}
-      {tab === 'timeline' && <ProjectTimeline projectId={project.id} milestones={project.milestones} canEdit={project.can_contribute} />}
-      {tab === 'automations' && <ProjectAutomations projectId={project.id} />}
+      {tab === 'timeline' && (has('planning') ? <ProjectTimeline projectId={project.id} milestones={project.milestones} canEdit={project.can_contribute} /> : <UpgradeNotice feature="planning" />)}
+      {tab === 'automations' && (has('automations') ? <ProjectAutomations projectId={project.id} /> : <UpgradeNotice feature="automations" />)}
       {tab === 'decisions' && <ProjectDecisions project={project} />}
       {tab === 'risks' && <Risks project={project} />}
       {tab === 'resources' && <Resources project={project} />}

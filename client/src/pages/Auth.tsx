@@ -5,6 +5,7 @@ import { Field, Loading } from '../components/ui';
 import { useApi } from '../hooks';
 import { useSession } from '../session';
 import { ROLE_LABEL } from '../format';
+import { usePublicPricing } from './Pricing';
 
 function AuthFrame({ title, subtitle, children }: { title: string; subtitle?: ReactNode; children: ReactNode }) {
   return (
@@ -32,6 +33,7 @@ export function Login() {
   const [error, setError] = useState(() => new URLSearchParams(location.search).get('sso_error') ?? '');
   const [busy, setBusy] = useState(false);
   const [ssoMode, setSsoMode] = useState(false);
+  const { data: pricing } = usePublicPricing();
   const startSso = async () => {
     setError('');
     if (!email) return setError('Enter your work email first');
@@ -93,15 +95,42 @@ export function Login() {
       </form>
       <p className="muted center">
         New to SoftEX? <Link to="/register">Create a workspace</Link>
+        {pricing?.mode === 'saas' && (
+          <>
+            {' · '}
+            <Link to="/pricing">Pricing</Link>
+          </>
+        )}
       </p>
     </AuthFrame>
+  );
+}
+
+/** Required on hosted servers: agree to the terms before an account is created. */
+function TermsCheckbox({ checked, onChange }: { checked: boolean; onChange: (v: boolean) => void }) {
+  return (
+    <label className="check-row terms-check">
+      <input type="checkbox" required checked={checked} onChange={(e) => onChange(e.target.checked)} />
+      <span>
+        I agree to the{' '}
+        <a href="/terms" target="_blank" rel="noopener">
+          Terms of Service
+        </a>{' '}
+        and{' '}
+        <a href="/privacy" target="_blank" rel="noopener">
+          Privacy Policy
+        </a>
+        .
+      </span>
+    </label>
   );
 }
 
 export function Register() {
   const { setMe } = useSession();
   const navigate = useNavigate();
-  const [form, setForm] = useState({ name: '', email: '', password: '', workspaceName: '' });
+  const [form, setForm] = useState({ name: '', email: '', password: '', workspaceName: '', acceptTerms: false });
+  const { data: pricing } = usePublicPricing();
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
   const set = (k: keyof typeof form) => (e: React.ChangeEvent<HTMLInputElement>) => setForm({ ...form, [k]: e.target.value });
@@ -119,7 +148,18 @@ export function Register() {
     }
   };
   return (
-    <AuthFrame title="Create your workspace" subtitle="You will be the workspace owner. Invite your team next.">
+    <AuthFrame
+      title="Create your workspace"
+      subtitle={
+        pricing?.mode === 'saas' ? (
+          <>
+            Start a {pricing.trial_days}-day free trial of Business — no payment needed. Afterwards, keep a free plan or <Link to="/pricing">choose a plan</Link>.
+          </>
+        ) : (
+          'You will be the workspace owner. Invite your team next.'
+        )
+      }
+    >
       <form className="form" onSubmit={submit}>
         {error && <p className="form-error" role="alert">{error}</p>}
         <Field label="Your name">
@@ -134,12 +174,13 @@ export function Register() {
         <Field label="Workspace name">
           <input required minLength={2} placeholder="e.g. Acme Studio" value={form.workspaceName} onChange={set('workspaceName')} />
         </Field>
+        {pricing?.mode === 'saas' && <TermsCheckbox checked={form.acceptTerms} onChange={(v) => setForm({ ...form, acceptTerms: v })} />}
         <button className="btn primary block" disabled={busy}>
           {busy ? 'Creating…' : 'Create workspace'}
         </button>
       </form>
       <p className="muted center">
-        Already have an account? <Link to="/">Sign in</Link>
+        Already have an account? <Link to="/login">Sign in</Link>
       </p>
     </AuthFrame>
   );
@@ -154,11 +195,13 @@ export function AcceptInvite() {
   );
   const [name, setName] = useState('');
   const [password, setPassword] = useState('');
+  const [acceptTerms, setAcceptTerms] = useState(false);
   const [error, setError] = useState('');
+  const { data: pricing } = usePublicPricing();
   if (loadError) {
     return (
       <AuthFrame title="Invitation unavailable" subtitle={loadError.message}>
-        <Link className="btn block" to="/">
+        <Link className="btn block" to="/login">
           Go to sign in
         </Link>
       </AuthFrame>
@@ -169,7 +212,7 @@ export function AcceptInvite() {
     e.preventDefault();
     setError('');
     try {
-      setMe(await api.post<Me>(`/invitations/${token}/accept`, { name: invite.existing_account ? undefined : name, password }));
+      setMe(await api.post<Me>(`/invitations/${token}/accept`, { name: invite.existing_account ? undefined : name, password, acceptTerms }));
       navigate('/');
     } catch (err) {
       setError((err as Error).message);
@@ -194,6 +237,7 @@ export function AcceptInvite() {
         <Field label={invite.existing_account ? 'Your SoftEX password' : 'Choose a password'} hint={invite.existing_account ? undefined : 'At least 8 characters.'}>
           <input type="password" required minLength={invite.existing_account ? 1 : 8} value={password} onChange={(e) => setPassword(e.target.value)} />
         </Field>
+        {!invite.existing_account && pricing?.mode === 'saas' && <TermsCheckbox checked={acceptTerms} onChange={setAcceptTerms} />}
         <button className="btn primary block">Accept invitation</button>
       </form>
     </AuthFrame>
@@ -267,7 +311,7 @@ export function ForgotPassword() {
       {sent ? (
         <div className="form">
           <p className="hint-box">If an account exists for {email}, a reset link is on its way. It works for one hour.</p>
-          <Link className="btn block" to="/">
+          <Link className="btn block" to="/login">
             Back to sign in
           </Link>
         </div>
@@ -289,7 +333,7 @@ export function ForgotPassword() {
             <input type="email" required autoFocus value={email} onChange={(e) => setEmail(e.target.value)} />
           </Field>
           <button className="btn primary block">Email me a reset link</button>
-          <Link className="center" to="/">
+          <Link className="center" to="/login">
             Back to sign in
           </Link>
         </form>
@@ -309,7 +353,7 @@ export function ResetPassword() {
       {done ? (
         <div className="form">
           <p className="hint-box">Your password was changed and you were signed out everywhere.</p>
-          <Link className="btn primary block" to="/">
+          <Link className="btn primary block" to="/login">
             Sign in
           </Link>
         </div>

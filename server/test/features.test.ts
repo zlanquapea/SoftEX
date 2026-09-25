@@ -93,8 +93,8 @@ describe('deadlines, reminders and scheduled messages', () => {
     await owner.agent.patch(`/api/tasks/${soon.id}`).send({ ownerId: member.id });
     await owner.agent.patch(`/api/tasks/${late.id}`).send({ ownerId: member.id });
 
-    expect(processDeadlines(env.softex.ctx)).toBe(2);
-    expect(processDeadlines(env.softex.ctx)).toBe(0);
+    expect(await processDeadlines(env.softex.ctx)).toBe(2);
+    expect(await processDeadlines(env.softex.ctx)).toBe(0);
     const titles = (await member.agent.get('/api/notifications')).body.notifications.map((n: { title: string }) => n.title);
     expect(titles).toEqual(expect.arrayContaining(['“Renew domain” is due tomorrow', '“File taxes” is overdue']));
     expect((await owner.agent.get(`/api/tasks/${late.id}`)).body.priority).toBe('urgent');
@@ -108,10 +108,10 @@ describe('deadlines, reminders and scheduled messages', () => {
     const r1 = await owner.agent.post('/api/reminders').send({ messageId: msg.id, remindAt: new Date(Date.now() + 3_600_000).toISOString() });
     expect(r1.status).toBe(201);
     expect((await owner.agent.get('/api/reminders')).body).toHaveLength(1);
-    db().run('UPDATE reminders SET remind_at = ?', new Date(Date.now() - 1000).toISOString());
+    await db().run('UPDATE reminders SET remind_at = ?', new Date(Date.now() - 1000).toISOString());
     await flushJobs(env);
     // Reminders are about the person's own content, so they are delivered even though they are the actor.
-    const rows = db().all(`SELECT title, link FROM notifications WHERE kind = 'reminder'`);
+    const rows = await db().all(`SELECT title, link FROM notifications WHERE kind = 'reminder'`);
     expect(rows[0].link).toContain(`/channels/${general.id}`);
     expect((await owner.agent.get('/api/reminders')).body).toHaveLength(0);
 
@@ -129,7 +129,7 @@ describe('deadlines, reminders and scheduled messages', () => {
     const scheduled = await member.agent.post(`/api/channels/${general.id}/scheduled-messages`).send({ body: 'Good morning team', sendAt: new Date(Date.now() + 3_600_000).toISOString() });
     expect(scheduled.status).toBe(201);
     expect((await member.agent.post(`/api/channels/${general.id}/scheduled-messages`).send({ body: 'too soon', sendAt: new Date().toISOString() })).status).toBe(400);
-    db().run('UPDATE scheduled_messages SET send_at = ?', new Date(Date.now() - 1000).toISOString());
+    await db().run('UPDATE scheduled_messages SET send_at = ?', new Date(Date.now() - 1000).toISOString());
     await flushJobs(env);
     const messages = (await owner.agent.get(`/api/channels/${general.id}/messages`)).body.messages;
     expect(messages.at(-1)).toMatchObject({ body: 'Good morning team', user: { id: member.id } });
@@ -138,9 +138,9 @@ describe('deadlines, reminders and scheduled messages', () => {
     const secret = (await owner.agent.post('/api/channels').send({ name: 'secret', kind: 'private', memberIds: [member.id] })).body;
     await member.agent.post(`/api/channels/${secret.id}/scheduled-messages`).send({ body: 'later', sendAt: new Date(Date.now() + 3_600_000).toISOString() });
     await owner.agent.delete(`/api/channels/${secret.id}/members/${member.id}`);
-    db().run('UPDATE scheduled_messages SET send_at = ? WHERE sent_message_id IS NULL', new Date(Date.now() - 1000).toISOString());
+    await db().run('UPDATE scheduled_messages SET send_at = ? WHERE sent_message_id IS NULL', new Date(Date.now() - 1000).toISOString());
     await flushJobs(env);
-    expect(db().get(`SELECT failed_reason FROM scheduled_messages WHERE body = 'later'`)!.failed_reason).toBeTruthy();
+    expect((await db().get(`SELECT failed_reason FROM scheduled_messages WHERE body = 'later'`))!.failed_reason).toBeTruthy();
     expect((await owner.agent.get(`/api/channels/${secret.id}/messages`)).body.messages).toHaveLength(0);
   });
 });
@@ -154,12 +154,12 @@ describe('retention and legal hold', () => {
     await owner.agent.post(`/api/channels/${general.id}/messages`).send({ body: 'recent' });
     const thread = (await owner.agent.post(`/api/channels/${general.id}/messages`).send({ body: 'old thread, still active' })).body;
     await owner.agent.post(`/api/channels/${general.id}/messages`).send({ body: 'fresh reply', parentId: thread.id });
-    db().run(`UPDATE messages SET created_at = ? WHERE body IN ('ancient', 'old thread, still active')`, new Date(Date.now() - 400 * 86_400_000).toISOString());
+    await db().run(`UPDATE messages SET created_at = ? WHERE body IN ('ancient', 'old thread, still active')`, new Date(Date.now() - 400 * 86_400_000).toISOString());
     expect((await owner.agent.patch('/api/admin/workspace').send({ retentionDays: 10 })).status).toBe(400); // minimum 30 days
     await owner.agent.patch('/api/admin/workspace').send({ retentionDays: 365, legalHold: true });
-    expect(applyRetention(env.softex.ctx)).toBe(0);
+    expect(await applyRetention(env.softex.ctx)).toBe(0);
     await owner.agent.patch('/api/admin/workspace').send({ legalHold: false });
-    expect(applyRetention(env.softex.ctx)).toBe(1);
+    expect(await applyRetention(env.softex.ctx)).toBe(1);
     const bodies = (await owner.agent.get(`/api/channels/${general.id}/messages`)).body.messages.map((m: { body: string }) => m.body);
     expect(bodies).toEqual(expect.arrayContaining(['recent', 'old thread, still active']));
     expect(bodies).not.toContain('ancient');

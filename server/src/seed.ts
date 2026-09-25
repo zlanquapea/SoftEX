@@ -15,14 +15,19 @@ const here = dirname(fileURLToPath(import.meta.url));
 const dataDir = process.env.SOFTEX_DATA_DIR ?? join(resolve(here, '..'), 'data');
 const dbPath = process.env.SOFTEX_DB ?? join(dataDir, 'softex.db');
 
+const databaseUrl = process.env.SOFTEX_DATABASE_URL || undefined;
 if (process.argv.includes('--reset')) {
+  if (databaseUrl) {
+    console.error('--reset only works with the SQLite file. For PostgreSQL, seed an empty database (or a new ?schema=).');
+    process.exit(1);
+  }
   for (const p of [dbPath, `${dbPath}-wal`, `${dbPath}-shm`, join(dataDir, 'uploads')]) if (existsSync(p)) rmSync(p, { recursive: true, force: true });
 }
 
-const { server, ctx, close } = createApp({ dbPath, uploadDir: join(dataDir, 'uploads') });
-if (ctx.db.get('SELECT 1 FROM users LIMIT 1')) {
+const { server, ctx, close } = createApp({ dbPath, databaseUrl, uploadDir: join(dataDir, 'uploads') });
+if (await ctx.db.get('SELECT 1 FROM users LIMIT 1')) {
   console.log('Database already has data. Use `npm run seed -- --reset` to start over.');
-  close();
+  await close();
   process.exit(0);
 }
 
@@ -275,7 +280,7 @@ const client = await alex.post('/channels', { name: 'client-northwind', kind: 'p
 await addPerson('Casey Morgan', 'casey@northwind.test', 'guest', { title: 'Marketing Director, Northwind' }, { channelIds: [client.id], guestDays: 45 });
 
 await new Promise((r) => setTimeout(r, 50));
-close();
+await close();
 console.log(`
 Seeded the “Acme Studio” demo workspace.
 

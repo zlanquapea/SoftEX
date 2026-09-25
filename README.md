@@ -23,13 +23,16 @@ SoftEX is a unified workplace app for team communication, projects, documents, m
 | **Ask SoftEX** (5.6) | Ask a question in the search box and get a short answer with numbered citations to the messages, pages, decisions, tasks, files and meetings it used, each linking back to its source. It only draws on what the person asking can open |
 | **Insights** (2) | A dashboard for leads and admins that tracks the spec's success measures: weekly active people, task ownership, decisions and status updates per project, meeting follow-through, overdue share, cycle time and notification load. Aggregates only, no individual ranking |
 | **Governance** (5.7, 9) | **SCIM 2.0** user provisioning and deprovisioning (Okta, Entra ID and others), **message retention** policies, and a **legal hold** that pauses all automatic deletion |
+| **Hosted service (SaaS)** | With `SOFTEX_MODE=saas`: self-service sign-up with email confirmation, a 30-day Business trial, a permanent **Free** plan (10 members, core features) and paid **Standard** and **Business** plans priced per member. Usage limits on members, storage and AI; payment by Orange Money, MTN Mobile Money or bank transfer, confirmed by the operator; renewal and trial reminders; a public pricing page with Liberian-dollar amounts; an **operator console** to confirm payments, adjust plans and suspend abuse; and self-service workspace and account deletion. See [docs/DEPLOY_RAILWAY.md](docs/DEPLOY_RAILWAY.md) |
 | **Clients** (8, 11) | Responsive React web app: sidebar navigation on desktop, bottom navigation on mobile, ⌘K global search, dark mode, keyboard and screen-reader-friendly controls, and an installable web app that works offline: the app shell and recently viewed data stay available read-only on poor connections, and cached data is wiped on sign-out |
 
 ## Architecture
 
 ```
-server/   TypeScript + Express 5 API, SQLite (node:sqlite), WebSockets (ws)
-  src/db.ts        schema (portable SQL, ready to move to PostgreSQL)
+server/   TypeScript + Express 5 API, SQLite (node:sqlite) or PostgreSQL, WebSockets (ws)
+  src/db.ts        schema and the async data layer (SQLite and PostgreSQL engines)
+  src/storage.ts   uploaded files on local disk or S3-compatible storage
+  src/realtime.ts  WebSocket hub; shares events between servers over PostgreSQL
   src/access.ts    every permission rule in one place
   src/routes/*     auth, channels, projects, tasks, knowledge, meetings, workspace, home/search
   test/*           permission, isolation and workflow tests (vitest + supertest)
@@ -64,11 +67,17 @@ Or with Docker Compose, which bundles ClamAV and a local test inbox (Mailpit at 
 SOFTEX_SECRET_KEY=$(openssl rand -hex 32) docker compose up -d
 ```
 
+**Railway:** see [docs/DEPLOY_RAILWAY.md](docs/DEPLOY_RAILWAY.md) for a step-by-step guide (`railway.json` is included).
+
 Every push to `main` publishes an image to `ghcr.io/zlanquapea/softex` (see *CI/CD* below).
 
 | Variable | Default | Purpose |
 | --- | --- | --- |
 | `PORT` | `4000` | HTTP port |
+| `SOFTEX_DATABASE_URL` | *(unset)* | `postgres://…` to use PostgreSQL instead of SQLite (required to run several servers). Add `?schema=name` to keep the tables in their own schema |
+| `SOFTEX_DB_POOL_SIZE` | `10` | PostgreSQL connections per server |
+| `SOFTEX_S3_BUCKET` | *(unset)* | Store uploaded files in S3-compatible storage (AWS S3, Cloudflare R2, Backblaze B2, MinIO) instead of `SOFTEX_DATA_DIR`. Also set `SOFTEX_S3_ENDPOINT`, `SOFTEX_S3_REGION`, `SOFTEX_S3_ACCESS_KEY_ID`, `SOFTEX_S3_SECRET_ACCESS_KEY`, and optionally `SOFTEX_S3_FORCE_PATH_STYLE` and `SOFTEX_S3_PREFIX` |
+| `SOFTEX_COMPANY_NAME` / `SOFTEX_COMPANY_ADDRESS` / `SOFTEX_LEGAL_EMAIL` | *(unset)* | Business details shown on the website and in the Terms of Service and Privacy Policy (SaaS mode) |
 | `SOFTEX_DATA_DIR` | `server/data` | Database and uploaded files |
 | `SOFTEX_MEETING_BASE_URL` | `https://meet.jit.si` | Base URL for generated video meeting links |
 | `SOFTEX_MAX_UPLOAD_MB` | `25` | Upload size limit |
@@ -80,12 +89,22 @@ Every push to `main` publishes an image to `ghcr.io/zlanquapea/softex` (see *CI/
 | `SOFTEX_CLAMAV_HOST` / `SOFTEX_CLAMAV_PORT` | *(unset)* / `3310` | ClamAV daemon for malware scanning of uploads |
 | `ANTHROPIC_API_KEY` | *(unset)* | Makes AI assistance available (admins still have to enable it) |
 | `SOFTEX_AI_MODEL` | `claude-opus-5` | Claude model used for AI assistance |
+| `SOFTEX_REGISTRATION` | `open` | Who may create a workspace from the sign-up page: `open` (anyone), `first` (only the first person on a new server) or `closed` |
+| `SOFTEX_TRUST_PROXY` | `loopback` | Express *trust proxy* setting. Behind a hosting proxy (Railway, Render, a load balancer) set a hop count such as `1` so rate limits and the audit log see real client addresses |
+| `SOFTEX_MODE` | `self_hosted` | `saas` turns on plans, trials, usage limits, email confirmation, billing and the operator console |
+| `SOFTEX_OPERATOR_EMAILS` | *(unset)* | Comma-separated emails of the people who run the service (SaaS mode). They must use MFA |
+| `SOFTEX_PRICE_STANDARD` / `SOFTEX_PRICE_BUSINESS` | `1.50` / `3` | Price per member per month in USD (SaaS mode) |
+| `SOFTEX_TRIAL_DAYS` / `SOFTEX_TRIAL_AI_REQUESTS` | `30` / `100` | Length of the Business trial, and AI requests allowed during it |
+| `SOFTEX_LRD_PER_USD` | *(unset)* | Optional exchange rate to show prices in Liberian dollars too |
+| `SOFTEX_PAYMENT_INSTRUCTIONS` | *(unset)* | Markdown shown to customers when they pay (mobile money numbers, bank details); `\n` for new lines |
+| `SOFTEX_SUPPORT_EMAIL` | *(unset)* | Billing contact shown to customers |
 | `SOFTEX_ALLOW_PRIVATE_WEBHOOKS` | `false` | Development only: allow webhooks to local addresses |
 
 ### Checks
 
 ```bash
 npm test                # server test suite (permissions, workflows, email, SSO, webhooks, AI governance)
+SOFTEX_TEST_DATABASE_URL=postgres://user:pass@localhost:5432/db npm test   # the same suite on PostgreSQL, plus multi-server tests
 npm run typecheck       # server + client
 npm run build && npm run test:e2e   # browser smoke tests (Playwright)
 ```
@@ -111,7 +130,7 @@ See [SECURITY.md](SECURITY.md) for how to report vulnerabilities.
 
 ## Next steps
 
-- **PostgreSQL and object storage** for running several server instances behind a load balancer. The schema is portable SQL, and all queries go through `server/src/db.ts`.
+- **Automatic payment confirmation** through the MTN MoMo or Orange Money merchant APIs, or card payments through a processor available to your company. Today the operator confirms each mobile money or bank payment by hand.
 - **A managed video provider**, following the spec's cost and privacy review. Meeting links use Jitsi by default and can be changed with `SOFTEX_MEETING_BASE_URL`.
 - **OCR for scanned images and image-only PDFs**, which today are searchable by file name only.
 - **Queued offline writes.** Offline mode is read-only today; messages and edits need a connection.

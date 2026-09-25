@@ -17,6 +17,10 @@ import { MyWork } from './pages/MyWork';
 import { ProjectDetail, Projects } from './pages/Projects';
 import { Later, Workload } from './pages/Planning';
 import { Requests } from './pages/Requests';
+import { Pricing, VerifyEmail, usePublicPricing } from './pages/Pricing';
+import { Landing } from './pages/Landing';
+import { Privacy, Terms } from './pages/Legal';
+import { Operator } from './pages/Operator';
 import { Settings } from './pages/Settings';
 import { useSession } from './session';
 
@@ -44,10 +48,20 @@ const TITLES: [RegExp, string][] = [
   [/^\/requests/, 'Requests'],
   [/^\/workload/, 'Workload'],
   [/^\/later/, 'Later'],
+  [/^\/pricing/, 'Pricing'],
+  [/^\/operator/, 'Operator console'],
   [/^\/settings/, 'Settings'],
   [/^\/admin/, 'Administration'],
   [/^\/help/, 'Help'],
 ];
+
+/** Signed-out visitors to "/" see the product website on hosted servers, and the sign-in page otherwise. */
+function PublicHome() {
+  const { data, error } = usePublicPricing();
+  if (error) return <Login />;
+  if (!data) return <Loading />;
+  return data.mode === 'saas' ? <Landing /> : <Login />;
+}
 
 export function App() {
   const { me, loading } = useSession();
@@ -67,11 +81,27 @@ export function App() {
         <Route path="/invite/:token" element={<AcceptInvite />} />
         <Route path="/forgot-password" element={<ForgotPassword />} />
         <Route path="/reset-password/:token" element={<ResetPassword />} />
+        <Route path="/verify-email/:token" element={<VerifyEmail />} />
+        <Route path="/pricing" element={<Pricing />} />
+        <Route path="/terms" element={<Terms />} />
+        <Route path="/privacy" element={<Privacy />} />
+        <Route path="/login" element={<Login />} />
+        <Route path="/" element={<PublicHome />} />
         <Route path="*" element={<Login />} />
       </Routes>
     );
   }
 
+  // Pages that stand on their own even when signed in.
+  if (/^\/(verify-email\/|terms$|privacy$)/.test(location.pathname)) {
+    return (
+      <Routes>
+        <Route path="/verify-email/:token" element={<VerifyEmail />} />
+        <Route path="/terms" element={<Terms />} />
+        <Route path="/privacy" element={<Privacy />} />
+      </Routes>
+    );
+  }
   if (me.mfa_setup_required) return <MfaSetup required />;
 
   return (
@@ -97,6 +127,8 @@ export function App() {
         <Route path="/requests" element={<Requests />} />
         <Route path="/workload" element={<Workload />} />
         <Route path="/later" element={<Later />} />
+        <Route path="/pricing" element={<Pricing />} />
+        <Route path="/operator" element={<Operator />} />
         <Route path="/settings" element={<Settings />} />
         <Route path="/admin" element={<Admin />} />
         <Route path="/help" element={<Help />} />

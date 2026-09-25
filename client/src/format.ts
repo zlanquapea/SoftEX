@@ -46,7 +46,9 @@ export const bytes = (n: number | null | undefined) => {
   if (n == null) return '';
   if (n < 1024) return `${n} B`;
   if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
-  return `${(n / 1024 / 1024).toFixed(1)} MB`;
+  if (n < 1024 ** 3) return `${(n / 1024 / 1024).toFixed(1)} MB`;
+  const gb = n / 1024 ** 3;
+  return `${gb >= 10 || Number.isInteger(gb) ? Math.round(gb) : gb.toFixed(1)} GB`;
 };
 
 export const STATUS_LABEL: Record<string, string> = {

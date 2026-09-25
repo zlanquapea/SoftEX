@@ -4,9 +4,11 @@ import compression from 'compression';
 import { existsSync } from 'node:fs';
 import { createServer, type Server } from 'node:http';
 import { join } from 'node:path';
-import { canViewChannel } from './access.js';
-import { Database } from './db.js';
+import { canViewChannel, canViewMeeting, canViewTask } from './access.js';
+import { openDatabase } from './db.js';
+import { LocalFileStore, S3FileStore, type FileStore, type S3Settings } from './storage.js';
 import type { AiClient, Config, Ctx, MailTransport } from './context.js';
+import type { BillingConfig } from './plans.js';
 import { createClaudeClient } from './ai.js';
 import { startBackgroundJobs } from './jobs.js';
 import { aiRouter } from './routes/ai.js';
@@ -14,6 +16,7 @@ import { integrationsRouter } from './routes/integrations.js';
 import { ssoAdminRouter, ssoPublicRouter } from './routes/sso.js';
 import { productivityRouter } from './routes/productivity.js';
 import { scimAdminRouter, scimRouter } from './routes/scim.js';
+import { billingRouter, operatorRouter, publicBillingRouter } from './routes/billing.js';
 import { RealtimeHub } from './realtime.js';
 import { authRouter, authenticate, meRouter, requireAuth } from './routes/auth.js';
 import { channelsRouter } from './routes/channels.js';
@@ -25,8 +28,16 @@ import { tasksRouter } from './routes/tasks.js';
 import { workspaceRouter } from './routes/workspace.js';
 import { HttpError, errorHandler } from './util.js';
 
-export interface AppOptions extends Partial<Config> {
+export interface AppOptions extends Partial<Omit<Config, 'billing'>> {
+  billing?: Partial<BillingConfig>;
+  /** Express "trust proxy" setting: a hop count, true/false, or an address list. */
+  trustProxy?: boolean | number | string;
   dbPath?: string;
+  /** postgres://… to use PostgreSQL instead of the SQLite file at dbPath. */
+  databaseUrl?: string;
+  /** S3-compatible storage for uploaded files (otherwise they go to uploadDir). */
+  s3?: S3Settings;
+  files?: FileStore;
   staticDir?: string;
   /** Requests per minute per client address across the API (default 1200). */
   rateLimitPerMinute?: number;
@@ -41,7 +52,9 @@ export interface SoftexApp {
   app: Express;
   server: Server;
   ctx: Ctx;
-  close: () => void;
+  /** Resolves when the database is migrated and realtime is connected to other servers. */
+  ready: Promise<void>;
+  close: () => Promise<void>;
 }
 
 export function createApp(options: AppOptions = {}): SoftexApp {
@@ -57,11 +70,26 @@ export function createApp(options: AppOptions = {}): SoftexApp {
     clamav: options.clamav,
     allowPrivateWebhooks: options.allowPrivateWebhooks ?? false,
     aiModel: options.aiModel ?? 'claude-opus-5',
+    registration: options.registration ?? 'open',
+    mode: options.mode ?? 'self_hosted',
+    operatorEmails: (options.operatorEmails ?? []).map((e) => e.trim().toLowerCase()).filter(Boolean),
+    company: options.company ?? {},
+    billing: {
+      priceStandard: 1.5,
+      priceBusiness: 3,
+      trialDays: 30,
+      trialAiRequests: 100,
+      annualFactor: 10 / 12,
+      paymentInstructions: '',
+      ...options.billing,
+    },
   };
-  const db = new Database(options.dbPath ?? join(process.cwd(), 'data', 'softex.db'));
+  const db = openDatabase(options.databaseUrl ?? options.dbPath ?? join(process.cwd(), 'data', 'softex.db'));
   const hub = new RealtimeHub();
+  const files: FileStore = options.files ?? (options.s3?.bucket ? new S3FileStore(options.s3) : new LocalFileStore(config.uploadDir));
   const ctx: Ctx = {
     db,
+    files,
     hub,
     config,
     mail: options.mail,
@@ -71,7 +99,8 @@ export function createApp(options: AppOptions = {}): SoftexApp {
 
   const app = express();
   app.disable('x-powered-by');
-  app.set('trust proxy', 'loopback');
+  // Behind a hosting proxy (Railway, Render, Fly, a load balancer) set trustProxy so rate limits see real client addresses.
+  app.set('trust proxy', options.trustProxy ?? 'loopback');
   app.use((req, res, next) => {
     res.setHeader('X-Content-Type-Options', 'nosniff');
     res.setHeader('Referrer-Policy', 'same-origin');
@@ -100,12 +129,13 @@ export function createApp(options: AppOptions = {}): SoftexApp {
   );
   app.use(express.json({ limit: '1mb' }));
 
-  app.get('/api/health', (_req, res) => {
-    db.get('SELECT 1');
+  app.get('/api/health', async (_req, res) => {
+    await db.get('SELECT 1');
     res.json({ ok: true, time: new Date().toISOString() });
   });
   app.use('/api', authRouter(ctx));
   app.use('/api', ssoPublicRouter(ctx));
+  app.use('/api', publicBillingRouter(ctx));
   app.use('/scim/v2', express.json({ type: ['application/json', 'application/scim+json'], limit: '1mb' }), scimRouter(ctx));
   const api = express.Router();
   api.use(requireAuth(ctx));
@@ -122,6 +152,8 @@ export function createApp(options: AppOptions = {}): SoftexApp {
   api.use(aiRouter(ctx));
   api.use(productivityRouter(ctx));
   api.use(scimAdminRouter(ctx));
+  api.use(billingRouter(ctx));
+  api.use(operatorRouter(ctx));
   app.use('/api', api);
   app.use('/api', (_req, _res, next) => next(new HttpError(404, 'Not found')));
 
@@ -148,12 +180,43 @@ export function createApp(options: AppOptions = {}): SoftexApp {
   }
   app.use(errorHandler);
 
-  hub.onTyping = (auth, channelId) => {
-    const channel = db.get('SELECT * FROM channels WHERE id = ?', channelId);
-    if (!channel || !canViewChannel(db, auth, channel)) return;
-    const user = db.get('SELECT name FROM users WHERE id = ?', auth.userId);
-    hub.publish(auth.workspaceId, { type: 'typing', channelId, userId: auth.userId, name: user?.name }, (a) => a.userId !== auth.userId && canViewChannel(db, a, channel));
+  hub.onTyping = async (auth, channelId) => {
+    const channel = await db.get('SELECT * FROM channels WHERE id = ?', channelId);
+    if (!channel || !await canViewChannel(db, auth, channel)) return;
+    const user = await db.get('SELECT name FROM users WHERE id = ?', auth.userId);
+    await hub.publish(auth.workspaceId, { type: 'typing', channelId, userId: auth.userId, name: user?.name }, { kind: 'channel', channelId, exceptUserId: auth.userId });
   };
+
+  // Realtime audiences are checked against the database for each connected client.
+  hub.resolveAudience = async (_workspaceId, audience) => {
+    switch (audience.kind) {
+      case 'workspace':
+        return () => true;
+      case 'user':
+        return (a) => a.userId === audience.userId;
+      case 'channel': {
+        const channel = await db.get('SELECT * FROM channels WHERE id = ?', audience.channelId);
+        return (a) => !!channel && a.userId !== audience.exceptUserId && canViewChannel(db, a, channel);
+      }
+      case 'task': {
+        const task = await db.get('SELECT * FROM tasks WHERE id = ?', audience.taskId);
+        return (a) => !!task && canViewTask(db, a, task);
+      }
+      case 'meeting': {
+        const meeting = await db.get('SELECT * FROM meetings WHERE id = ?', audience.meetingId);
+        return (a) => !!meeting && canViewMeeting(db, a, meeting);
+      }
+    }
+  };
+  // Events published inside a transaction go out once it commits.
+  hub.defer = (fn) => db.afterCommit(fn);
+  // With PostgreSQL, servers sharing the database pass events, sign-outs and presence to each other.
+  const peers = db.peerLink();
+  const ready = (async () => {
+    await db.ready;
+    if (peers) await hub.connectPeers(peers);
+  })();
+  ready.catch(() => {});
 
   const server = createServer(app);
   hub.attach(server, (req) => authenticate(ctx, req));
@@ -162,11 +225,13 @@ export function createApp(options: AppOptions = {}): SoftexApp {
     app,
     server,
     ctx,
-    close: () => {
+    ready,
+    close: async () => {
       stopJobs();
-      hub.close();
+      await ready.catch(() => {});
+      await hub.close();
       server.close();
-      db.close();
+      await db.close();
     },
   };
 }

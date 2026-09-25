@@ -10,7 +10,7 @@ import { flushJobs, invite, registerOwner, setup, type TestEnv } from './helpers
 let env: TestEnv;
 const servers: Server[] = [];
 afterEach(async () => {
-  env?.cleanup();
+  await env?.cleanup();
   await Promise.all(servers.splice(0).map((s) => new Promise((r) => s.close(r))));
 });
 
@@ -96,8 +96,8 @@ describe('email delivery', () => {
     await owner.agent.post('/api/tasks').send({ title: 'Review budget', ownerId: member.id });
     const eightUtc = new Date();
     eightUtc.setUTCHours(8, 5, 0, 0);
-    expect(queueDigests(env.softex.ctx, eightUtc)).toBeGreaterThanOrEqual(1);
-    expect(queueDigests(env.softex.ctx, eightUtc)).toBe(0); // at most once a day
+    expect(await queueDigests(env.softex.ctx, eightUtc)).toBeGreaterThanOrEqual(1);
+    expect(await queueDigests(env.softex.ctx, eightUtc)).toBe(0); // at most once a day
     await flushJobs(env);
     const digest = env.sent.find((m) => m.to === member.email && m.subject.includes('digest'))!;
     expect(digest.text).toContain('Review budget');
@@ -109,12 +109,12 @@ describe('email delivery', () => {
     const owner = await registerOwner(env);
     await owner.agent.post('/api/admin/invitations').send({ email: 'x@example.com', role: 'member' });
     await flushJobs(env);
-    const row = env.softex.ctx.db.get(`SELECT * FROM outbound_emails WHERE to_email = 'x@example.com'`)!;
+    const row = (await env.softex.ctx.db.get(`SELECT * FROM outbound_emails WHERE to_email = 'x@example.com'`))!;
     expect(row).toMatchObject({ status: 'queued', attempts: 1, last_error: 'SMTP down' });
     fail = false;
-    env.softex.ctx.db.run(`UPDATE outbound_emails SET next_attempt_at = ?`, new Date(0).toISOString());
+    await env.softex.ctx.db.run(`UPDATE outbound_emails SET next_attempt_at = ?`, new Date(0).toISOString());
     await flushJobs(env);
-    expect(env.softex.ctx.db.get(`SELECT status FROM outbound_emails WHERE id = ?`, row.id)!.status).toBe('sent');
+    expect((await env.softex.ctx.db.get(`SELECT status FROM outbound_emails WHERE id = ?`, row.id))!.status).toBe('sent');
   });
 });
 
@@ -228,7 +228,7 @@ describe('files: content search and malware scanning', () => {
     const bad = await owner.agent.post('/api/files').attach('file', Buffer.from('has virus-signature inside'), 'bad.txt');
     expect(bad.status).toBe(400);
     expect(bad.body.error).toContain('Test.Virus');
-    env.cleanup();
+    await env.cleanup();
 
     env = setup({ clamav: { host: '127.0.0.1', port: 1 } });
     const owner2 = await registerOwner(env);
@@ -282,7 +282,7 @@ describe('single sign-on (OIDC)', () => {
     const owner = await registerOwner(env);
     const cfg = await owner.agent.put('/api/admin/sso').send({ enabled: true, issuer: idp.issuer, clientId: 'softex', clientSecret: 's3cret', domain: 'acme.example' });
     expect(cfg.status).toBe(200);
-    expect(JSON.stringify(env.softex.ctx.db.get('SELECT sso_client_secret FROM workspaces'))).not.toContain('s3cret');
+    expect(JSON.stringify(await env.softex.ctx.db.get('SELECT sso_client_secret FROM workspaces'))).not.toContain('s3cret');
     expect((await env.agent().get('/api/auth/sso/discover').query({ email: 'sam@acme.example' })).body.sso).toBe(true);
 
     const { agent, cb } = await signIn('sam@acme.example', idp);

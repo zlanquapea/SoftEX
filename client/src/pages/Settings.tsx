@@ -2,7 +2,8 @@ import { useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { api, type Me } from '../api';
 import { Icon } from '../components/Icon';
-import { Field, Loading, Tabs, useAction } from '../components/ui';
+import { Field, Loading, Modal, Tabs, useAction } from '../components/ui';
+import { UpgradeNotice, usePlan } from '../components/Plan';
 import { useApi } from '../hooks';
 import { useSession } from '../session';
 import { MfaSetup } from './Auth';
@@ -12,6 +13,7 @@ type Tab = 'profile' | 'notifications' | 'security' | 'api' | 'onboarding';
 export function Settings() {
   const [params, setParams] = useSearchParams();
   const tab = (params.get('tab') as Tab) ?? 'profile';
+  const { has } = usePlan();
   return (
     <div className="page narrow">
       <div className="page-head">
@@ -34,7 +36,7 @@ export function Settings() {
       {tab === 'profile' && <Profile />}
       {tab === 'notifications' && <Notifications />}
       {tab === 'security' && <Security />}
-      {tab === 'api' && <ApiTokens />}
+      {tab === 'api' && (has('api') ? <ApiTokens /> : <UpgradeNotice feature="api" />)}
       {tab === 'onboarding' && <Onboarding />}
     </div>
   );
@@ -297,7 +299,58 @@ function Security() {
           <Icon name="download" size={16} /> Export my data
         </a>
       </div>
+      <DeleteAccount />
     </>
+  );
+}
+
+function DeleteAccount() {
+  const { me, setMe } = useSession();
+  const act = useAction();
+  const [open, setOpen] = useState(false);
+  const [form, setForm] = useState({ password: '', code: '', confirm: '' });
+  return (
+    <div className="card form danger-zone">
+      <h2>Delete account</h2>
+      <p className="muted">
+        Erases your name, email address, password and personal settings, and removes you from every workspace. Messages and work you shared stay with your teams, shown as
+        “Deleted user”. If you're the only owner of a workspace, make someone else an owner or delete the workspace first.
+      </p>
+      <button className="btn danger" onClick={() => setOpen(true)}>
+        Delete my account
+      </button>
+      <Modal open={open} onClose={() => setOpen(false)} title="Delete your account?" eyebrow="DANGER">
+        <form
+          className="stack"
+          onSubmit={async (e) => {
+            e.preventDefault();
+            const ok = await act(() => api.del('/me', { password: form.password, code: form.code || undefined }));
+            if (ok) setMe(null);
+          }}
+        >
+          <Field label="Type DELETE to confirm">
+            <input required value={form.confirm} onChange={(e) => setForm({ ...form, confirm: e.target.value })} autoComplete="off" />
+          </Field>
+          <Field label="Your password">
+            <input required type="password" autoComplete="current-password" value={form.password} onChange={(e) => setForm({ ...form, password: e.target.value })} />
+          </Field>
+          {me!.user.mfa_enabled && (
+            <Field label="Authenticator code">
+              <input required inputMode="numeric" autoComplete="one-time-code" value={form.code} onChange={(e) => setForm({ ...form, code: e.target.value })} />
+            </Field>
+          )}
+          <div className="row-gap">
+            <span className="grow" />
+            <button type="button" className="btn" onClick={() => setOpen(false)}>
+              Cancel
+            </button>
+            <button className="btn danger" disabled={form.confirm !== 'DELETE'}>
+              Delete my account
+            </button>
+          </div>
+        </form>
+      </Modal>
+    </div>
   );
 }
 

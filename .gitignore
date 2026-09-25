@@ -6,5 +6,6 @@ server/data/
 *.db-shm
 .DS_Store
 e2e/.data/
+e2e/.data-saas/
 playwright-report/
 test-results/

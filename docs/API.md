@@ -42,6 +42,10 @@ Errors use standard HTTP status codes with a JSON body: `{"error": "message", "d
 | `GET /api/scheduled-messages` · `POST /api/channels/:id/scheduled-messages` · `PATCH/DELETE /api/scheduled-messages/:id` | Messages to send later (`body`, `sendAt`, optional `parentId`) |
 | `POST /api/ai/ask` | Ask a question and get an answer with cited sources (when AI is enabled) |
 | `GET /api/admin/insights` | Workspace success measures (leads and admins) |
+| `GET /api/public/plans` | Plans and prices (no sign-in needed) |
+| `GET /api/billing` · `POST /api/billing/payments` · `DELETE /api/billing/payments/:id` | Current plan, usage and payments; submit a mobile money or bank payment for confirmation (admins, SaaS mode) |
+| `DELETE /api/admin/workspace` | Permanently delete the workspace (owner; `password`, `confirmName`, and `code` when MFA is on) |
+| `DELETE /api/me` | Delete your own account (`password`, and `code` when MFA is on) |
 
 Example: create a task in a project.
 
