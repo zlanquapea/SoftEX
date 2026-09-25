@@ -2,6 +2,7 @@ import type { Request } from 'express';
 import type { Auth } from './access.js';
 import { canViewChannel } from './access.js';
 import type { Database, Row } from './db.js';
+import type { BillingConfig } from './plans.js';
 import type { RealtimeHub } from './realtime.js';
 import { queueEmail } from './mailer.js';
 import { newId, now } from './util.js';
@@ -25,6 +26,11 @@ export interface Config {
   aiModel: string;
   /** Who may create new workspaces from the sign-up page: anyone, only the very first person, or nobody. */
   registration: 'open' | 'first' | 'closed';
+  /** 'saas' turns on plans, trials, usage limits, email verification and the operator console. */
+  mode: 'self_hosted' | 'saas';
+  /** Email addresses of the people who run this service; they get the operator console. */
+  operatorEmails: string[];
+  billing: BillingConfig;
 }
 
 /** Minimal mail transport interface (nodemailer-compatible) so tests can inject a fake. */
@@ -192,6 +198,19 @@ export function audit(
     action,
     target_type: targetType,
     target_id: targetId,
+    detail,
+    created_at: now(),
+  });
+}
+
+/** Service-level log for the operator; kept even after the workspace it mentions is deleted. */
+export function platformEvent(ctx: Ctx, actor: string, action: string, workspace: Row | null, detail: Record<string, unknown> = {}) {
+  ctx.db.insert('platform_events', {
+    id: newId(),
+    actor,
+    action,
+    workspace_id: workspace?.id ?? null,
+    workspace_name: workspace?.name ?? null,
     detail,
     created_at: now(),
   });

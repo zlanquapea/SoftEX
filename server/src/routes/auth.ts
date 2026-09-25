@@ -3,9 +3,10 @@ import type { IncomingMessage } from 'node:http';
 import { z } from 'zod';
 import type { Auth, Role } from '../access.js';
 import type { Row } from '../db.js';
-import { audit, authOf, type Ctx } from '../context.js';
+import { audit, authOf, platformEvent, type Ctx } from '../context.js';
 import { generateSecret, otpauthUrl, verifyTotp } from '../totp.js';
 import { queueEmail } from '../mailer.js';
+import { effectivePlan, hasFeature, isOperator, isSaas, planError, requireMemberCapacity } from '../plans.js';
 import {
   HttpError,
   badRequest,
@@ -45,7 +46,8 @@ export function authenticate(ctx: Ctx, req: IncomingMessage): Auth | null {
   const row = ctx.db.get(
     `SELECT s.user_id, s.workspace_id, m.role FROM sessions s
        JOIN memberships m ON m.workspace_id = s.workspace_id AND m.user_id = s.user_id
-      WHERE s.token_hash = ? AND s.expires_at > ? AND m.deactivated_at IS NULL
+       JOIN workspaces w ON w.id = s.workspace_id
+      WHERE s.token_hash = ? AND s.expires_at > ? AND m.deactivated_at IS NULL AND w.suspended_at IS NULL
         AND (m.guest_expires_at IS NULL OR m.guest_expires_at > ?)`,
     sha256(token),
     now(),
@@ -60,7 +62,8 @@ function authenticateApiToken(ctx: Ctx, token: string): Auth | null {
   const row = ctx.db.get(
     `SELECT t.id, t.user_id, t.workspace_id, t.scope, m.role FROM api_tokens t
        JOIN memberships m ON m.workspace_id = t.workspace_id AND m.user_id = t.user_id
-      WHERE t.token_hash = ? AND t.revoked_at IS NULL AND (t.expires_at IS NULL OR t.expires_at > ?)
+       JOIN workspaces w ON w.id = t.workspace_id
+      WHERE t.token_hash = ? AND t.revoked_at IS NULL AND (t.expires_at IS NULL OR t.expires_at > ?) AND w.suspended_at IS NULL
         AND m.deactivated_at IS NULL AND (m.guest_expires_at IS NULL OR m.guest_expires_at > ?)`,
     sha256(token),
     now(),
@@ -79,6 +82,9 @@ export function requireAuth(ctx: Ctx) {
     if (!auth) return next(new HttpError(401, 'Please sign in'));
     req.auth = auth;
     if (auth.tokenScope) {
+      if (!hasFeature(ctx, auth.workspaceId, 'api')) {
+        return next(planError('API access is available on the Standard plan.', { feature: 'api' }));
+      }
       if (auth.tokenScope === 'read' && req.method !== 'GET') return next(new HttpError(403, 'This API token is read-only'));
       if (req.path.startsWith('/me/') || req.path.startsWith('/integrations')) {
         return next(new HttpError(403, 'API tokens cannot manage account settings or integrations'));
@@ -144,7 +150,7 @@ const Name = z.string().trim().min(1).max(80);
 export function mePayload(ctx: Ctx, auth: Auth) {
   const user = ctx.db.get(
     `SELECT id, name, email, title, timezone, working_hours, expertise, status, status_text, focus_until,
-            quiet_start, quiet_end, color, mfa_enabled, email_digest, email_urgent FROM users WHERE id = ?`,
+            quiet_start, quiet_end, color, mfa_enabled, email_digest, email_urgent, email_verified_at FROM users WHERE id = ?`,
     auth.userId,
   )!;
   const workspace = ctx.db.get('SELECT * FROM workspaces WHERE id = ?', auth.workspaceId)!;
@@ -155,7 +161,7 @@ export function mePayload(ctx: Ctx, auth: Auth) {
   )!;
   const workspaces = ctx.db.all(
     `SELECT w.id, w.name, m.role FROM workspaces w JOIN memberships m ON m.workspace_id = w.id
-      WHERE m.user_id = ? AND m.deactivated_at IS NULL ORDER BY w.name`,
+      WHERE m.user_id = ? AND m.deactivated_at IS NULL AND w.suspended_at IS NULL ORDER BY w.name`,
     auth.userId,
   );
   const memberCount = ctx.db.get(
@@ -169,6 +175,7 @@ export function mePayload(ctx: Ctx, auth: Auth) {
       mfa_enabled: !!user.mfa_enabled,
       email_digest: !!user.email_digest,
       email_urgent: !!user.email_urgent,
+      email_verified: !!user.email_verified_at,
     } as Row,
     workspace: {
       id: workspace.id,
@@ -183,12 +190,37 @@ export function mePayload(ctx: Ctx, auth: Auth) {
       retention_days: workspace.retention_days ?? null,
       legal_hold: !!workspace.legal_hold,
       ai_available: !!ctx.ai,
+      plan: (({ id, name, status, trial_ends_at, paid_through, features }) => ({ id, name, status, trial_ends_at, paid_through, features }))(
+        effectivePlan(ctx, workspace),
+      ),
     },
+    mode: ctx.config.mode,
+    operator: isOperator(ctx, user.email),
     role: membership.role,
     guest_expires_at: membership.guest_expires_at,
     mfa_setup_required: !!workspace.require_mfa && !user.mfa_enabled,
     workspaces,
   };
+}
+
+/** Email a link that proves the person owns their address (hosted servers). */
+export function sendVerificationEmail(ctx: Ctx, user: { id: string; name: string; email: string }) {
+  const token = randomToken();
+  ctx.db.run('DELETE FROM email_verifications WHERE user_id = ?', user.id);
+  ctx.db.insert('email_verifications', {
+    token_hash: sha256(token),
+    user_id: user.id,
+    email: user.email,
+    expires_at: new Date(Date.now() + 3 * 86_400_000).toISOString(),
+    created_at: now(),
+  });
+  queueEmail(ctx, {
+    kind: 'verify_email',
+    to: user.email,
+    subject: 'Confirm your email address for SoftEX',
+    text: `Hi ${user.name.split(' ')[0]},\n\nPlease confirm this is your email address. The link works for three days. If you didn’t create a SoftEX account, you can ignore this email.`,
+    action: { label: 'Confirm email address', url: `${ctx.config.publicUrl}/verify-email/${token}` },
+  });
 }
 
 export function authRouter(ctx: Ctx) {
@@ -217,9 +249,16 @@ export function authRouter(ctx: Ctx) {
         name: body.name,
         password_hash: hashPassword(body.password),
         color: pickColor(body.email),
+        email_verified_at: isSaas(ctx) ? null : now(),
         created_at: now(),
       });
-      db.insert('workspaces', { id: workspaceId, name: body.workspaceName, created_at: now() });
+      db.insert('workspaces', {
+        id: workspaceId,
+        name: body.workspaceName,
+        plan: 'free',
+        trial_ends_at: isSaas(ctx) ? new Date(Date.now() + ctx.config.billing.trialDays * 86_400_000).toISOString() : null,
+        created_at: now(),
+      });
       db.insert('memberships', { workspace_id: workspaceId, user_id: userId, role: 'owner', created_at: now() });
       const generalId = newId();
       db.insert('channels', {
@@ -245,6 +284,7 @@ export function authRouter(ctx: Ctx) {
       db.insert('channel_members', { channel_id: annId, user_id: userId, joined_at: now() });
       audit(ctx, workspaceId, userId, 'workspace.created', 'workspace', workspaceId, { name: body.workspaceName });
     });
+    if (isSaas(ctx)) sendVerificationEmail(ctx, { id: userId, name: body.name, email: body.email });
     startSession(ctx, res, userId, workspaceId);
     res.status(201).json(mePayload(ctx, { userId, workspaceId, role: 'owner' }));
   });
@@ -263,13 +303,18 @@ export function authRouter(ctx: Ctx) {
       if (!body.code) throw new HttpError(401, 'Enter the code from your authenticator app', { code: 'mfa_required' });
       if (!verifyTotp(user.mfa_secret, body.code)) throw new HttpError(401, 'That code is not valid', { code: 'mfa_required' });
     }
-    const memberships = db.all(
-      `SELECT workspace_id, role FROM memberships WHERE user_id = ? AND deactivated_at IS NULL
-         AND (guest_expires_at IS NULL OR guest_expires_at > ?) ORDER BY created_at`,
+    const all = db.all(
+      `SELECT m.workspace_id, m.role, w.suspended_at FROM memberships m JOIN workspaces w ON w.id = m.workspace_id
+        WHERE m.user_id = ? AND m.deactivated_at IS NULL
+         AND (m.guest_expires_at IS NULL OR m.guest_expires_at > ?) ORDER BY m.created_at`,
       user.id,
       now(),
     );
+    const memberships = all.filter((m) => !m.suspended_at);
     const membership = memberships.find((m) => m.workspace_id === body.workspaceId) ?? memberships[0];
+    if (!membership && all.length) {
+      throw new HttpError(403, `This workspace has been suspended. Contact ${ctx.config.billing.supportEmail ?? 'support'} for help.`, { code: 'workspace_suspended' });
+    }
     if (!membership) throw new HttpError(403, 'Your access to SoftEX has ended. Contact your workspace administrator.');
     const ws = db.get('SELECT sso_enabled, sso_required FROM workspaces WHERE id = ?', membership.workspace_id)!;
     if (ws.sso_enabled && ws.sso_required && membership.role !== 'owner') {
@@ -284,6 +329,20 @@ export function authRouter(ctx: Ctx) {
     const token = tokenFrom(req);
     if (token) db.run('DELETE FROM sessions WHERE token_hash = ?', sha256(token));
     res.clearCookie(COOKIE, { path: '/' });
+    res.json({ ok: true });
+  });
+
+  r.post('/auth/verify-email', (req, res) => {
+    const { token } = parse(z.object({ token: z.string().min(10).max(200) }), req.body);
+    rateLimit(`verify:${req.ip}`, 30);
+    const row = db.get('SELECT * FROM email_verifications WHERE token_hash = ? AND expires_at > ?', sha256(token), now());
+    const user = row ? db.get('SELECT id, email FROM users WHERE id = ?', row.user_id) : undefined;
+    // The link only counts for the address it was sent to.
+    if (!row || !user || user.email !== row.email) throw new HttpError(400, 'This confirmation link has expired or was already used. Sign in and send a new one.');
+    db.transaction(() => {
+      db.run('UPDATE users SET email_verified_at = COALESCE(email_verified_at, ?) WHERE id = ?', now(), user.id);
+      db.run('DELETE FROM email_verifications WHERE user_id = ?', user.id);
+    });
     res.json({ ok: true });
   });
 
@@ -316,6 +375,8 @@ export function authRouter(ctx: Ctx) {
     db.transaction(() => {
       db.run('UPDATE password_resets SET used_at = ? WHERE token_hash = ?', now(), reset.token_hash);
       db.update('users', reset.user_id, { password_hash: hashPassword(body.password) });
+      // The reset link reached this inbox, which proves the address.
+      db.run('UPDATE users SET email_verified_at = COALESCE(email_verified_at, ?) WHERE id = ?', now(), reset.user_id);
       db.run('DELETE FROM sessions WHERE user_id = ?', reset.user_id);
       for (const m of db.all('SELECT workspace_id FROM memberships WHERE user_id = ?', reset.user_id)) {
         audit(ctx, m.workspace_id, reset.user_id, 'user.password_reset', 'user', reset.user_id);
@@ -352,6 +413,14 @@ export function authRouter(ctx: Ctx) {
 
   r.post('/invitations/:token/accept', (req, res) => {
     const invite = loadInvitation(req.params.token);
+    const target = db.get('SELECT suspended_at FROM workspaces WHERE id = ?', invite.workspace_id)!;
+    if (target.suspended_at) throw new HttpError(403, 'This workspace has been suspended.', { code: 'workspace_suspended' });
+    const alreadyActive = db.get(
+      `SELECT 1 FROM memberships m JOIN users u ON u.id = m.user_id WHERE m.workspace_id = ? AND u.email = ? AND m.deactivated_at IS NULL`,
+      invite.workspace_id,
+      invite.email,
+    );
+    if (!alreadyActive) requireMemberCapacity(ctx, invite.workspace_id, 1, invite.role);
     const body = parse(z.object({ name: Name.optional(), password: z.string().min(1).max(200) }), req.body);
     let user = db.get('SELECT * FROM users WHERE email = ?', invite.email);
     if (user) {
@@ -366,11 +435,14 @@ export function authRouter(ctx: Ctx) {
         name: body.name,
         password_hash: hashPassword(body.password),
         color: pickColor(invite.email),
+        // The invitation link was emailed to this address.
+        email_verified_at: now(),
         created_at: now(),
       });
       user = db.get('SELECT * FROM users WHERE id = ?', id)!;
     }
     const userId = user.id as string;
+    db.run('UPDATE users SET email_verified_at = COALESCE(email_verified_at, ?) WHERE id = ?', now(), userId);
     db.transaction(() => {
       const guestExpires =
         invite.role === 'guest' ? new Date(Date.now() + (invite.guest_days ?? 30) * 86_400_000).toISOString() : null;
@@ -467,6 +539,15 @@ export function meRouter(ctx: Ctx) {
     res.json(payload);
   });
 
+  r.post('/me/verify-email/resend', (req, res) => {
+    const auth = authOf(req);
+    rateLimit(`verify-resend:${auth.userId}`, 5, 60 * 60_000);
+    const user = db.get('SELECT id, name, email, email_verified_at FROM users WHERE id = ?', auth.userId)!;
+    if (user.email_verified_at) throw badRequest('Your email address is already confirmed');
+    sendVerificationEmail(ctx, user as { id: string; name: string; email: string });
+    res.json({ ok: true, email: user.email });
+  });
+
   r.post('/me/password', (req, res) => {
     const auth = authOf(req);
     const body = parse(z.object({ current: z.string(), next: Password }), req.body);
@@ -510,12 +591,66 @@ export function meRouter(ctx: Ctx) {
     res.json(mePayload(ctx, auth));
   });
 
+  // Delete your own account. Content you wrote stays with your workspaces, attributed to "Deleted user";
+  // your name, email, credentials and personal settings are erased.
+  r.delete('/me', (req, res) => {
+    const auth = authOf(req);
+    if (auth.tokenScope) throw new HttpError(403, 'API tokens cannot delete accounts');
+    const body = parse(z.object({ password: z.string().min(1).max(200), code: z.string().max(10).optional() }), req.body);
+    const user = db.get('SELECT * FROM users WHERE id = ?', auth.userId)!;
+    if (!verifyPassword(body.password, user.password_hash)) throw new HttpError(401, 'Password is incorrect');
+    if (user.mfa_enabled && (!body.code || !verifyTotp(user.mfa_secret, body.code))) throw new HttpError(401, 'Enter a valid code from your authenticator app', { code: 'mfa_required' });
+    const soleOwner = db.all(
+      `SELECT w.name FROM memberships m JOIN workspaces w ON w.id = m.workspace_id
+        WHERE m.user_id = ? AND m.role = 'owner' AND m.deactivated_at IS NULL
+          AND NOT EXISTS (SELECT 1 FROM memberships o WHERE o.workspace_id = m.workspace_id AND o.role = 'owner' AND o.deactivated_at IS NULL AND o.user_id != m.user_id)`,
+      auth.userId,
+    );
+    if (soleOwner.length) {
+      throw new HttpError(
+        409,
+        `You are the only owner of ${soleOwner.map((w) => w.name).join(', ')}. Make someone else an owner, or delete the workspace, before deleting your account.`,
+        { code: 'sole_owner', workspaces: soleOwner.map((w) => w.name) },
+      );
+    }
+    const workspaces = db.all('SELECT m.workspace_id, w.name FROM memberships m JOIN workspaces w ON w.id = m.workspace_id WHERE m.user_id = ?', auth.userId);
+    db.transaction(() => {
+      for (const table of ['sessions', 'email_verifications', 'password_resets', 'saved_messages', 'notifications', 'reminders', 'channel_members']) {
+        db.run(`DELETE FROM ${table} WHERE user_id = ?`, auth.userId);
+      }
+      db.run('DELETE FROM scheduled_messages WHERE user_id = ? AND sent_message_id IS NULL', auth.userId);
+      db.run('UPDATE api_tokens SET revoked_at = COALESCE(revoked_at, ?) WHERE user_id = ?', now(), auth.userId);
+      db.run('UPDATE memberships SET deactivated_at = COALESCE(deactivated_at, ?) WHERE user_id = ?', now(), auth.userId);
+      db.update('users', auth.userId, {
+        email: `deleted-${auth.userId}@deleted.invalid`,
+        name: 'Deleted user',
+        password_hash: hashPassword(randomToken()),
+        title: '',
+        expertise: '[]',
+        status: 'away',
+        status_text: '',
+        focus_until: null,
+        mfa_secret: null,
+        mfa_enabled: 0,
+        email_verified_at: null,
+        email_digest: 0,
+        email_urgent: 0,
+      });
+      for (const w of workspaces) audit(ctx, w.workspace_id, null, 'user.account_deleted', 'user', auth.userId);
+      platformEvent(ctx, user.email, 'account.deleted', null, { workspaces: workspaces.length });
+    });
+    for (const w of workspaces) ctx.hub.disconnect(w.workspace_id, auth.userId);
+    res.clearCookie(COOKIE, { path: '/' });
+    res.json({ deleted: true });
+  });
+
   r.post('/me/switch-workspace', (req, res) => {
     const auth = authOf(req);
     const { workspaceId } = parse(z.object({ workspaceId: z.string() }), req.body);
     const m = db.get(
-      `SELECT role FROM memberships WHERE workspace_id = ? AND user_id = ? AND deactivated_at IS NULL
-         AND (guest_expires_at IS NULL OR guest_expires_at > ?)`,
+      `SELECT m.role FROM memberships m JOIN workspaces w ON w.id = m.workspace_id
+        WHERE m.workspace_id = ? AND m.user_id = ? AND m.deactivated_at IS NULL AND w.suspended_at IS NULL
+         AND (m.guest_expires_at IS NULL OR m.guest_expires_at > ?)`,
       workspaceId,
       auth.userId,
       now(),

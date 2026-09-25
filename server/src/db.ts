@@ -555,6 +555,65 @@ CREATE TABLE IF NOT EXISTS scheduled_messages (
 );
 CREATE INDEX IF NOT EXISTS idx_scheduled_due ON scheduled_messages(sent_message_id, send_at);
 
+CREATE TABLE IF NOT EXISTS email_verifications (
+  token_hash TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  email TEXT NOT NULL,
+  expires_at TEXT NOT NULL,
+  created_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS ai_usage (
+  id TEXT PRIMARY KEY,
+  workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+  user_id TEXT,
+  feature TEXT NOT NULL,
+  created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_ai_usage ON ai_usage(workspace_id, created_at);
+
+CREATE TABLE IF NOT EXISTS payments (
+  id TEXT PRIMARY KEY,
+  workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+  submitted_by TEXT NOT NULL REFERENCES users(id),
+  plan TEXT NOT NULL,                               -- standard | business
+  months INTEGER NOT NULL,
+  seats INTEGER NOT NULL,
+  amount REAL NOT NULL,                             -- USD
+  method TEXT NOT NULL,                             -- orange_money | mtn_momo | bank | other
+  reference TEXT NOT NULL,
+  payer_name TEXT NOT NULL DEFAULT '',
+  payer_phone TEXT NOT NULL DEFAULT '',
+  note TEXT NOT NULL DEFAULT '',
+  status TEXT NOT NULL DEFAULT 'pending',           -- pending | approved | rejected | cancelled
+  decided_by TEXT,
+  decided_at TEXT,
+  decision_note TEXT NOT NULL DEFAULT '',
+  period_start TEXT,
+  period_end TEXT,
+  created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_payments_status ON payments(status, created_at);
+
+CREATE TABLE IF NOT EXISTS billing_notices (
+  workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+  kind TEXT NOT NULL,
+  ref TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  PRIMARY KEY (workspace_id, kind, ref)
+);
+
+-- Service-level log kept by the operator; outlives deleted workspaces on purpose.
+CREATE TABLE IF NOT EXISTS platform_events (
+  id TEXT PRIMARY KEY,
+  actor TEXT NOT NULL,
+  action TEXT NOT NULL,
+  workspace_id TEXT,
+  workspace_name TEXT,
+  detail TEXT NOT NULL DEFAULT '{}',
+  created_at TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS deadline_reminders (
   task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
   due_date TEXT NOT NULL,
@@ -568,7 +627,7 @@ CREATE TABLE IF NOT EXISTS deadline_reminders (
  * Columns added after the first release. Applied idempotently on start-up so
  * existing databases upgrade in place without a separate migration step.
  */
-const ADDED_COLUMNS: [table: string, column: string, definition: string][] = [
+const ADDED_COLUMNS: [table: string, column: string, definition: string, backfill?: string][] = [
   ['users', 'email_digest', 'INTEGER NOT NULL DEFAULT 1'],
   ['users', 'email_urgent', 'INTEGER NOT NULL DEFAULT 1'],
   ['users', 'last_digest_at', 'TEXT'],
@@ -589,6 +648,14 @@ const ADDED_COLUMNS: [table: string, column: string, definition: string][] = [
   ['workspaces', 'legal_hold', 'INTEGER NOT NULL DEFAULT 0'],
   ['workspaces', 'scim_token_hash', 'TEXT'],
   ['memberships', 'scim_external_id', 'TEXT'],
+  // Accounts that existed before email verification count as verified.
+  ['users', 'email_verified_at', 'TEXT', 'UPDATE users SET email_verified_at = created_at'],
+  ['workspaces', 'plan', "TEXT NOT NULL DEFAULT 'free'"],
+  // Workspaces that existed before plans get a fresh 30-day trial when a server switches to SaaS mode.
+  ['workspaces', 'trial_ends_at', 'TEXT', "UPDATE workspaces SET trial_ends_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now', '+30 days')"],
+  ['workspaces', 'paid_through', 'TEXT'],
+  ['workspaces', 'suspended_at', 'TEXT'],
+  ['workspaces', 'suspended_reason', 'TEXT'],
 ];
 
 export type Row = Record<string, any>;
@@ -601,9 +668,12 @@ export class Database {
     this.raw = new DatabaseSync(path);
     this.raw.exec('PRAGMA journal_mode = WAL;');
     this.raw.exec(SCHEMA);
-    for (const [table, column, definition] of ADDED_COLUMNS) {
+    for (const [table, column, definition, backfill] of ADDED_COLUMNS) {
       const exists = (this.raw.prepare(`PRAGMA table_info(${table})`).all() as Row[]).some((c) => c.name === column);
-      if (!exists) this.raw.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
+      if (!exists) {
+        this.raw.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
+        if (backfill) this.raw.exec(backfill);
+      }
     }
   }
 

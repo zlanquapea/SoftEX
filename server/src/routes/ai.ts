@@ -15,7 +15,8 @@ import {
 } from '../access.js';
 import type { Row } from '../db.js';
 import { audit, authOf, type Ctx } from '../context.js';
-import { HttpError, forbidden, notFound, parse, today } from '../util.js';
+import { HttpError, forbidden, newId, notFound, now, parse, today } from '../util.js';
+import { requireAiQuota, requireVerifiedEmail } from '../plans.js';
 import { projectStats } from './projects.js';
 
 /**
@@ -44,6 +45,8 @@ export function aiRouter(ctx: Ctx) {
     if (!ctx.ai) throw new HttpError(503, 'AI assistance is not configured on this server');
     const ws = db.get('SELECT ai_enabled FROM workspaces WHERE id = ?', auth.workspaceId)!;
     if (!ws.ai_enabled) throw forbidden('An administrator has not enabled AI assistance for this workspace');
+    requireAiQuota(ctx, auth.workspaceId);
+    requireVerifiedEmail(ctx, auth);
     return ctx.ai;
   };
 
@@ -51,6 +54,7 @@ export function aiRouter(ctx: Ctx) {
     const ai = requireAi(auth);
     try {
       const out = await ai.complete({ system: SYSTEM, ...input });
+      db.insert('ai_usage', { id: newId(), workspace_id: auth.workspaceId, user_id: auth.userId, feature: 'request', created_at: now() });
       if (out.refused) throw new HttpError(422, 'The AI assistant declined this request.');
       return out.text;
     } catch (error) {

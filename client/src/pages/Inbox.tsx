@@ -10,6 +10,7 @@ import { useApi, useRealtime } from '../hooks';
 type Filter = 'all' | 'unread' | 'mentions' | 'assigned' | 'meetings';
 const KIND_ICON: Record<string, string> = {
   reminder: 'clock',
+  billing: 'flag',
   deadline: 'calendar',
   automation: 'refresh',
   mention: 'chat',

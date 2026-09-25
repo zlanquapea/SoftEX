@@ -5,6 +5,7 @@ import { Avatar } from '../components/Avatar';
 import { Icon } from '../components/Icon';
 import { useShell } from '../components/Layout';
 import { WhenModal } from '../components/Later';
+import { UpgradeNotice, usePlan } from '../components/Plan';
 import { Empty, ErrorState, Field, Loading, Modal, Tabs, useAction } from '../components/ui';
 import { dateTime, plainMentions, STATUS_LABEL, timeAgo } from '../format';
 import { useApi, useRealtime } from '../hooks';
@@ -34,6 +35,24 @@ interface WorkloadData {
 }
 
 export function Workload() {
+  const { has } = usePlan();
+  if (!has('planning')) {
+    return (
+      <div className="page">
+        <div className="page-head">
+          <div>
+            <p className="eyebrow">PLANNING</p>
+            <h1>Workload</h1>
+          </div>
+        </div>
+        <UpgradeNotice feature="planning" />
+      </div>
+    );
+  }
+  return <WorkloadView />;
+}
+
+function WorkloadView() {
   const { openTask } = useShell();
   const [weeks, setWeeks] = useState(4);
   const [projectId, setProjectId] = useState('');

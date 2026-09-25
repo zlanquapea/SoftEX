@@ -8,7 +8,7 @@ import { useAction } from './ui';
 /** True when AI assistance is available and switched on for this workspace. */
 export function useAiEnabled() {
   const { me } = useSession();
-  return !!me?.workspace.ai_enabled && !!me?.workspace.ai_available;
+  return !!me?.workspace.ai_enabled && !!me?.workspace.ai_available && !!me?.workspace.plan?.features.includes('ai');
 }
 
 export function AiDraft({ text, onUse, useLabel }: { text: string; onUse?: () => void; useLabel?: string }) {

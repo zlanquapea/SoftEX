@@ -4,6 +4,7 @@ import { z } from 'zod';
 import { requireRole } from '../access.js';
 import { audit, authOf, type Ctx } from '../context.js';
 import { badRequest, hashPassword, HttpError, newId, now, parse, pickColor, randomToken } from '../util.js';
+import { requireFeature, requireMemberCapacity } from '../plans.js';
 import { startSession } from './auth.js';
 
 /**
@@ -153,6 +154,7 @@ export function ssoPublicRouter(ctx: Ctx) {
     db.run('DELETE FROM sso_states WHERE state = ?', saved.state);
     const ws = db.get('SELECT * FROM workspaces WHERE id = ? AND sso_enabled = 1', saved.workspace_id);
     if (!ws || !ctx.config.secretKey) return fail('Single sign-on is no longer enabled for this workspace.');
+    if (ws.suspended_at) return fail('This workspace has been suspended.');
     try {
       const doc = await discover(ws.sso_issuer);
       const tokenRes = await fetch(doc.token_endpoint, {
@@ -180,6 +182,7 @@ export function ssoPublicRouter(ctx: Ctx) {
       if (membership?.deactivated_at) throw new Error('Your access to this workspace has been removed');
       if (!membership) {
         if (!ws.sso_auto_provision) throw new Error('You do not have an account in this workspace yet. Ask an administrator to invite you.');
+        requireMemberCapacity(ctx, ws.id, 1);
         db.transaction(() => {
           if (!user) {
             const id = newId();
@@ -190,6 +193,7 @@ export function ssoPublicRouter(ctx: Ctx) {
               // Random, never-shared password: the account signs in through SSO (or a reset link).
               password_hash: hashPassword(randomToken()),
               color: pickColor(email),
+              email_verified_at: now(),
               created_at: now(),
             });
             user = db.get('SELECT * FROM users WHERE id = ?', id)!;
@@ -255,6 +259,7 @@ export function ssoAdminRouter(ctx: Ctx) {
       }),
       req.body,
     );
+    if (body.enabled) requireFeature(ctx, auth.workspaceId, 'sso');
     const ws = db.get('SELECT * FROM workspaces WHERE id = ?', auth.workspaceId)!;
     const clash = db.get('SELECT 1 FROM workspaces WHERE sso_domain = ? AND sso_enabled = 1 AND id != ?', body.domain, auth.workspaceId);
     if (body.enabled && clash) throw badRequest('Another workspace already uses single sign-on for this domain');

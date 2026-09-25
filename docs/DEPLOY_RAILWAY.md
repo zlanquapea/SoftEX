@@ -2,13 +2,16 @@
 
 SoftEX runs on Railway as **one service** built from the repository's `Dockerfile`, with **one volume** for the database and uploaded files. `railway.json` in the repository sets the builder, the health check (`/api/health`) and the restart policy, so there is nothing to configure for the build itself.
 
-Allow about 15 minutes.
+This guide sets SoftEX up as a **hosted service (SaaS)**: customers sign up themselves, get a 30-day Business trial, can stay on the Free plan forever, and pay for Standard or Business with Orange Money, MTN Mobile Money or bank transfer. If you only want a private server for one organisation, see [Private deployment](#private-deployment-for-one-organisation) at the end.
+
+Allow about 20 minutes.
 
 ## What you need
 
 - A Railway account on a plan that includes volumes (the Hobby plan or higher).
 - Access to the `zlanquapea/SoftEX` GitHub repository.
-- Optional, for email: SMTP credentials from a provider such as Postmark, Resend, SendGrid, Mailgun or Amazon SES, and a sender address on a domain you control.
+- **Email sending (required for SaaS):** SMTP credentials from a provider such as Postmark, Resend, SendGrid, Mailgun or Amazon SES, and a sender address on a domain you control. New customers must confirm their email address before they can invite people or pay, so email has to work.
+- **Where customers pay you:** your Orange Money and/or MTN MoMo merchant or wallet numbers, and bank account details.
 - Optional, for AI features: an Anthropic API key.
 - Optional: a domain name, if you want `softex.yourcompany.com` instead of a `*.up.railway.app` address.
 
@@ -33,20 +36,29 @@ In the service, go to **Settings → Networking → Generate Domain**. When Rail
 In the service, open **Variables → Raw Editor**, paste the following, and fill in the values:
 
 ```env
-# Required
+# Server
 PORT=4000
 SOFTEX_PUBLIC_URL=https://${{RAILWAY_PUBLIC_DOMAIN}}
 SOFTEX_SECURE_COOKIES=true
 SOFTEX_TRUST_PROXY=1
 SOFTEX_SECRET_KEY=<paste a long random string, see below>
-SOFTEX_REGISTRATION=first
 RAILWAY_RUN_UID=0
 
-# Email (optional but recommended: invitations, password resets, meeting invites, digests)
+# Hosted service (SaaS)
+SOFTEX_MODE=saas
+SOFTEX_REGISTRATION=open
+SOFTEX_OPERATOR_EMAILS=you@yourcompany.com
+SOFTEX_SUPPORT_EMAIL=billing@yourcompany.com
+SOFTEX_PRICE_STANDARD=1.50
+SOFTEX_PRICE_BUSINESS=3
+SOFTEX_LRD_PER_USD=190
+SOFTEX_PAYMENT_INSTRUCTIONS=**Orange Money:** send to 0770 000 000 (Your Company Ltd)\n\n**MTN MoMo:** send to 0880 000 000 (Your Company Ltd)\n\n**Bank transfer:** Ecobank Liberia, account name Your Company Ltd, account number 0000000000
+
+# Email (required for SaaS)
 SOFTEX_SMTP_URL=smtps://USERNAME:PASSWORD@smtp.yourprovider.com:465
 SOFTEX_MAIL_FROM=SoftEX <softex@yourcompany.com>
 
-# AI features (optional; an admin must still switch them on)
+# AI features for the Business plan (optional)
 ANTHROPIC_API_KEY=<your key>
 ```
 
@@ -59,10 +71,16 @@ What each one does:
 | `SOFTEX_SECURE_COOKIES` | Sign-in cookies are only sent over HTTPS. Railway serves HTTPS for you. |
 | `SOFTEX_TRUST_PROXY` | Railway puts a proxy in front of the app. `1` tells SoftEX to read the visitor's real address from it, so sign-in rate limits and the audit log work per person. |
 | `SOFTEX_SECRET_KEY` | Encrypts stored secrets such as the single sign-on client secret. **Keep it safe and never change it** once set, or saved secrets can't be decrypted. |
-| `SOFTEX_REGISTRATION` | `first` lets only the first person create a workspace (you, in step 5); after that, people join by invitation. Use this for a private, internal deployment. For a public service where customers sign themselves up, use `open`, but read *Running SoftEX as a public service* below first. `closed` blocks sign-up entirely. |
+| `SOFTEX_MODE` | `saas` turns on plans, the 30-day trial, usage limits, email confirmation, billing and the operator console. |
+| `SOFTEX_REGISTRATION` | `open` lets anyone create a workspace from the sign-up page, which is what a SaaS needs. |
+| `SOFTEX_OPERATOR_EMAILS` | Your own email address (comma-separate several). These accounts get the **Operator console**, where you confirm payments and manage customers. Operators must turn on multifactor authentication. |
+| `SOFTEX_SUPPORT_EMAIL` | Shown to customers on the pricing and billing pages. |
+| `SOFTEX_PRICE_STANDARD`, `SOFTEX_PRICE_BUSINESS` | Price per member per month, in US dollars. Defaults are $1.50 and $3. Paying 12 months at once gets two months free. |
+| `SOFTEX_LRD_PER_USD` | Optional exchange rate. When set, prices also show an approximate amount in Liberian dollars. Update it when the rate moves. |
+| `SOFTEX_PAYMENT_INSTRUCTIONS` | What customers see when they pay: your mobile money numbers and bank details. Markdown is allowed; write `\n` for a new line. |
 | `RAILWAY_RUN_UID` | Railway mounts volumes as root, and SoftEX's image runs as an unprivileged user. `0` lets the app write to the volume. If it is missing, the logs say *SoftEX cannot write to its data directory*. |
-| `SOFTEX_SMTP_URL`, `SOFTEX_MAIL_FROM` | Without them, emails are kept in **Administration → Email** but not sent. URL-encode special characters in the password (for example `@` → `%40`). Use port 465 with `smtps://`, or port 587 with `smtp://`. |
-| `ANTHROPIC_API_KEY` | Makes Ask SoftEX, summaries and task suggestions available. Every workspace's AI use is billed to this key. |
+| `SOFTEX_SMTP_URL`, `SOFTEX_MAIL_FROM` | Without them, emails are kept in **Administration → Email** but not sent, so customers can't confirm their address. URL-encode special characters in the password (for example `@` → `%40`). Use port 465 with `smtps://`, or port 587 with `smtp://`. |
+| `ANTHROPIC_API_KEY` | Makes Ask SoftEX, summaries and task suggestions available on the Business plan and during trials. Every workspace's AI use is billed to this key, so it is capped: 50 requests per member per month on Business, and 100 requests in total per trial (`SOFTEX_TRIAL_AI_REQUESTS`). |
 
 To make a secret key, run this on your computer and paste the output:
 
@@ -72,14 +90,15 @@ openssl rand -hex 32
 
 Click **Deploy** (or **Apply changes**) to redeploy with the volume and variables.
 
-## 5. First sign-in
+## 5. Set up your operator account
 
-1. Open your public address. Click **Create a workspace**, and register with your own name, email and a strong password. You become the workspace **owner**.
-2. Because `SOFTEX_REGISTRATION=first`, nobody else can create a workspace now. Invite your team from **Administration → Invitations**.
-3. Recommended right away, all under **Administration**:
-   - **Workspace:** turn on *Require multifactor authentication*, set *Keep messages for* if you have a retention policy, and turn on *AI assistance* if you set an API key.
-   - **Email:** send yourself an invitation or password reset and confirm it arrives. Failures and retries are listed here.
-   - **Audit log:** find your `auth.login` entry and check the IP address is your own public address, not a private one like `10.x.x.x` or `100.64.x.x`. If it is private, set `SOFTEX_TRUST_PROXY=2` and check again.
+1. Open your public address and click **Create a workspace**. Sign up with the email address you put in `SOFTEX_OPERATOR_EMAILS`. This is your company's own workspace.
+2. Open the confirmation email and click the link. If it doesn't arrive, check the SMTP settings and **Administration → Email**.
+3. Go to **Settings → Security** and turn on multifactor authentication. The operator console won't open without it.
+4. Open the workspace menu (top left) → **Operator console**.
+5. Your own workspace starts on a trial like everyone else's. To keep it on Business, open **Workspaces**, click it, set **Plan** to *Business* and **Paid through** to a date far in the future, and save.
+6. Check that the proxy setting works. In **Administration → Audit log**, find your `auth.login` entry and check the IP address is your own public address, not a private one like `10.x.x.x` or `100.64.x.x`. If it is private, set `SOFTEX_TRUST_PROXY=2` and check again.
+7. Open `/pricing` on your address: this is the public pricing page to link from your website and social media.
 
 Do **not** run the demo seed (`npm run seed`) in production; it creates sample accounts with a published password.
 
@@ -112,17 +131,37 @@ Railway redeploys automatically when `main` changes, because the service is conn
 
 Your data lives in the volume. If your Railway plan offers volume **Backups** (in the volume's settings), schedule them, and take a manual backup before big changes. People can also export what they can access from **Administration → Workspace → Export data**.
 
-## Running SoftEX as a public service
+## Running the service day to day
 
-`SOFTEX_REGISTRATION=open` lets anyone on the internet create a workspace. SoftEX keeps workspaces isolated from each other, but it does not yet have the controls a public service needs:
+**Plans**
 
-- **No email verification** at sign-up, so anyone can register with an address they don't own.
-- **No usage limits per workspace.** There are no limits on AI use, storage or members. Any workspace admin can switch on AI assistance, and it is billed to your `ANTHROPIC_API_KEY`.
-- **No billing, plans or trials.**
-- **No way to delete a workspace or an account, and no operator console** for seeing or suspending customer workspaces.
-- **One server instance** (see below).
+| | Free | Standard | Business |
+| --- | --- | --- | --- |
+| Price per member / month | $0 | `SOFTEX_PRICE_STANDARD` ($1.50) | `SOFTEX_PRICE_BUSINESS` ($3) |
+| Members | Up to 10 | Unlimited | Unlimited |
+| Storage | 2 GB | 10 GB + 5 GB per member | 20 GB + 10 GB per member |
+| Chat, tasks, projects, knowledge, meetings, decisions | ✓ | ✓ | ✓ |
+| Timeline, workload, automations, guests, insights, API and webhooks | | ✓ | ✓ |
+| AI, single sign-on, SCIM, retention and legal hold | | | ✓ |
 
-Until those are in place, either keep sign-up at `first` or `closed` and create customer workspaces by invitation, or run with `open` **without** `ANTHROPIC_API_KEY` for a closed beta with people you trust.
+New workspaces get a 30-day Business trial (`SOFTEX_TRIAL_DAYS`). When a trial or paid period ends, the workspace moves to Free after a 7-day grace period for paid plans. Nothing is deleted; paid features pause until they pay. Owners and admins get reminders by email and in the app 7 days and 1 day before a trial ends, 7 days before a paid period ends, when a payment is overdue, and when the workspace moves to Free.
+
+**Confirming payments.** When a customer pays, they enter the transaction ID in **Administration → Billing**, and you get an email. In **Operator console → Payments to confirm**, check the payment really arrived in your Orange Money, MTN MoMo or bank account (match the reference and the amount), then click **Confirm**. The customer's plan starts or extends immediately, and they get a receipt by email. If the money didn't arrive, click **Reject** and give a reason; they're told by email.
+
+**Other operator tools**
+
+- **Workspaces:** search by name or owner email. You can extend a trial, grant or correct a plan by hand (discounts, partners, refunds), or suspend a workspace that breaks your terms. Suspension signs everyone out until you restore it.
+- **Activity log:** a permanent record of payments, plan changes, suspensions and deleted workspaces.
+
+You see sizes, dates and counts only. The console never shows customers' messages, files or tasks.
+
+**Customers leaving.** Owners can delete their workspace (Administration → Workspace → Delete workspace), and anyone can delete their own account (Settings → Security). Both are permanent and recorded in the activity log.
+
+**Card payments.** Stripe doesn't accept businesses registered in Liberia. If you later register a company in a supported country, or get merchant API access from Orange Money or MTN MoMo, automatic payment confirmation can be added on top of the current billing system.
+
+## Private deployment for one organisation
+
+To run SoftEX just for your own organisation, leave out the *Hosted service (SaaS)* variables and set `SOFTEX_REGISTRATION=first`. The first person to sign up creates the only workspace, everyone else joins by invitation, and there are no plans or limits. Email is then optional.
 
 ## Limits of this setup
 
@@ -140,4 +179,6 @@ Until those are in place, either keep sign-up at `first` or `closed` and create 
 | Email links point to `localhost` | Set `SOFTEX_PUBLIC_URL`. |
 | *Cross-origin request rejected* | You're opening the app on a different address than it's being served from. Use the address in `SOFTEX_PUBLIC_URL`. |
 | Everyone gets *Too many attempts* at once | `SOFTEX_TRUST_PROXY` is missing, so all visitors look like the same address. Set it to `1`. |
+| Customers can't invite people or pay | They haven't confirmed their email address. They can resend the link from the banner at the top of the page. If emails never arrive, check `SOFTEX_SMTP_URL`. |
+| *Operator console* is missing from the menu | Your email address must be listed in `SOFTEX_OPERATOR_EMAILS`, and `SOFTEX_MODE` must be `saas`. Redeploy after changing variables. |
 | Health check fails | Open the deploy logs. The server must print `SoftEX server listening on …` within 60 seconds. |

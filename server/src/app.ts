@@ -7,6 +7,7 @@ import { join } from 'node:path';
 import { canViewChannel } from './access.js';
 import { Database } from './db.js';
 import type { AiClient, Config, Ctx, MailTransport } from './context.js';
+import type { BillingConfig } from './plans.js';
 import { createClaudeClient } from './ai.js';
 import { startBackgroundJobs } from './jobs.js';
 import { aiRouter } from './routes/ai.js';
@@ -14,6 +15,7 @@ import { integrationsRouter } from './routes/integrations.js';
 import { ssoAdminRouter, ssoPublicRouter } from './routes/sso.js';
 import { productivityRouter } from './routes/productivity.js';
 import { scimAdminRouter, scimRouter } from './routes/scim.js';
+import { billingRouter, operatorRouter, publicBillingRouter } from './routes/billing.js';
 import { RealtimeHub } from './realtime.js';
 import { authRouter, authenticate, meRouter, requireAuth } from './routes/auth.js';
 import { channelsRouter } from './routes/channels.js';
@@ -25,7 +27,8 @@ import { tasksRouter } from './routes/tasks.js';
 import { workspaceRouter } from './routes/workspace.js';
 import { HttpError, errorHandler } from './util.js';
 
-export interface AppOptions extends Partial<Config> {
+export interface AppOptions extends Partial<Omit<Config, 'billing'>> {
+  billing?: Partial<BillingConfig>;
   /** Express "trust proxy" setting: a hop count, true/false, or an address list. */
   trustProxy?: boolean | number | string;
   dbPath?: string;
@@ -60,6 +63,17 @@ export function createApp(options: AppOptions = {}): SoftexApp {
     allowPrivateWebhooks: options.allowPrivateWebhooks ?? false,
     aiModel: options.aiModel ?? 'claude-opus-5',
     registration: options.registration ?? 'open',
+    mode: options.mode ?? 'self_hosted',
+    operatorEmails: (options.operatorEmails ?? []).map((e) => e.trim().toLowerCase()).filter(Boolean),
+    billing: {
+      priceStandard: 1.5,
+      priceBusiness: 3,
+      trialDays: 30,
+      trialAiRequests: 100,
+      annualFactor: 10 / 12,
+      paymentInstructions: '',
+      ...options.billing,
+    },
   };
   const db = new Database(options.dbPath ?? join(process.cwd(), 'data', 'softex.db'));
   const hub = new RealtimeHub();
@@ -110,6 +124,7 @@ export function createApp(options: AppOptions = {}): SoftexApp {
   });
   app.use('/api', authRouter(ctx));
   app.use('/api', ssoPublicRouter(ctx));
+  app.use('/api', publicBillingRouter(ctx));
   app.use('/scim/v2', express.json({ type: ['application/json', 'application/scim+json'], limit: '1mb' }), scimRouter(ctx));
   const api = express.Router();
   api.use(requireAuth(ctx));
@@ -126,6 +141,8 @@ export function createApp(options: AppOptions = {}): SoftexApp {
   api.use(aiRouter(ctx));
   api.use(productivityRouter(ctx));
   api.use(scimAdminRouter(ctx));
+  api.use(billingRouter(ctx));
+  api.use(operatorRouter(ctx));
   app.use('/api', api);
   app.use('/api', (_req, _res, next) => next(new HttpError(404, 'Not found')));
 

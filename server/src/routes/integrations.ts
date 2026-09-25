@@ -4,6 +4,7 @@ import { requireRole } from '../access.js';
 import { audit, authOf, type Ctx } from '../context.js';
 import { assertSafeWebhookUrl, WEBHOOK_EVENTS } from '../webhooks.js';
 import { badRequest, newId, notFound, now, parse, parseJson, randomToken, sha256 } from '../util.js';
+import { requireFeature, requireVerifiedEmail } from '../plans.js';
 
 /** Personal API tokens, webhooks and the email outbox. Browser sessions only (see requireAuth). */
 export function integrationsRouter(ctx: Ctx) {
@@ -31,6 +32,8 @@ export function integrationsRouter(ctx: Ctx) {
       req.body,
     );
     if (auth.role === 'guest') throw badRequest('Guests cannot create API tokens');
+    requireFeature(ctx, auth.workspaceId, 'api');
+    requireVerifiedEmail(ctx, auth);
     const token = `sx_${randomToken()}`;
     const id = newId();
     db.insert('api_tokens', {
@@ -97,6 +100,8 @@ export function integrationsRouter(ctx: Ctx) {
   r.post('/integrations/webhooks', async (req, res) => {
     const auth = authOf(req);
     requireRole(auth, 'admin');
+    requireFeature(ctx, auth.workspaceId, 'api');
+    requireVerifiedEmail(ctx, auth);
     const body = parse(WebhookBody, req.body);
     await checkUrl(body.url);
     const id = newId();

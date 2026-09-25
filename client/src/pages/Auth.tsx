@@ -5,6 +5,7 @@ import { Field, Loading } from '../components/ui';
 import { useApi } from '../hooks';
 import { useSession } from '../session';
 import { ROLE_LABEL } from '../format';
+import { usePublicPricing } from './Pricing';
 
 function AuthFrame({ title, subtitle, children }: { title: string; subtitle?: ReactNode; children: ReactNode }) {
   return (
@@ -32,6 +33,7 @@ export function Login() {
   const [error, setError] = useState(() => new URLSearchParams(location.search).get('sso_error') ?? '');
   const [busy, setBusy] = useState(false);
   const [ssoMode, setSsoMode] = useState(false);
+  const { data: pricing } = usePublicPricing();
   const startSso = async () => {
     setError('');
     if (!email) return setError('Enter your work email first');
@@ -93,6 +95,12 @@ export function Login() {
       </form>
       <p className="muted center">
         New to SoftEX? <Link to="/register">Create a workspace</Link>
+        {pricing?.mode === 'saas' && (
+          <>
+            {' · '}
+            <Link to="/pricing">Pricing</Link>
+          </>
+        )}
       </p>
     </AuthFrame>
   );
@@ -102,6 +110,7 @@ export function Register() {
   const { setMe } = useSession();
   const navigate = useNavigate();
   const [form, setForm] = useState({ name: '', email: '', password: '', workspaceName: '' });
+  const { data: pricing } = usePublicPricing();
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
   const set = (k: keyof typeof form) => (e: React.ChangeEvent<HTMLInputElement>) => setForm({ ...form, [k]: e.target.value });
@@ -119,7 +128,18 @@ export function Register() {
     }
   };
   return (
-    <AuthFrame title="Create your workspace" subtitle="You will be the workspace owner. Invite your team next.">
+    <AuthFrame
+      title="Create your workspace"
+      subtitle={
+        pricing?.mode === 'saas' ? (
+          <>
+            Start a {pricing.trial_days}-day free trial of Business — no payment needed. Afterwards, keep a free plan or <Link to="/pricing">choose a plan</Link>.
+          </>
+        ) : (
+          'You will be the workspace owner. Invite your team next.'
+        )
+      }
+    >
       <form className="form" onSubmit={submit}>
         {error && <p className="form-error" role="alert">{error}</p>}
         <Field label="Your name">

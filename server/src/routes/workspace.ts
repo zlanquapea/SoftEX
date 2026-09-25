@@ -14,9 +14,14 @@ import {
   type Auth,
   type Role,
 } from '../access.js';
-import { audit, authOf, notify, type Ctx } from '../context.js';
+import { audit, authOf, notify, platformEvent, type Ctx } from '../context.js';
+import { mePayload, startSession } from './auth.js';
+import { verifyTotp } from '../totp.js';
+import { unlinkSync } from 'node:fs';
+import { join } from 'node:path';
 import { queueEmail } from '../mailer.js';
-import { HttpError, badRequest, forbidden, newId, notFound, now, parse, parseJson, randomToken, sha256 } from '../util.js';
+import { requireFeature, requireMemberCapacity, requireVerifiedEmail } from '../plans.js';
+import { HttpError, badRequest, forbidden, newId, notFound, now, parse, parseJson, randomToken, sha256, verifyPassword } from '../util.js';
 
 const RoleEnum = z.enum(['owner', 'admin', 'lead', 'member', 'guest']);
 
@@ -230,6 +235,8 @@ export function workspaceRouter(ctx: Ctx) {
       if (owners <= 1) throw badRequest('A workspace must keep at least one owner');
     }
     if (req.params.userId === auth.userId && body.deactivated) throw badRequest('You cannot deactivate yourself');
+    if (body.deactivated === false && target.deactivated_at) requireMemberCapacity(ctx, auth.workspaceId, 1, body.role ?? target.role);
+    else if (body.role === 'guest' && target.role !== 'guest') requireMemberCapacity(ctx, auth.workspaceId, 0, 'guest');
     const role = body.role as Role | undefined;
     const changes: Record<string, unknown> = {};
     if (role) changes.role = role;
@@ -302,6 +309,8 @@ export function workspaceRouter(ctx: Ctx) {
       body.email,
     );
     if (existing) throw badRequest('This person is already a member of the workspace');
+    requireVerifiedEmail(ctx, auth);
+    requireMemberCapacity(ctx, auth.workspaceId, 1, body.role);
     const channels = accessibleChannelIds(db, auth);
     const projects = accessibleProjectIds(db, auth);
     if (body.channelIds.some((c) => !channels.includes(c)) || body.projectIds.some((p) => !projects.includes(p))) {
@@ -384,6 +393,8 @@ export function workspaceRouter(ctx: Ctx) {
       }),
       req.body,
     );
+    if (body.aiEnabled) requireFeature(ctx, auth.workspaceId, 'ai');
+    if (body.retentionDays != null || body.legalHold === true) requireFeature(ctx, auth.workspaceId, 'retention');
     if (body.requireMfa) {
       const me = db.get('SELECT mfa_enabled FROM users WHERE id = ?', auth.userId)!;
       if (!me.mfa_enabled) throw badRequest('Enable multifactor authentication on your own account before requiring it');
@@ -399,6 +410,45 @@ export function workspaceRouter(ctx: Ctx) {
     });
     audit(ctx, auth.workspaceId, auth.userId, 'workspace.settings_changed', 'workspace', auth.workspaceId, body);
     res.json({ ok: true });
+  });
+
+  // Permanently delete the workspace and everything in it. Owners only, with password (and MFA code) re-entry.
+  r.delete('/admin/workspace', (req, res) => {
+    const auth = authOf(req);
+    if (auth.tokenScope) throw forbidden('API tokens cannot delete workspaces');
+    requireRole(auth, 'owner');
+    const body = parse(z.object({ password: z.string().min(1).max(200), confirmName: z.string().max(200), code: z.string().max(10).optional() }), req.body);
+    const ws = db.get('SELECT * FROM workspaces WHERE id = ?', auth.workspaceId)!;
+    const user = db.get('SELECT email, password_hash, mfa_enabled, mfa_secret FROM users WHERE id = ?', auth.userId)!;
+    if (!verifyPassword(body.password, user.password_hash)) throw new HttpError(401, 'Password is incorrect');
+    if (user.mfa_enabled && (!body.code || !verifyTotp(user.mfa_secret, body.code))) throw new HttpError(401, 'Enter a valid code from your authenticator app', { code: 'mfa_required' });
+    if (body.confirmName.trim() !== ws.name) throw badRequest('Type the workspace name exactly to confirm');
+    const members = db.all('SELECT user_id FROM memberships WHERE workspace_id = ?', ws.id).map((m) => m.user_id as string);
+    const keys = db.all(`SELECT v.storage_key FROM file_versions v JOIN files f ON f.id = v.file_id WHERE f.workspace_id = ?`, ws.id).map((v) => v.storage_key as string);
+    db.transaction(() => {
+      platformEvent(ctx, user.email, 'workspace.deleted', { id: ws.id, name: ws.name }, { members: members.length, files: keys.length });
+      db.run('DELETE FROM workspaces WHERE id = ?', ws.id);
+    });
+    for (const key of keys) {
+      try {
+        unlinkSync(join(ctx.config.uploadDir, key));
+      } catch {
+        /* already gone */
+      }
+    }
+    for (const userId of members) ctx.hub.disconnect(ws.id, userId);
+    // Continue in another workspace if the owner has one; otherwise sign out.
+    const next = db.get(
+      `SELECT m.workspace_id, m.role FROM memberships m JOIN workspaces w ON w.id = m.workspace_id
+        WHERE m.user_id = ? AND m.deactivated_at IS NULL AND w.suspended_at IS NULL ORDER BY m.created_at LIMIT 1`,
+      auth.userId,
+    );
+    if (next) {
+      startSession(ctx, res, auth.userId, next.workspace_id);
+      return res.json({ deleted: true, me: mePayload(ctx, { userId: auth.userId, workspaceId: next.workspace_id, role: next.role }) });
+    }
+    res.clearCookie('softex_session', { path: '/' });
+    res.json({ deleted: true, me: null });
   });
 
   r.get('/admin/audit', (req, res) => {

@@ -1,5 +1,6 @@
 import { Router, type NextFunction, type Request, type Response } from 'express';
 import { requireRole } from '../access.js';
+import { hasFeature, requireFeature, requireMemberCapacity } from '../plans.js';
 import { audit, authOf, type Ctx } from '../context.js';
 import type { Row } from '../db.js';
 import { hashPassword, newId, now, pickColor, randomToken, sha256 } from '../util.js';
@@ -37,6 +38,7 @@ export function scimAdminRouter(ctx: Ctx) {
   r.post('/admin/scim/token', (req, res) => {
     const auth = authOf(req);
     requireRole(auth, 'admin');
+    requireFeature(ctx, auth.workspaceId, 'scim');
     const token = `scim_${randomToken()}`;
     ctx.db.update('workspaces', auth.workspaceId, { scim_token_hash: sha256(token) });
     audit(ctx, auth.workspaceId, auth.userId, 'scim.token_generated', 'workspace', auth.workspaceId);
@@ -58,8 +60,10 @@ export function scimRouter(ctx: Ctx) {
 
   r.use((req: ScimRequest, _res, next) => {
     const token = req.headers.authorization?.match(/^Bearer (.+)$/)?.[1];
-    const ws = token ? db.get('SELECT id FROM workspaces WHERE scim_token_hash = ?', sha256(token)) : undefined;
+    const ws = token ? db.get('SELECT id, suspended_at FROM workspaces WHERE scim_token_hash = ?', sha256(token)) : undefined;
     if (!ws) return next(new ScimError(401, 'Invalid or missing SCIM token'));
+    if (ws.suspended_at) return next(new ScimError(403, 'This workspace has been suspended'));
+    if (!hasFeature(ctx, ws.id, 'scim')) return next(new ScimError(403, 'User provisioning is available on the Business plan'));
     req.scimWorkspace = ws.id;
     next();
   });
@@ -100,6 +104,7 @@ export function scimRouter(ctx: Ctx) {
 
   const setActive = (workspaceId: string, userId: string, active: boolean, role: string) => {
     if (!active && role === 'owner') throw new ScimError(400, 'Workspace owners cannot be deactivated by provisioning', 'mutability');
+    if (active) requireMemberCapacity(ctx, workspaceId, 1);
     db.run('UPDATE memberships SET deactivated_at = ? WHERE workspace_id = ? AND user_id = ?', active ? null : now(), workspaceId, userId);
     if (!active) {
       db.run('DELETE FROM sessions WHERE user_id = ? AND workspace_id = ?', userId, workspaceId);
@@ -172,6 +177,7 @@ export function scimRouter(ctx: Ctx) {
     if (user && db.get('SELECT 1 FROM memberships WHERE workspace_id = ? AND user_id = ?', ws, user.id)) {
       throw new ScimError(409, 'User already exists', 'uniqueness');
     }
+    if (req.body.active !== false) requireMemberCapacity(ctx, ws, 1);
     db.transaction(() => {
       if (!user) {
         const id = newId();
@@ -182,6 +188,8 @@ export function scimRouter(ctx: Ctx) {
           title: String(req.body.title ?? '').slice(0, 80),
           password_hash: hashPassword(randomToken()),
           color: pickColor(email),
+          // Addresses come from the organisation's identity provider.
+          email_verified_at: now(),
           created_at: now(),
         });
         user = db.get('SELECT * FROM users WHERE id = ?', id)!;
@@ -246,7 +254,9 @@ export function scimRouter(ctx: Ctx) {
   });
 
   r.use((err: unknown, _req: Request, res: Response, _next: NextFunction) => {
-    const e = err instanceof ScimError ? err : new ScimError((err as any)?.status ?? 500, (err as Error)?.message ?? 'Server error');
+    // Plan limits (HTTP 402 elsewhere in the API) are reported as 403, which identity providers understand.
+    const status = (err as any)?.status === 402 ? 403 : ((err as any)?.status ?? 500);
+    const e = err instanceof ScimError ? err : new ScimError(status, (err as Error)?.message ?? 'Server error');
     if (e.status >= 500) console.error(err);
     res.status(e.status).type('application/scim+json').json({ schemas: [ERROR_SCHEMA], status: String(e.status), scimType: e.scimType, detail: e.message });
   });

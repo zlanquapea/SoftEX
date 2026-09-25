@@ -3864,3 +3864,296 @@ button.tl-label:hover {
   color: var(--ink-2);
   pointer-events: none;
 }
+
+/* ---------- Plans, billing and the operator console ---------- */
+.btn.danger {
+  background: var(--red);
+  border-color: var(--red);
+  color: #fff;
+}
+.btn.danger:hover:not(:disabled) {
+  filter: brightness(0.95);
+}
+.banner {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.banner.warn {
+  background: var(--red-soft);
+}
+.banner a,
+.banner .link-btn {
+  font-weight: 700;
+  color: var(--accent-ink);
+}
+.danger-zone {
+  border-color: var(--red-soft);
+}
+.danger-zone h2,
+.danger-zone h3 {
+  color: var(--red);
+}
+.plain-fieldset {
+  border: 0;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.plain-fieldset:disabled {
+  opacity: 0.55;
+}
+.upgrade-notice {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 18px 20px;
+  border: 1px dashed var(--accent-2);
+  border-radius: var(--radius);
+  background: var(--accent-soft);
+  margin: 12px 0;
+}
+.upgrade-notice p {
+  margin: 2px 0 0;
+}
+.upgrade-notice.compact {
+  padding: 10px 14px;
+  margin: 4px 0;
+}
+.upgrade-icon {
+  display: grid;
+  place-items: center;
+  width: 42px;
+  height: 42px;
+  border-radius: 12px;
+  background: var(--surface);
+  color: var(--accent);
+  flex: none;
+}
+.upgrade-notice.compact .upgrade-icon {
+  width: 30px;
+  height: 30px;
+}
+.billing-current h2 {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 2px 0 4px;
+}
+.meters {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 16px;
+  margin-top: 16px;
+}
+.meter {
+  font-size: 13px;
+}
+.meter-bar {
+  height: 8px;
+  border-radius: 999px;
+  background: var(--line-2);
+  overflow: hidden;
+  margin-top: 6px;
+}
+.meter-bar i {
+  display: block;
+  height: 100%;
+  background: var(--accent);
+  border-radius: 999px;
+}
+.meter-bar.warn i {
+  background: var(--amber);
+}
+.meter-bar.danger i {
+  background: var(--red);
+}
+.plan-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+  gap: 14px;
+  align-items: stretch;
+}
+.plan-card {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.plan-card h3 {
+  margin: 0;
+  font-size: 18px;
+}
+.plan-card > .btn {
+  margin-top: auto;
+}
+.plan-card.featured {
+  border: 2px solid var(--accent-2);
+}
+.plan-card.current {
+  background: var(--surface-2);
+}
+.plan-badge {
+  position: absolute;
+  top: -11px;
+  right: 16px;
+  padding: 2px 10px;
+  border-radius: 999px;
+  background: var(--accent);
+  color: #fff;
+  font-size: 11px;
+  font-weight: 700;
+}
+.plan-price {
+  margin: 0;
+}
+.plan-price strong {
+  font-size: 30px;
+  font-family: Manrope, 'DM Sans', sans-serif;
+}
+.plan-features {
+  list-style: none;
+  padding: 0;
+  margin: 8px 0 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 13px;
+}
+.plan-features li {
+  display: flex;
+  gap: 6px;
+  align-items: flex-start;
+}
+.plan-features li .icon {
+  color: var(--green);
+  margin-top: 2px;
+}
+.plan-features li.off {
+  color: var(--muted);
+}
+.plan-features li.off .icon {
+  color: var(--muted);
+}
+.pill.plan-trial {
+  background: var(--accent-soft);
+  color: var(--accent-ink);
+}
+.pill.plan-active,
+.pill.pay-approved {
+  background: var(--green-soft);
+  color: var(--green);
+}
+.pill.plan-grace,
+.pill.pay-pending {
+  background: var(--amber-soft);
+  color: var(--amber);
+}
+.pill.pay-rejected {
+  background: var(--red-soft);
+  color: var(--red);
+}
+.data-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+.data-table th,
+.data-table td {
+  text-align: left;
+  padding: 9px 10px;
+  border-bottom: 1px solid var(--line-2);
+  vertical-align: top;
+}
+.data-table th {
+  font-size: 12px;
+  color: var(--muted);
+  font-weight: 600;
+  background: var(--surface-2);
+}
+.data-table tr.clickable {
+  cursor: pointer;
+}
+.data-table tr.clickable:hover td {
+  background: var(--surface-2);
+}
+.pay-total {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 14px;
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+}
+.pay-total strong {
+  font-size: 22px;
+  white-space: nowrap;
+}
+.pay-instructions {
+  padding: 12px 14px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--accent-2);
+  background: var(--accent-soft);
+}
+.pay-instructions h3 {
+  margin-top: 0;
+}
+.op-payment {
+  display: flex;
+  gap: 16px;
+  align-items: flex-start;
+}
+.op-payment h3 {
+  margin: 0 0 6px;
+}
+.props.compact {
+  grid-template-columns: 110px 1fr;
+  font-size: 13px;
+}
+.public-page {
+  max-width: 1100px;
+  margin: 0 auto;
+  padding: 16px 16px 60px;
+}
+.public-head {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 8px 0 24px;
+}
+.public-head .brand {
+  text-decoration: none;
+}
+.pricing-hero {
+  text-align: center;
+  max-width: 720px;
+  margin: 12px auto 30px;
+}
+.pricing-hero h1 {
+  font-size: 34px;
+  margin: 6px 0 10px;
+}
+.pricing-faq {
+  max-width: 720px;
+  margin: 40px auto 0;
+}
+.pricing-faq details {
+  border-bottom: 1px solid var(--line);
+  padding: 12px 0;
+}
+.pricing-faq summary {
+  cursor: pointer;
+  font-weight: 600;
+}
+@media (max-width: 720px) {
+  .op-payment {
+    flex-direction: column;
+  }
+  .pricing-hero h1 {
+    font-size: 26px;
+  }
+}

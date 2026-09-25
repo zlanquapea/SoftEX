@@ -9,6 +9,7 @@ import { SearchDialog } from './SearchDialog';
 import { QuickCreate } from './QuickCreate';
 import { TaskDrawer } from './TaskDrawer';
 import { useToast } from './ui';
+import { AccountBanners } from './Plan';
 import { ROLE_LABEL } from '../format';
 import { clearOfflineData } from '../pwa';
 
@@ -155,6 +156,16 @@ export function Layout({ children }: { children: ReactNode }) {
                     <Icon name="shield" size={16} /> Administration
                   </Link>
                 )}
+                {can('admin') && me.mode === 'saas' && (
+                  <Link role="menuitem" to="/admin?tab=billing">
+                    <Icon name="flag" size={16} /> Plan & billing
+                  </Link>
+                )}
+                {me.operator && (
+                  <Link role="menuitem" to="/operator">
+                    <Icon name="target" size={16} /> Operator console
+                  </Link>
+                )}
               </div>
             )}
           </div>
@@ -270,6 +281,7 @@ export function Layout({ children }: { children: ReactNode }) {
               You are a guest in {me.workspace.name}. Your access ends {new Date(me.guest_expires_at).toLocaleDateString()}.
             </div>
           )}
+          <AccountBanners />
           <div className="content">{children}</div>
         </main>
 

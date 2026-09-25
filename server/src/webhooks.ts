@@ -3,6 +3,7 @@ import { lookup } from 'node:dns/promises';
 import { isIP } from 'node:net';
 import type { Ctx } from './context.js';
 import { newId, now, parseJson } from './util.js';
+import { hasFeature } from './plans.js';
 
 /**
  * Outgoing webhooks (§5.7, §12). Events are queued in `webhook_deliveries` and
@@ -42,7 +43,7 @@ function isPublicScope(ctx: Ctx, scope: Scope) {
 
 export function emitEvent(ctx: Ctx, workspaceId: string, event: WebhookEvent, data: Record<string, unknown>, scope: Scope) {
   const hooks = ctx.db.all('SELECT id, events FROM webhooks WHERE workspace_id = ? AND active = 1', workspaceId);
-  if (!hooks.length || !isPublicScope(ctx, scope)) return;
+  if (!hooks.length || !isPublicScope(ctx, scope) || !hasFeature(ctx, workspaceId, 'api')) return;
   const payload = JSON.stringify({ id: newId(), type: event, created_at: now(), workspace_id: workspaceId, data });
   for (const hook of hooks) {
     const events = parseJson<string[]>(hook.events, []);

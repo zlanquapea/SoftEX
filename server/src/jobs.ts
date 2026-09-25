@@ -1,6 +1,7 @@
 import type { Ctx } from './context.js';
 import { processEmailQueue, queueDigests } from './mailer.js';
 import { processWebhookQueue } from './webhooks.js';
+import { processBillingNotices } from './routes/billing.js';
 import { applyRetention, processDeadlines, processReminders, processScheduledMessages } from './routes/productivity.js';
 
 /** Run every background job once. Used by the scheduler and by tests. */
@@ -16,6 +17,7 @@ export function runPeriodicJobs(ctx: Ctx) {
   processDeadlines(ctx);
   applyRetention(ctx);
   queueDigests(ctx);
+  processBillingNotices(ctx);
 }
 
 /**

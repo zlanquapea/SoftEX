@@ -4,6 +4,7 @@ import type { Ctx } from './context.js';
 import { notify } from './context.js';
 import type { Row } from './db.js';
 import { newId, now, parseJson } from './util.js';
+import { hasFeature } from './plans.js';
 import { postMessage } from './routes/channels.js';
 
 /**
@@ -56,7 +57,7 @@ function creatorAuth(ctx: Ctx, rule: Row): Auth | null {
 
 /** Run every enabled rule in the task's project that matches this trigger. */
 export function runAutomations(ctx: Ctx, trigger: TriggerType, task: Row, previousStatus?: string) {
-  if (!task.project_id) return;
+  if (!task.project_id || !hasFeature(ctx, task.workspace_id, 'automations')) return;
   const { db } = ctx;
   const rules = db.all('SELECT * FROM automations WHERE project_id = ? AND trigger_type = ? AND enabled = 1', task.project_id, trigger);
   for (const rule of rules) {

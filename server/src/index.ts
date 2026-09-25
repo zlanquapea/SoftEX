@@ -33,6 +33,29 @@ const trustProxy =
         ? Number(trustProxyEnv)
         : trustProxyEnv;
 
+const mode = process.env.SOFTEX_MODE ?? 'self_hosted';
+if (!['self_hosted', 'saas'].includes(mode)) throw new Error('SOFTEX_MODE must be self_hosted or saas');
+
+const num = (name: string) => {
+  const raw = process.env[name];
+  if (raw === undefined || raw === '') return undefined;
+  const value = Number(raw);
+  if (!Number.isFinite(value) || value < 0) throw new Error(`${name} must be a non-negative number`);
+  return value;
+};
+const billing = Object.fromEntries(
+  Object.entries({
+    priceStandard: num('SOFTEX_PRICE_STANDARD'),
+    priceBusiness: num('SOFTEX_PRICE_BUSINESS'),
+    trialDays: num('SOFTEX_TRIAL_DAYS'),
+    trialAiRequests: num('SOFTEX_TRIAL_AI_REQUESTS'),
+    lrdPerUsd: num('SOFTEX_LRD_PER_USD'),
+    // Newlines can be written as \n in a single-line environment variable.
+    paymentInstructions: process.env.SOFTEX_PAYMENT_INSTRUCTIONS?.replace(/\\n/g, '\n'),
+    supportEmail: process.env.SOFTEX_SUPPORT_EMAIL || undefined,
+  }).filter(([, v]) => v !== undefined),
+);
+
 const { server } = createApp({
   dbPath: process.env.SOFTEX_DB ?? join(dataDir, 'softex.db'),
   uploadDir: join(dataDir, 'uploads'),
@@ -51,6 +74,9 @@ const { server } = createApp({
   anthropicApiKey: process.env.ANTHROPIC_API_KEY || undefined,
   aiModel: process.env.SOFTEX_AI_MODEL || undefined,
   registration: registration as 'open' | 'first' | 'closed',
+  mode: mode as 'self_hosted' | 'saas',
+  operatorEmails: (process.env.SOFTEX_OPERATOR_EMAILS ?? '').split(','),
+  billing,
   trustProxy,
 });
 

@@ -35,7 +35,7 @@ export const api = {
   post: <T = any>(path: string, body?: unknown) => request<T>('POST', path, body ?? {}),
   patch: <T = any>(path: string, body: unknown) => request<T>('PATCH', path, body),
   put: <T = any>(path: string, body: unknown) => request<T>('PUT', path, body),
-  del: <T = any>(path: string) => request<T>('DELETE', path),
+  del: <T = any>(path: string, body?: unknown) => request<T>('DELETE', path, body),
   upload: <T = any>(path: string, form: FormData) => request<T>('POST', path, form),
 };
 
@@ -76,6 +76,7 @@ export interface Me {
     mfa_enabled: boolean;
     email_digest: boolean;
     email_urgent: boolean;
+    email_verified: boolean;
   };
   workspace: {
     id: string;
@@ -90,11 +91,37 @@ export interface Me {
     ai_available: boolean;
     retention_days: number | null;
     legal_hold: boolean;
+    plan: PlanInfo;
   };
+  mode: 'self_hosted' | 'saas';
+  operator: boolean;
   role: Role;
   guest_expires_at: string | null;
   mfa_setup_required: boolean;
   workspaces: { id: string; name: string; role: Role }[];
+}
+
+export type Feature = 'ai' | 'automations' | 'planning' | 'insights' | 'guests' | 'api' | 'sso' | 'scim' | 'retention';
+
+export interface PlanInfo {
+  id: 'free' | 'standard' | 'business' | 'unlimited';
+  name: string;
+  status: 'self_hosted' | 'trial' | 'active' | 'grace' | 'free';
+  trial_ends_at: string | null;
+  paid_through: string | null;
+  features: Feature[];
+}
+
+export interface PublicPlan {
+  id: 'free' | 'standard' | 'business';
+  name: string;
+  price: number;
+  member_limit: number | null;
+  storage_base_gb: number;
+  storage_per_member_gb: number;
+  ai_per_member: number;
+  features: Feature[];
+  tagline: string;
 }
 
 export interface Channel {

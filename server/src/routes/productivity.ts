@@ -17,6 +17,7 @@ import { ActionConfig, ACTIONS, runAutomations, TriggerConfig, TRIGGERS } from '
 import type { Row } from '../db.js';
 import { audit, authOf, notify, type Ctx } from '../context.js';
 import { badRequest, forbidden, HttpError, newId, notFound, now, parse, parseJson, today } from '../util.js';
+import { hasFeature, requireFeature } from '../plans.js';
 import { postMessage } from './channels.js';
 
 const Iso = z.string().datetime({ offset: true });
@@ -86,6 +87,7 @@ export function productivityRouter(ctx: Ctx) {
     const project = loadProject(db, auth, req.params.id);
     if (!canManageProject(db, auth, project)) throw forbidden('Only the project owner, a project lead or an admin can add automations');
     const body = parse(RuleBody, req.body);
+    requireFeature(ctx, auth.workspaceId, 'automations');
     validateAction(auth, project.id, body.actionType, body.actionConfig);
     const id = newId();
     db.insert('automations', {
@@ -114,6 +116,7 @@ export function productivityRouter(ctx: Ctx) {
 
   r.patch('/automations/:id', (req, res) => {
     const auth = authOf(req);
+    requireFeature(ctx, auth.workspaceId, 'automations');
     const { rule, project } = loadRule(auth, req.params.id);
     if (!canManageProject(db, auth, project)) throw forbidden();
     const body = parse(RuleBody.partial(), req.body);
@@ -265,6 +268,7 @@ export function productivityRouter(ctx: Ctx) {
 
   r.get('/workload', (req, res) => {
     const auth = authOf(req);
+    requireFeature(ctx, auth.workspaceId, 'planning');
     const q = parse(z.object({ weeks: z.coerce.number().int().min(1).max(12).default(4), projectId: z.string().optional(), teamId: z.string().optional() }), req.query);
     let projects = accessibleProjectIds(db, auth);
     if (q.projectId) {
@@ -329,6 +333,7 @@ export function productivityRouter(ctx: Ctx) {
   r.get('/admin/insights', (req, res) => {
     const auth = authOf(req);
     requireRole(auth, 'lead');
+    requireFeature(ctx, auth.workspaceId, 'insights');
     const ws = auth.workspaceId;
     const t0 = today();
     const weekStarts = Array.from({ length: 8 }, (_, i) => new Date(Date.now() - (8 - i) * 7 * 86_400_000));
@@ -500,6 +505,8 @@ export function applyRetention(ctx: Ctx, at = new Date()) {
   const { db } = ctx;
   let total = 0;
   for (const ws of db.all('SELECT id, retention_days FROM workspaces WHERE retention_days IS NOT NULL AND legal_hold = 0')) {
+    // A workspace that no longer has retention on its plan keeps everything (never delete because of a downgrade).
+    if (!hasFeature(ctx, ws.id, 'retention')) continue;
     const cutoff = new Date(at.getTime() - ws.retention_days * 86_400_000).toISOString();
     const res = db.run(
       // A thread is kept while any reply is newer than the cutoff; old replies inside it are still removed.

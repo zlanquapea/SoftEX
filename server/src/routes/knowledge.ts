@@ -24,6 +24,7 @@ import { scanUpload } from '../scanner.js';
 import { audit, authOf, notify, recordActivity, userSummary, type Ctx } from '../context.js';
 import { emitEvent } from '../webhooks.js';
 import { HttpError, badRequest, forbidden, newId, notFound, now, parse, today } from '../util.js';
+import { requireStorage } from '../plans.js';
 
 const DateStr = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'use YYYY-MM-DD');
 
@@ -298,6 +299,12 @@ export function knowledgeRouter(ctx: Ctx) {
   };
 
   const storeUpload = async (auth: Auth, file: Express.Multer.File) => {
+    try {
+      requireStorage(ctx, auth.workspaceId, file.size);
+    } catch (e) {
+      unlinkSync(tempPath(file));
+      throw e;
+    }
     try {
       await scanUpload(ctx.config, tempPath(file), file.originalname);
     } catch (e) {

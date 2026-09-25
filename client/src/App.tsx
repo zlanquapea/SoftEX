@@ -17,6 +17,8 @@ import { MyWork } from './pages/MyWork';
 import { ProjectDetail, Projects } from './pages/Projects';
 import { Later, Workload } from './pages/Planning';
 import { Requests } from './pages/Requests';
+import { Pricing, VerifyEmail } from './pages/Pricing';
+import { Operator } from './pages/Operator';
 import { Settings } from './pages/Settings';
 import { useSession } from './session';
 
@@ -44,6 +46,8 @@ const TITLES: [RegExp, string][] = [
   [/^\/requests/, 'Requests'],
   [/^\/workload/, 'Workload'],
   [/^\/later/, 'Later'],
+  [/^\/pricing/, 'Pricing'],
+  [/^\/operator/, 'Operator console'],
   [/^\/settings/, 'Settings'],
   [/^\/admin/, 'Administration'],
   [/^\/help/, 'Help'],
@@ -67,11 +71,20 @@ export function App() {
         <Route path="/invite/:token" element={<AcceptInvite />} />
         <Route path="/forgot-password" element={<ForgotPassword />} />
         <Route path="/reset-password/:token" element={<ResetPassword />} />
+        <Route path="/verify-email/:token" element={<VerifyEmail />} />
+        <Route path="/pricing" element={<Pricing />} />
         <Route path="*" element={<Login />} />
       </Routes>
     );
   }
 
+  if (location.pathname.startsWith('/verify-email/')) {
+    return (
+      <Routes>
+        <Route path="/verify-email/:token" element={<VerifyEmail />} />
+      </Routes>
+    );
+  }
   if (me.mfa_setup_required) return <MfaSetup required />;
 
   return (
@@ -97,6 +110,8 @@ export function App() {
         <Route path="/requests" element={<Requests />} />
         <Route path="/workload" element={<Workload />} />
         <Route path="/later" element={<Later />} />
+        <Route path="/pricing" element={<Pricing />} />
+        <Route path="/operator" element={<Operator />} />
         <Route path="/settings" element={<Settings />} />
         <Route path="/admin" element={<Admin />} />
         <Route path="/help" element={<Help />} />
