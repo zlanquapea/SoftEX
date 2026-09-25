@@ -13,6 +13,7 @@ import { AccountBanners } from './Plan';
 import { ROLE_LABEL } from '../format';
 import { clearOfflineData } from '../pwa';
 import { Logo } from './Logo';
+import { setTheme, useTheme } from '../theme';
 
 interface Shell {
   openTask: (id: string) => void;
@@ -43,6 +44,7 @@ export function Layout({ children }: { children: ReactNode }) {
     };
   }, []);
   const [menu, setMenu] = useState<'profile' | 'workspace' | null>(null);
+  const theme = useTheme();
   const { data: counts, reload: reloadCounts } = useApi<{ unread: number }>('/notifications?filter=unread&limit=1');
   const { data: channels, reload: reloadChannels } = useApi<Channel[]>('/channels');
   const { data: work, reload: reloadWork } = useApi<{ overdue: unknown[]; today: unknown[] }>('/my-work');
@@ -234,6 +236,9 @@ export function Layout({ children }: { children: ReactNode }) {
                     </button>
                   ))}
                   <hr />
+                  <button role="menuitem" onClick={() => setTheme(theme.shown === 'dark' ? 'light' : 'dark')}>
+                    <Icon name={theme.shown === 'dark' ? 'sun' : 'moon'} size={16} /> {theme.shown === 'dark' ? 'Light mode' : 'Dark mode'}
+                  </button>
                   <Link role="menuitem" to="/settings">
                     <Icon name="settings" size={16} /> Profile & preferences
                   </Link>
