@@ -6,6 +6,7 @@ import type { Row } from '../db.js';
 import { queueEmail } from '../mailer.js';
 import {
   GRACE_DAYS,
+  TERMS_VERSION,
   activeMemberCount,
   aiUsedThisMonth,
   billableSeats,
@@ -125,6 +126,12 @@ export function publicBillingRouter(ctx: Ctx) {
       annual_factor: b.annualFactor,
       support_email: b.supportEmail ?? null,
       plans: publicPlans(ctx),
+      company: {
+        name: ctx.config.company.name ?? null,
+        address: ctx.config.company.address ?? null,
+        email: ctx.config.company.email ?? null,
+      },
+      terms_version: TERMS_VERSION,
     });
   });
   return r;

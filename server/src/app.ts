@@ -65,6 +65,7 @@ export function createApp(options: AppOptions = {}): SoftexApp {
     registration: options.registration ?? 'open',
     mode: options.mode ?? 'self_hosted',
     operatorEmails: (options.operatorEmails ?? []).map((e) => e.trim().toLowerCase()).filter(Boolean),
+    company: options.company ?? {},
     billing: {
       priceStandard: 1.5,
       priceBusiness: 3,

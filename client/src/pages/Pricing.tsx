@@ -6,6 +6,7 @@ import { FEATURE_ORDER, PlanFeatures, lrd, usd } from '../components/Plan';
 import { Loading } from '../components/ui';
 import { useApi } from '../hooks';
 import { useSession } from '../session';
+import { PublicPage } from '../components/Public';
 
 export interface PublicPricing {
   mode: 'self_hosted' | 'saas';
@@ -15,6 +16,8 @@ export interface PublicPricing {
   annual_factor: number;
   support_email: string | null;
   plans: PublicPlan[];
+  company: { name: string | null; address: string | null; email: string | null };
+  terms_version: string;
 }
 
 export const usePublicPricing = () => useApi<PublicPricing>('/public/plans');
@@ -25,21 +28,8 @@ export function Pricing() {
   const { data } = usePublicPricing();
   if (!data) return <Loading />;
   const perYear = (p: PublicPlan) => p.price * 12 * data.annual_factor;
-  return (
-    <div className={me ? 'page' : 'public-page'}>
-      {!me && (
-        <header className="public-head">
-          <Link to="/" className="brand dark">
-            <span className="brand-mark">S</span>
-            <span>SoftEX</span>
-          </Link>
-          <span className="grow" />
-          <Link to="/">Sign in</Link>
-          <Link className="btn primary sm" to="/register">
-            Start free trial
-          </Link>
-        </header>
-      )}
+  const body = (
+    <>
       <section className="pricing-hero">
         <p className="eyebrow">PRICING</p>
         <h1>Everything your team needs, priced for Liberia</h1>
@@ -104,8 +94,9 @@ export function Pricing() {
           </p>
         )}
       </section>
-    </div>
+    </>
   );
+  return me ? <div className="page">{body}</div> : <PublicPage title="Pricing · SoftEX">{body}</PublicPage>;
 }
 
 /** Target of the link in the "confirm your email" message. */

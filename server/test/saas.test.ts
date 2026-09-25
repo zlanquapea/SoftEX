@@ -37,7 +37,7 @@ async function verifiedOwner(name = 'Owner') {
 /** Sign up the operator (a normal account whose email is in SOFTEX_OPERATOR_EMAILS) with MFA on. */
 async function operator() {
   const agent = env.agent();
-  await agent.post('/api/auth/register').send({ name: 'Ops', email: 'ops@softex.test', password: 'password123', workspaceName: 'SoftEX HQ' });
+  await agent.post('/api/auth/register').send({ name: 'Ops', email: 'ops@softex.test', password: 'password123', workspaceName: 'SoftEX HQ', acceptTerms: true });
   await flushJobs(env);
   await verify('ops@softex.test');
   const { secret } = (await agent.post('/api/me/mfa/setup')).body;
@@ -70,6 +70,16 @@ describe('sign-up on a hosted server', () => {
     expect((await owner.agent.get('/api/me')).body.user.email_verified).toBe(true);
     expect((await owner.agent.post('/api/admin/invitations').send({ email: 'a@example.com' })).status).toBe(201);
     expect((await owner.agent.post('/api/me/verify-email/resend')).status).toBe(400);
+  });
+
+  it('requires accepting the terms, and records the version accepted', async () => {
+    env = saas();
+    const res = await env.agent().post('/api/auth/register').send({ name: 'A', email: 'a@example.com', password: 'password123', workspaceName: 'Acme' });
+    expect(res.status).toBe(400);
+    const owner = await registerOwner(env);
+    const user = db().get('SELECT terms_accepted_at, terms_version FROM users WHERE id = ?', owner.me.user.id)!;
+    expect(user.terms_accepted_at).toBeTruthy();
+    expect(user.terms_version).toBe((await env.agent().get('/api/public/plans')).body.terms_version);
   });
 
   it('rejects stale verification links, and treats invited people as confirmed', async () => {
@@ -271,7 +281,7 @@ describe('operator console', () => {
   it('requires multifactor authentication', async () => {
     env = saas();
     const agent = env.agent();
-    await agent.post('/api/auth/register').send({ name: 'Ops', email: 'ops@softex.test', password: 'password123', workspaceName: 'HQ' });
+    await agent.post('/api/auth/register').send({ name: 'Ops', email: 'ops@softex.test', password: 'password123', workspaceName: 'HQ', acceptTerms: true });
     const res = await agent.get('/api/operator/summary');
     expect([res.status, res.body.details.code]).toEqual([403, 'operator_mfa']);
     expect((await agent.get('/api/me')).body.operator).toBe(true);

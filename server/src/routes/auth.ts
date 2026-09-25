@@ -6,7 +6,7 @@ import type { Row } from '../db.js';
 import { audit, authOf, platformEvent, type Ctx } from '../context.js';
 import { generateSecret, otpauthUrl, verifyTotp } from '../totp.js';
 import { queueEmail } from '../mailer.js';
-import { effectivePlan, hasFeature, isOperator, isSaas, planError, requireMemberCapacity } from '../plans.js';
+import { TERMS_VERSION, effectivePlan, hasFeature, isOperator, isSaas, planError, requireMemberCapacity } from '../plans.js';
 import {
   HttpError,
   badRequest,
@@ -229,9 +229,10 @@ export function authRouter(ctx: Ctx) {
 
   r.post('/auth/register', (req, res) => {
     const body = parse(
-      z.object({ name: Name, email: Email, password: Password, workspaceName: z.string().trim().min(2).max(80) }),
+      z.object({ name: Name, email: Email, password: Password, workspaceName: z.string().trim().min(2).max(80), acceptTerms: z.boolean().optional() }),
       req.body,
     );
+    if (isSaas(ctx) && !body.acceptTerms) throw badRequest('Please accept the Terms of Service and Privacy Policy to continue');
     rateLimit(`register:${req.ip}`, 20);
     const { registration } = ctx.config;
     if (registration === 'closed' || (registration === 'first' && db.get('SELECT 1 FROM workspaces LIMIT 1'))) {
@@ -250,6 +251,8 @@ export function authRouter(ctx: Ctx) {
         password_hash: hashPassword(body.password),
         color: pickColor(body.email),
         email_verified_at: isSaas(ctx) ? null : now(),
+        terms_accepted_at: body.acceptTerms ? now() : null,
+        terms_version: body.acceptTerms ? TERMS_VERSION : null,
         created_at: now(),
       });
       db.insert('workspaces', {
@@ -421,12 +424,13 @@ export function authRouter(ctx: Ctx) {
       invite.email,
     );
     if (!alreadyActive) requireMemberCapacity(ctx, invite.workspace_id, 1, invite.role);
-    const body = parse(z.object({ name: Name.optional(), password: z.string().min(1).max(200) }), req.body);
+    const body = parse(z.object({ name: Name.optional(), password: z.string().min(1).max(200), acceptTerms: z.boolean().optional() }), req.body);
     let user = db.get('SELECT * FROM users WHERE email = ?', invite.email);
     if (user) {
       if (!verifyPassword(body.password, user.password_hash)) throw new HttpError(401, 'Password is incorrect');
     } else {
       if (!body.name) throw badRequest('name: Required');
+      if (isSaas(ctx) && !body.acceptTerms) throw badRequest('Please accept the Terms of Service and Privacy Policy to continue');
       parse(Password, body.password);
       const id = newId();
       db.insert('users', {
@@ -437,6 +441,8 @@ export function authRouter(ctx: Ctx) {
         color: pickColor(invite.email),
         // The invitation link was emailed to this address.
         email_verified_at: now(),
+        terms_accepted_at: body.acceptTerms ? now() : null,
+        terms_version: body.acceptTerms ? TERMS_VERSION : null,
         created_at: now(),
       });
       user = db.get('SELECT * FROM users WHERE id = ?', id)!;

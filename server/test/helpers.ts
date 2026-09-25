@@ -51,7 +51,7 @@ let counter = 0;
 export async function registerOwner(env: TestEnv, name = 'Owner') {
   const agent = env.agent();
   const email = `owner${++counter}@example.com`;
-  const res = await agent.post('/api/auth/register').send({ name, email, password: 'password123', workspaceName: `${name}'s Co` });
+  const res = await agent.post('/api/auth/register').send({ name, email, password: 'password123', workspaceName: `${name}'s Co`, acceptTerms: true });
   if (res.status !== 201) throw new Error(`register failed: ${res.status} ${JSON.stringify(res.body)}`);
   return { agent, me: res.body, email };
 }
@@ -68,7 +68,7 @@ export async function invite(
   const inv = await owner.post('/api/admin/invitations').send({ email, role, ...extra });
   if (inv.status !== 201) throw new Error(`invite failed: ${inv.status} ${JSON.stringify(inv.body)}`);
   const agent = env.agent();
-  const res = await agent.post(`/api/invitations/${inv.body.token}/accept`).send({ name, password: 'password123' });
+  const res = await agent.post(`/api/invitations/${inv.body.token}/accept`).send({ name, password: 'password123', acceptTerms: true });
   if (res.status !== 200) throw new Error(`accept failed: ${res.status} ${JSON.stringify(res.body)}`);
   return { agent, me: res.body, id: res.body.user.id as string, email };
 }

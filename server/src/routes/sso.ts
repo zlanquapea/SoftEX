@@ -146,7 +146,7 @@ export function ssoPublicRouter(ctx: Ctx) {
   });
 
   r.get('/auth/sso/callback', async (req, res) => {
-    const fail = (message: string) => res.redirect(`/?sso_error=${encodeURIComponent(message)}`);
+    const fail = (message: string) => res.redirect(`/login?sso_error=${encodeURIComponent(message)}`);
     const q = req.query as Record<string, string | undefined>;
     if (q.error) return fail(q.error_description || q.error);
     const saved = q.state ? db.get('SELECT * FROM sso_states WHERE state = ?', q.state) : undefined;

@@ -31,6 +31,8 @@ export interface Config {
   /** Email addresses of the people who run this service; they get the operator console. */
   operatorEmails: string[];
   billing: BillingConfig;
+  /** The business running a hosted service; shown on the website, terms and privacy policy. */
+  company: { name?: string; address?: string; email?: string };
 }
 
 /** Minimal mail transport interface (nodemailer-compatible) so tests can inject a fake. */

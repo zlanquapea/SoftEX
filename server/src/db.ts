@@ -656,6 +656,8 @@ const ADDED_COLUMNS: [table: string, column: string, definition: string, backfil
   ['workspaces', 'paid_through', 'TEXT'],
   ['workspaces', 'suspended_at', 'TEXT'],
   ['workspaces', 'suspended_reason', 'TEXT'],
+  ['users', 'terms_accepted_at', 'TEXT'],
+  ['users', 'terms_version', 'TEXT'],
 ];
 
 export type Row = Record<string, any>;

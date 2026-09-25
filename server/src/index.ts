@@ -78,6 +78,11 @@ const { server } = createApp({
   operatorEmails: (process.env.SOFTEX_OPERATOR_EMAILS ?? '').split(','),
   billing,
   trustProxy,
+  company: {
+    name: process.env.SOFTEX_COMPANY_NAME || undefined,
+    address: process.env.SOFTEX_COMPANY_ADDRESS || undefined,
+    email: process.env.SOFTEX_LEGAL_EMAIL || process.env.SOFTEX_SUPPORT_EMAIL || undefined,
+  },
 });
 
 if (process.env.NODE_ENV === 'production' && !process.env.SOFTEX_PUBLIC_URL) {

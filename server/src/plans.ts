@@ -16,6 +16,9 @@ import { HttpError } from './util.js';
  * the workspace falls back to Free: nothing is deleted, but Free limits apply.
  */
 
+/** Bump when the terms of service or privacy policy change materially; recorded on each acceptance. */
+export const TERMS_VERSION = '2026-09-25';
+
 export type PlanId = 'free' | 'standard' | 'business';
 export type Feature = 'ai' | 'automations' | 'planning' | 'insights' | 'guests' | 'api' | 'sso' | 'scim' | 'retention';
 
