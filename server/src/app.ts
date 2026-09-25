@@ -21,6 +21,7 @@ import { RealtimeHub } from './realtime.js';
 import { webPushTransport, type PushTransport } from './push.js';
 import type { BackupConfig } from './backup.js';
 import { pushRouter } from './routes/push.js';
+import { embedsRouter } from './routes/embeds.js';
 import { authRouter, authenticate, meRouter, requireAuth } from './routes/auth.js';
 import { channelsRouter } from './routes/channels.js';
 import { homeRouter } from './routes/home.js';
@@ -67,7 +68,7 @@ export function createApp(options: AppOptions = {}): SoftexApp {
   const config: Config = {
     uploadDir: options.uploadDir ?? join(process.cwd(), 'data', 'uploads'),
     meetingBaseUrl: options.meetingBaseUrl ?? 'https://meet.jit.si',
-    maxUploadBytes: options.maxUploadBytes ?? 25 * 1024 * 1024,
+    maxUploadBytes: options.maxUploadBytes ?? 100 * 1024 * 1024,
     secureCookies: options.secureCookies ?? false,
     publicUrl: (options.publicUrl ?? 'http://localhost:4000').replace(/\/$/, ''),
     smtpUrl: options.smtpUrl,
@@ -157,6 +158,7 @@ export function createApp(options: AppOptions = {}): SoftexApp {
   api.use(requireAuth(ctx));
   api.use(meRouter(ctx));
   api.use(pushRouter(ctx));
+  api.use(embedsRouter(ctx));
   api.use(homeRouter(ctx));
   api.use(channelsRouter(ctx));
   api.use(projectsRouter(ctx));
@@ -191,7 +193,19 @@ export function createApp(options: AppOptions = {}): SoftexApp {
     app.get(/^\/(?!api|ws|scim).*/, (_req, res) => {
       res.setHeader(
         'Content-Security-Policy',
-        "default-src 'self'; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; connect-src 'self' ws: wss:; worker-src 'self'; manifest-src 'self'; frame-ancestors 'none'",
+        [
+          "default-src 'self'",
+          // Video link previews: thumbnails from the providers' image hosts, players from their embed pages.
+          "img-src 'self' data: blob: https://i.ytimg.com https://i.vimeocdn.com https://*.loom.com https://*.loomcdn.com https://*.tiktokcdn.com https://*.tiktokcdn-us.com",
+          "media-src 'self' blob: https:",
+          'frame-src https://www.youtube-nocookie.com https://player.vimeo.com https://www.loom.com https://www.tiktok.com https://www.facebook.com',
+          "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
+          "font-src 'self' https://fonts.gstatic.com",
+          "connect-src 'self' ws: wss:",
+          "worker-src 'self'",
+          "manifest-src 'self'",
+          "frame-ancestors 'none'",
+        ].join('; '),
       );
       // Link previews (WhatsApp, Facebook, LinkedIn) need absolute image addresses.
       indexHtml ??= readFileSync(join(staticDir, 'index.html'), 'utf8').replace(/content="\/brand\//g, `content="${config.publicUrl}/brand/`);

@@ -13,6 +13,7 @@ import { bytes, plainMentions, timeAgo, timeOf } from '../format';
 import { useApi, useRealtime } from '../hooks';
 import { realtime } from '../realtime';
 import { useSession } from '../session';
+import { MediaAttachment, VideoLinks, isPlayable } from '../components/Media';
 
 const EMOJI = ['👍', '❤️', '🎉', '✅', '👀', '😄', '🙏', '🚀'];
 
@@ -739,7 +740,12 @@ function MessageItem({
             </div>
           </form>
         ) : (
-          m.body && <Markdown text={m.body} compact />
+          m.body && (
+            <>
+              <Markdown text={m.body} compact />
+              <VideoLinks text={m.body} />
+            </>
+          )
         )}
         {m.edited_at && !editing && <small className="muted edited">(edited)</small>}
         {m.files.length > 0 && (
@@ -749,6 +755,8 @@ function MessageItem({
                 <Link key={f.id} to={`/files/${f.id}`} className="image-attachment">
                   <img src={`/api/files/${f.id}/download?inline=1`} alt={f.name} loading="lazy" />
                 </Link>
+              ) : isPlayable(f.mime) ? (
+                <MediaAttachment key={f.id} file={f} />
               ) : (
                 <Link key={f.id} to={`/files/${f.id}`} className="file-chip">
                   <Icon name="file" size={15} /> {f.name} <small className="muted">{bytes(f.size)}</small>
@@ -944,7 +952,7 @@ function Composer({
   });
   const [mentions, setMentions] = useState<Record<string, string>>({});
   const [query, setQuery] = useState<string | null>(null);
-  const [files, setFiles] = useState<{ id: string; name: string }[]>([]);
+  const [files, setFiles] = useState<{ id: string; name: string; preview?: string; kind?: 'image' | 'video' }[]>([]);
   const [urgent, setUrgent] = useState(false);
   const [sending, setSending] = useState(false);
   const [uploading, setUploading] = useState(false);
@@ -997,6 +1005,7 @@ function Composer({
     setSending(false);
     if (ok) {
       setText('');
+      for (const f of files) if (f.preview) URL.revokeObjectURL(f.preview);
       setFiles([]);
       setMentions({});
       setUrgent(false);
@@ -1022,7 +1031,10 @@ function Composer({
     form.append('channelId', channelId);
     const res = await act(() => api.upload<{ id: string; name: string }>('/files', form));
     setUploading(false);
-    if (res) setFiles((f) => [...f, { id: res.id, name: res.name }]);
+    // Show a preview of images and videos while the message is being written.
+    const preview = /^(image|video)\//.test(file.type) ? URL.createObjectURL(file) : undefined;
+    if (res) setFiles((f) => [...f, { id: res.id, name: res.name, preview, kind: file.type.startsWith('video/') ? 'video' : 'image' }]);
+    else if (preview) URL.revokeObjectURL(preview);
   };
 
   return (
@@ -1048,8 +1060,23 @@ function Composer({
         <div className="pending-files">
           {files.map((f) => (
             <span key={f.id} className="chip">
-              <Icon name="file" size={13} /> {f.name}
-              <button onClick={() => setFiles(files.filter((x) => x.id !== f.id))} aria-label={`Remove ${f.name}`}>
+              {f.preview ? (
+                f.kind === 'video' ? (
+                  <video className="pending-thumb" src={`${f.preview}#t=0.1`} muted playsInline preload="metadata" aria-hidden="true" />
+                ) : (
+                  <img className="pending-thumb" src={f.preview} alt="" />
+                )
+              ) : (
+                <Icon name="file" size={13} />
+              )}{' '}
+              {f.name}
+              <button
+                onClick={() => {
+                  if (f.preview) URL.revokeObjectURL(f.preview);
+                  setFiles(files.filter((x) => x.id !== f.id));
+                }}
+                aria-label={`Remove ${f.name}`}
+              >
                 <Icon name="x" size={12} />
               </button>
             </span>

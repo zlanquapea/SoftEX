@@ -14,6 +14,7 @@ import { ROLE_LABEL } from '../format';
 import { clearOfflineData } from '../pwa';
 import { Logo } from './Logo';
 import { setTheme, useTheme } from '../theme';
+import { NotificationsMenu } from './NotificationsMenu';
 
 interface Shell {
   openTask: (id: string) => void;
@@ -272,10 +273,7 @@ export function Layout({ children }: { children: ReactNode }) {
               <Link to="/help" className="icon-btn hide-mobile" aria-label="Help">
                 <Icon name="help" />
               </Link>
-              <Link to="/inbox" className="icon-btn notification" aria-label={`Notifications${counts?.unread ? `, ${counts.unread} unread` : ''}`}>
-                <Icon name="bell" />
-                {counts?.unread ? <i /> : null}
-              </Link>
+              <NotificationsMenu unread={counts?.unread ?? 0} onChange={reloadCounts} />
               <Link to="/settings" aria-label="Your settings" className="hide-mobile">
                 <Avatar user={me.user} size="md" />
               </Link>

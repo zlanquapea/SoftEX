@@ -85,7 +85,7 @@ Every push to `main` publishes an image to `ghcr.io/zlanquapea/softex` (see *CI/
 | `SOFTEX_COMPANY_NAME` / `SOFTEX_COMPANY_ADDRESS` / `SOFTEX_LEGAL_EMAIL` | *(unset)* | Business details shown on the website and in the Terms of Service and Privacy Policy (SaaS mode) |
 | `SOFTEX_DATA_DIR` | `server/data` | Database and uploaded files |
 | `SOFTEX_MEETING_BASE_URL` | `https://meet.jit.si` | Base URL for generated video meeting links |
-| `SOFTEX_MAX_UPLOAD_MB` | `25` | Upload size limit |
+| `SOFTEX_MAX_UPLOAD_MB` | `100` | Upload size limit (phone videos are often 30–100 MB) |
 | `SOFTEX_SECURE_COOKIES` | `false` | Set to `true` behind HTTPS |
 | `SOFTEX_PUBLIC_URL` | `http://localhost:4000` | Public address used in email links and the SSO redirect URI |
 | `SOFTEX_SMTP_URL` | *(unset)* | e.g. `smtps://user:pass@smtp.example.com:465`. Without it, emails are kept in the admin outbox but not sent |
