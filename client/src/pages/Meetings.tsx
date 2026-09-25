@@ -26,9 +26,9 @@ function CalendarSubscribe({ open, onClose }: { open: boolean; onClose: () => vo
     }
   };
   return (
-    <Modal open={open} onClose={onClose} title="Add SoftEX meetings to your calendar">
+    <Modal open={open} onClose={onClose} title="Add Küü meetings to your calendar">
       <p className="muted">
-        Subscribe once and your SoftEX meetings (the ones you organise or were invited to) show up in Google Calendar, Outlook or Apple Calendar. Calendar apps
+        Subscribe once and your Küü meetings (the ones you organise or were invited to) show up in Google Calendar, Outlook or Apple Calendar. Calendar apps
         refresh subscriptions every few hours, so a change can take a while to appear.
       </p>
       {link ? (

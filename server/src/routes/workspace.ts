@@ -399,10 +399,10 @@ export function workspaceRouter(ctx: Ctx) {
       workspaceId: auth.workspaceId,
       kind: 'invitation',
       to: email,
-      subject: `${inviter} invited you to ${workspace} on SoftEX`,
+      subject: `${inviter} invited you to ${workspace} on Küü`,
       text:
-        `${inviter} invited you to join ${workspace} on SoftEX${role === 'guest' ? ' as a guest' : ''}.\n\n` +
-        `SoftEX keeps your team’s conversations, projects, knowledge and meetings in one place.` +
+        `${inviter} invited you to join ${workspace} on Küü${role === 'guest' ? ' as a guest' : ''}.\n\n` +
+        `Küü keeps your team’s conversations, projects, knowledge and meetings in one place.` +
         (guestDays ? `\n\nYour guest access lasts ${guestDays} days and covers only what was shared with you.` : '') +
         `\n\nThis invitation expires in 14 days.`,
       action: { label: 'Accept invitation', url: `${ctx.config.publicUrl}/invite/${token}` },

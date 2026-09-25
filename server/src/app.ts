@@ -1,7 +1,7 @@
 import express, { type Express } from 'express';
 import { rateLimit } from 'express-rate-limit';
 import compression from 'compression';
-import { existsSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { createServer, type Server } from 'node:http';
 import { join } from 'node:path';
 import { canViewChannel, canViewMeeting, canViewTask } from './access.js';
@@ -71,7 +71,7 @@ export function createApp(options: AppOptions = {}): SoftexApp {
     secureCookies: options.secureCookies ?? false,
     publicUrl: (options.publicUrl ?? 'http://localhost:4000').replace(/\/$/, ''),
     smtpUrl: options.smtpUrl,
-    mailFrom: options.mailFrom ?? 'SoftEX <no-reply@softex.local>',
+    mailFrom: options.mailFrom ?? 'Küü <no-reply@kuu.local>',
     secretKey: options.secretKey,
     clamav: options.clamav,
     allowPrivateWebhooks: options.allowPrivateWebhooks ?? false,
@@ -175,6 +175,7 @@ export function createApp(options: AppOptions = {}): SoftexApp {
   app.use('/api', (_req, _res, next) => next(new HttpError(404, 'Not found')));
 
   const staticDir = options.staticDir;
+  let indexHtml: string | undefined;
   if (staticDir && existsSync(join(staticDir, 'index.html'))) {
     app.use(
       express.static(staticDir, {
@@ -192,7 +193,10 @@ export function createApp(options: AppOptions = {}): SoftexApp {
         'Content-Security-Policy',
         "default-src 'self'; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; connect-src 'self' ws: wss:; worker-src 'self'; manifest-src 'self'; frame-ancestors 'none'",
       );
-      res.sendFile(join(staticDir, 'index.html'));
+      // Link previews (WhatsApp, Facebook, LinkedIn) need absolute image addresses.
+      indexHtml ??= readFileSync(join(staticDir, 'index.html'), 'utf8').replace(/content="\/brand\//g, `content="${config.publicUrl}/brand/`);
+      res.type('html').setHeader('Cache-Control', 'no-cache');
+      res.send(indexHtml);
     });
   }
   app.use(errorHandler);

@@ -1,6 +1,6 @@
-# SoftEX API and webhooks
+# Küü API and webhooks
 
-SoftEX has a JSON REST API under `/api`. The web app uses the same API, so anything you can do in the app you can script.
+Küü has a JSON REST API under `/api`. The web app uses the same API, so anything you can do in the app you can script.
 
 ## Authentication
 
@@ -69,18 +69,18 @@ curl -X POST https://softex.example.com/api/tasks \
 
 Admins generate a SCIM token under **Administration → Provisioning** and give the identity provider:
 
-- **Base URL:** `https://<your SoftEX host>/scim/v2`
+- **Base URL:** `https://<your Küü host>/scim/v2`
 - **Authentication:** HTTP header `Authorization: Bearer scim_…`
 
 Supported: `ServiceProviderConfig`, `ResourceTypes`, and `Users` with `GET` (filters `userName eq`, `externalId eq`, `emails eq`; paging with `startIndex` and `count`), `POST`, `PUT`, `PATCH` (`replace` of `active`, `displayName`, `name`, `title`, `externalId`) and `DELETE`.
 
 - Setting `active` to `false`, or `DELETE`, deactivates the member. This signs them out everywhere, revokes their API tokens and closes their live connections. Their content is kept.
 - Workspace owners cannot be deactivated through SCIM.
-- New users join as members. Roles are managed in SoftEX.
+- New users join as members. Roles are managed in Küü.
 
 ## Webhooks
 
-Admins add webhooks in *Administration → Webhooks*. SoftEX sends an HTTPS `POST` for each subscribed event:
+Admins add webhooks in *Administration → Webhooks*. Küü sends an HTTPS `POST` for each subscribed event:
 
 ```json
 {
@@ -95,12 +95,12 @@ Admins add webhooks in *Administration → Webhooks*. SoftEX sends an HTTPS `POS
 The events are `message.created`, `task.created`, `task.assigned`, `task.status_changed`, `document.version_added`, `meeting.ended`, `decision.recorded` and `project.created`. You can also subscribe to `*` for all of them.
 
 - **Privacy:** events about private channels, private projects, direct messages and personal tasks are never sent.
-- **Delivery:** at least once. If your endpoint doesn't reply with a 2xx status within 10 seconds, SoftEX retries up to 8 times with exponential backoff. Use `id` (also sent as `X-SoftEX-Delivery`) to ignore duplicates.
+- **Delivery:** at least once. If your endpoint doesn't reply with a 2xx status within 10 seconds, Küü retries up to 8 times with exponential backoff. Use `id` (also sent as `X-SoftEX-Delivery`) to ignore duplicates.
 - **Security:** webhook URLs must be public `https` addresses. Private and internal network addresses are refused.
 
 ### Verifying signatures
 
-Every request carries `X-SoftEX-Timestamp` and `X-SoftEX-Signature: sha256=<hex>`. The signature is the HMAC-SHA256 of `"<timestamp>.<raw body>"`, keyed with the webhook's signing secret. Reject requests with a bad signature, and requests whose timestamp is more than 5 minutes old.
+Every request carries `X-Kuu-Event`, `X-Kuu-Delivery`, `X-Kuu-Timestamp` and `X-Kuu-Signature: sha256=<hex>` (the same headers are also sent with the product's former `X-SoftEX-` prefix, for integrations built before the rename). The signature is the HMAC-SHA256 of `"<timestamp>.<raw body>"`, keyed with the webhook's signing secret. Reject requests with a bad signature, and requests whose timestamp is more than 5 minutes old.
 
 ```js
 import { createHmac, timingSafeEqual } from 'node:crypto';

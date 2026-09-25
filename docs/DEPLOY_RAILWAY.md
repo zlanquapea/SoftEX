@@ -1,8 +1,8 @@
-# Deploying SoftEX on Railway
+# Deploying Küü on Railway
 
-SoftEX runs on Railway as **one service** built from the repository's `Dockerfile`, with **one volume** for the database and uploaded files. `railway.json` in the repository sets the builder, the health check (`/api/health`) and the restart policy, so there is nothing to configure for the build itself.
+Küü runs on Railway as **one service** built from the repository's `Dockerfile`, with **one volume** for the database and uploaded files. `railway.json` in the repository sets the builder, the health check (`/api/health`) and the restart policy, so there is nothing to configure for the build itself.
 
-This guide sets SoftEX up as a **hosted service (SaaS)**: customers sign up themselves, get a 30-day Business trial, can stay on the Free plan forever, and pay for Standard or Business with Orange Money, MTN Mobile Money or bank transfer. If you only want a private server for one organisation, see [Private deployment](#private-deployment-for-one-organisation) at the end.
+This guide sets Küü up as a **hosted service (SaaS)**: customers sign up themselves, get a 30-day Business trial, can stay on the Free plan forever, and pay for Standard or Business with Orange Money, MTN Mobile Money or bank transfer. If you only want a private server for one organisation, see [Private deployment](#private-deployment-for-one-organisation) at the end.
 
 Allow about 20 minutes.
 
@@ -22,10 +22,10 @@ Allow about 20 minutes.
 
 ## 2. Add a volume
 
-SoftEX keeps its SQLite database and uploads in `/app/server/data`. Without a volume, **everything is lost on every deploy**.
+Küü keeps its SQLite database and uploads in `/app/server/data`. Without a volume, **everything is lost on every deploy**.
 
 1. Open the service, then **right-click the canvas → Volume** (or press `⌘K` / `Ctrl+K` and choose *Volume*).
-2. Attach it to the SoftEX service with the mount path **`/app/server/data`**.
+2. Attach it to the Küü service with the mount path **`/app/server/data`**.
 
 ## 3. Generate a public address
 
@@ -59,7 +59,7 @@ SOFTEX_PAYMENT_INSTRUCTIONS=**Orange Money:** send to 0770 000 000 (Your Company
 
 # Email (required for SaaS)
 SOFTEX_SMTP_URL=smtps://USERNAME:PASSWORD@smtp.yourprovider.com:465
-SOFTEX_MAIL_FROM=SoftEX <softex@yourcompany.com>
+SOFTEX_MAIL_FROM=Küü <softex@yourcompany.com>
 
 # AI features for the Business plan (optional)
 ANTHROPIC_API_KEY=<your key>
@@ -69,10 +69,10 @@ What each one does:
 
 | Variable | Why |
 | --- | --- |
-| `PORT` | The port SoftEX listens on. It must match the port you gave the domain in step 3. |
+| `PORT` | The port Küü listens on. It must match the port you gave the domain in step 3. |
 | `SOFTEX_PUBLIC_URL` | The address used in email links and as the single sign-on redirect. `${{RAILWAY_PUBLIC_DOMAIN}}` fills in the domain from step 3. If you add your own domain later, change this to `https://softex.yourcompany.com`. |
 | `SOFTEX_SECURE_COOKIES` | Sign-in cookies are only sent over HTTPS. Railway serves HTTPS for you. |
-| `SOFTEX_TRUST_PROXY` | Railway puts a proxy in front of the app. `1` tells SoftEX to read the visitor's real address from it, so sign-in rate limits and the audit log work per person. |
+| `SOFTEX_TRUST_PROXY` | Railway puts a proxy in front of the app. `1` tells Küü to read the visitor's real address from it, so sign-in rate limits and the audit log work per person. |
 | `SOFTEX_SECRET_KEY` | Encrypts stored secrets such as the single sign-on client secret. **Keep it safe and never change it** once set, or saved secrets can't be decrypted. |
 | `SOFTEX_MODE` | `saas` turns on plans, the 30-day trial, usage limits, email confirmation, billing and the operator console. |
 | `SOFTEX_REGISTRATION` | `open` lets anyone create a workspace from the sign-up page, which is what a SaaS needs. |
@@ -82,9 +82,9 @@ What each one does:
 | `SOFTEX_LRD_PER_USD` | Optional exchange rate. When set, prices also show an approximate amount in Liberian dollars. Update it when the rate moves. |
 | `SOFTEX_COMPANY_NAME`, `SOFTEX_COMPANY_ADDRESS`, `SOFTEX_LEGAL_EMAIL` | Your business details. They appear on the website footer and in the Terms of Service and Privacy Policy at `/terms` and `/privacy`. Those pages are **drafts**: have a lawyer review them before you take customers. |
 | `SOFTEX_PAYMENT_INSTRUCTIONS` | What customers see when they pay: your mobile money numbers and bank details. Markdown is allowed; write `\n` for a new line. |
-| `RAILWAY_RUN_UID` | Railway mounts volumes as root, and SoftEX's image runs as an unprivileged user. `0` lets the app write to the volume. If it is missing, the logs say *SoftEX cannot write to its data directory*. |
+| `RAILWAY_RUN_UID` | Railway mounts volumes as root, and Küü's image runs as an unprivileged user. `0` lets the app write to the volume. If it is missing, the logs say *Küü cannot write to its data directory*. |
 | `SOFTEX_SMTP_URL`, `SOFTEX_MAIL_FROM` | Without them, emails are kept in **Administration → Email** but not sent, so customers can't confirm their address. URL-encode special characters in the password (for example `@` → `%40`). Use port 465 with `smtps://`, or port 587 with `smtp://`. |
-| `ANTHROPIC_API_KEY` | Makes Ask SoftEX, summaries and task suggestions available on the Business plan and during trials. Every workspace's AI use is billed to this key, so it is capped: 50 requests per member per month on Business, and 100 requests in total per trial (`SOFTEX_TRIAL_AI_REQUESTS`). |
+| `ANTHROPIC_API_KEY` | Makes Ask Küü, summaries and task suggestions available on the Business plan and during trials. Every workspace's AI use is billed to this key, so it is capped: 50 requests per member per month on Business, and 100 requests in total per trial (`SOFTEX_TRIAL_AI_REQUESTS`). |
 
 To make a secret key, run this on your computer and paste the output:
 
@@ -115,7 +115,7 @@ Do **not** run the demo seed (`npm run seed`) in production; it creates sample a
 
 ## 7. Optional: single sign-on and provisioning
 
-- **SSO (Google, Microsoft Entra ID, Okta…):** *Administration → Single sign-on*. Register SoftEX with your provider using the redirect URI shown there. This needs `SOFTEX_SECRET_KEY`.
+- **SSO (Google, Microsoft Entra ID, Okta…):** *Administration → Single sign-on*. Register Küü with your provider using the redirect URI shown there. This needs `SOFTEX_SECRET_KEY`.
 - **SCIM user provisioning:** *Administration → Provisioning → Generate token*, then give your identity provider the base URL `https://<your domain>/scim/v2` and the token. See [API.md](API.md#scim-20-provisioning).
 
 ## 8. Optional: malware scanning
@@ -123,7 +123,7 @@ Do **not** run the demo seed (`npm run seed`) in production; it creates sample a
 Uploads are always blocked for executable types. To also scan with ClamAV:
 
 1. Add a second service to the project from the Docker image `clamav/clamav:stable`. It needs roughly 2–3 GB of memory for its virus database.
-2. On the SoftEX service, set `SOFTEX_CLAMAV_HOST=${{clamav.RAILWAY_PRIVATE_DOMAIN}}` (replace `clamav` with that service's name) and `SOFTEX_CLAMAV_PORT=3310`.
+2. On the Küü service, set `SOFTEX_CLAMAV_HOST=${{clamav.RAILWAY_PRIVATE_DOMAIN}}` (replace `clamav` with that service's name) and `SOFTEX_CLAMAV_PORT=3310`.
 
 When a scanner is configured and unreachable, uploads are refused rather than accepted unscanned.
 
@@ -133,11 +133,11 @@ Railway redeploys automatically when `main` changes, because the service is conn
 
 ## Backups
 
-**With SQLite (the default), SoftEX backs itself up.** Once a day it takes a consistent copy of the database, checks it with SQLite's integrity check, compresses it and keeps the newest 7. Change this with `SOFTEX_BACKUP_HOURS` and `SOFTEX_BACKUP_KEEP`, or turn it off with `SOFTEX_BACKUPS=off`.
+**With SQLite (the default), Küü backs itself up.** Once a day it takes a consistent copy of the database, checks it with SQLite's integrity check, compresses it and keeps the newest 7. Change this with `SOFTEX_BACKUP_HOURS` and `SOFTEX_BACKUP_KEEP`, or turn it off with `SOFTEX_BACKUPS=off`.
 
 - **Where they go.** With object storage set up (`SOFTEX_S3_*`, see *Growing* below), backups go to the bucket under `backups/`, away from the server. Without it they stay in `/app/server/data/backups` on the volume, which protects against mistakes but not against losing the volume. In that case, download one every week or so.
 - **Check them.** **Operator console → Backups** shows the last backup, warns when one has failed or none has run for a day, and lets you **Back up now** (do this before big changes) or **Download** a copy. Every download is recorded in the activity log, because a backup holds every workspace.
-- **Restore.** Set the variable `SOFTEX_RESTORE_BACKUP` to the backup's file name (for example `softex-2026-09-25T02-00-00-000Z.db.gz`) and redeploy. SoftEX checks the backup, keeps the current database beside it as `softex.db.before-restore-…`, and starts from the backup. Then delete the variable; it won't restore the same backup twice either way.
+- **Restore.** Set the variable `SOFTEX_RESTORE_BACKUP` to the backup's file name (for example `softex-2026-09-25T02-00-00-000Z.db.gz`) and redeploy. Küü checks the backup, keeps the current database beside it as `softex.db.before-restore-…`, and starts from the backup. Then delete the variable; it won't restore the same backup twice either way.
 - **Also:** if your Railway plan offers volume **Backups**, turn them on as a second layer. People can export what they can access from **Settings → Security → Export my data**.
 
 **With PostgreSQL**, use the database's own backups: open the Postgres service → **Backups**. Test a restore into a new database from time to time.
@@ -172,18 +172,18 @@ You see sizes, dates and counts only. The console never shows customers' message
 
 ## Private deployment for one organisation
 
-To run SoftEX just for your own organisation, leave out the *Hosted service (SaaS)* variables and set `SOFTEX_REGISTRATION=first`. The first person to sign up creates the only workspace, everyone else joins by invitation, and there are no plans or limits. Email is then optional.
+To run Küü just for your own organisation, leave out the *Hosted service (SaaS)* variables and set `SOFTEX_REGISTRATION=first`. The first person to sign up creates the only workspace, everyone else joins by invitation, and there are no plans or limits. Email is then optional.
 
 ## Growing: several servers
 
-The setup above runs one server with its data in a SQLite file on the volume. That comfortably handles an early customer base. When you need more capacity or no downtime during deploys, move to **PostgreSQL** and **object storage**, and run several copies (replicas) of SoftEX:
+The setup above runs one server with its data in a SQLite file on the volume. That comfortably handles an early customer base. When you need more capacity or no downtime during deploys, move to **PostgreSQL** and **object storage**, and run several copies (replicas) of Küü:
 
 1. **Add PostgreSQL:** in the project, click **New → Database → PostgreSQL**.
 2. **Create object storage for files.** Any S3-compatible service works. Cloudflare R2 has a free tier and no download fees:
    1. In Cloudflare, go to **R2 → Create bucket** (for example `softex-files`).
    2. Go to **R2 → Manage API tokens → Create API token** with *Object Read & Write* on that bucket, and copy the access key ID and secret.
    3. Note your account ID, which is shown on the R2 overview page.
-3. **Add these variables to the SoftEX service:**
+3. **Add these variables to the Küü service:**
 
    ```env
    SOFTEX_DATABASE_URL=${{Postgres.DATABASE_URL}}
@@ -199,7 +199,7 @@ The setup above runs one server with its data in a SQLite file on the volume. Th
 5. **Remove the volume and `RAILWAY_RUN_UID`.** With PostgreSQL and object storage, nothing needs to survive on the server's own disk.
 6. **Raise the replicas:** in the service, go to **Settings → Deploy → Replicas** and choose 2 or more.
 
-What SoftEX does when several servers share one database:
+What Küü does when several servers share one database:
 
 - Live updates, sign-outs and "who's online" pass between servers through PostgreSQL (`LISTEN/NOTIFY`), so a message posted on one server reaches people connected to another.
 - Background jobs (emails, reminders, webhooks, billing notices) run on one server at a time, using a database lock.
@@ -219,7 +219,7 @@ Railway deploys new versions without downtime once the service has no volume.
 | Symptom | Fix |
 | --- | --- |
 | Build fails mentioning `VOLUME` | You are on an old commit; the Dockerfile no longer declares one. Pull the latest `main`. |
-| Logs: *SoftEX cannot write to its data directory* | Set `RAILWAY_RUN_UID=0`, and check that the volume's mount path is `/app/server/data`. |
+| Logs: *Küü cannot write to its data directory* | Set `RAILWAY_RUN_UID=0`, and check that the volume's mount path is `/app/server/data`. |
 | Everything disappears after a deploy | The volume is missing or mounted at the wrong path. |
 | Signed out immediately after signing in | `SOFTEX_SECURE_COOKIES=true` while opening the site over `http://`. Use the `https://` address. |
 | Email links point to `localhost` | Set `SOFTEX_PUBLIC_URL`. |
@@ -227,8 +227,8 @@ Railway deploys new versions without downtime once the service has no volume.
 | Everyone gets *Too many attempts* at once | `SOFTEX_TRUST_PROXY` is missing, so all visitors look like the same address. Set it to `1`. |
 | Customers can't invite people or pay | They haven't confirmed their email address. They can resend the link from the banner at the top of the page. If emails never arrive, check `SOFTEX_SMTP_URL`. |
 | *Operator console* is missing from the menu | Your email address must be listed in `SOFTEX_OPERATOR_EMAILS`, and `SOFTEX_MODE` must be `saas`. Redeploy after changing variables. |
-| Logs: *SoftEX could not start: the database is not reachable* | Check `SOFTEX_DATABASE_URL`. With Railway's reference variable, the PostgreSQL service must be in the same project. |
+| Logs: *Küü could not start: the database is not reachable* | Check `SOFTEX_DATABASE_URL`. With Railway's reference variable, the PostgreSQL service must be in the same project. |
 | Files uploaded before moving to S3 are missing | Local files aren't copied to the bucket automatically; copy the contents of `/app/server/data/uploads` into the bucket (same file names) before removing the volume. |
-| Phone notifications don't arrive | People turn them on per device in **Settings → Notifications & focus**. On iPhone and iPad, SoftEX must first be added to the Home Screen and opened from there. Alerts only go out while the person isn't using SoftEX, and not during their quiet hours or focus time unless the message is urgent. |
+| Phone notifications don't arrive | People turn them on per device in **Settings → Notifications & focus**. On iPhone and iPad, Küü must first be added to the Home Screen and opened from there. Alerts only go out while the person isn't using Küü, and not during their quiet hours or focus time unless the message is urgent. |
 | Operator console shows *The last backup failed* | Read the error shown there. The usual cause is a full volume: lower `SOFTEX_BACKUP_KEEP`, grow the volume, or move files and backups to S3 storage. |
-| Health check fails | Open the deploy logs. The server must print `SoftEX server listening on …` within 60 seconds. |
+| Health check fails | Open the deploy logs. The server must print `Küü server listening on …` within 60 seconds. |

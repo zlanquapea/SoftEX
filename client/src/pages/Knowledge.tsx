@@ -288,7 +288,7 @@ export function PageView() {
               onChange={(e) => setDraft({ ...current, body: e.target.value })}
               rows={20}
               aria-label="Page content"
-              placeholder={'# Heading\n\nWrite with **Markdown**. Link tasks and discussions by pasting their SoftEX links.\n\n- [ ] Checklists work too'}
+              placeholder={'# Heading\n\nWrite with **Markdown**. Link tasks and discussions by pasting their Küü links.\n\n- [ ] Checklists work too'}
             />
           )}
           <div className="form-actions">

@@ -55,7 +55,7 @@ export function pushRouter(ctx: Ctx) {
     const auth = authOf(req);
     const count = (await db.get<{ n: number }>('SELECT COUNT(*) AS n FROM push_subscriptions WHERE user_id = ?', auth.userId))!.n;
     if (!count) throw badRequest('Turn on notifications on this device first');
-    sendPush(ctx, auth.userId, { title: 'SoftEX notifications are on', body: 'You’ll get alerts here when you’re away from SoftEX.', url: '/settings?tab=notifications', tag: 'softex-test' });
+    sendPush(ctx, auth.userId, { title: 'Küü notifications are on', body: 'You’ll get alerts here when you’re away from Küü.', url: '/settings?tab=notifications', tag: 'softex-test' });
     await pushIdle();
     res.json({ ok: true });
   });

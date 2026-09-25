@@ -1,6 +1,8 @@
-# SoftEX
+# Küü
 
-SoftEX is a unified workplace app for team communication, projects, documents, meetings and company knowledge. It is built from [`SoftEX_Product_Documentation.md`](SoftEX_Product_Documentation.md) and implements the MVP scope in §7 of that document.
+Küü is a unified workplace app for team communication, projects, documents, meetings and company knowledge. It is built from [`SoftEX_Product_Documentation.md`](SoftEX_Product_Documentation.md), written under the product's working name, SoftEX, and implements the MVP scope in §7 of that document.
+
+**Brand.** Küü, *Work moves forward together.* Terracotta `#B5461B` and cream `#FEF6EB`, with peach `#EA9C5E` for the dots. The logo, icons and link-preview image are in [`client/public/brand`](client/public/brand), and the colours are the `--brand-*` and `--accent*` variables at the top of `client/src/styles.css`. Server settings keep their `SOFTEX_` prefix, and internal names (database file, cookie, package names) are unchanged, so existing deployments keep working after the rename.
 
 ## What's included
 
@@ -20,11 +22,11 @@ SoftEX is a unified workplace app for team communication, projects, documents, m
 | **Governed AI** (5.6) | Opt-in thread and meeting summaries, task suggestions a person reviews before anything is created, and weekly project brief drafts, powered by Claude. Off until the server has an API key **and** an admin enables it. It only reads what the requesting person can already open, channels and projects can opt out, and every use is audited without storing content |
 | **Planning & automation** (5.2) | **Timeline** (Gantt) per project with drag-to-reschedule and milestones; a **workload** heat map of open work per person per week (with optional hour estimates); **automations** ("when a task moves to review, notify the reviewer") with templates, run logs and loop-proof execution under the creator's access; automatic **deadline reminders** the day before and when overdue |
 | **Reminders & send later** (5.1, 5.5) | "Remind me" on any message or task, free-form reminders, and **scheduled messages** that post at a chosen time (checked again for permission at send time). Everything pending is listed under **Later** |
-| **Ask SoftEX** (5.6) | Ask a question in the search box and get a short answer with numbered citations to the messages, pages, decisions, tasks, files and meetings it used, each linking back to its source. It only draws on what the person asking can open |
+| **Ask Küü** (5.6) | Ask a question in the search box and get a short answer with numbered citations to the messages, pages, decisions, tasks, files and meetings it used, each linking back to its source. It only draws on what the person asking can open |
 | **Insights** (2) | A dashboard for leads and admins that tracks the spec's success measures: weekly active people, task ownership, decisions and status updates per project, meeting follow-through, overdue share, cycle time and notification load. Aggregates only, no individual ranking |
 | **Governance** (5.7, 9) | **SCIM 2.0** user provisioning and deprovisioning (Okta, Entra ID and others), **message retention** policies, and a **legal hold** that pauses all automatic deletion |
 | **Hosted service (SaaS)** | With `SOFTEX_MODE=saas`: self-service sign-up with email confirmation, a 30-day Business trial, a permanent **Free** plan (10 members, core features) and paid **Standard** and **Business** plans priced per member. Usage limits on members, storage and AI; payment by Orange Money, MTN Mobile Money or bank transfer, confirmed by the operator; renewal and trial reminders; a public pricing page with Liberian-dollar amounts; an **operator console** to confirm payments, adjust plans and suspend abuse; and self-service workspace and account deletion. See [docs/DEPLOY_RAILWAY.md](docs/DEPLOY_RAILWAY.md) |
-| **Devices & calendars** (5.4, 5.5, 9) | **Push notifications** on phones and computers when SoftEX is closed (mentions, assignments, urgent messages; they follow quiet hours and focus time, except urgent messages). **Where you're signed in**: see every device, sign one out or sign out everywhere else. A private **calendar subscription link** that puts your meetings in Google Calendar, Outlook or Apple Calendar |
+| **Devices & calendars** (5.4, 5.5, 9) | **Push notifications** on phones and computers when Küü is closed (mentions, assignments, urgent messages; they follow quiet hours and focus time, except urgent messages). **Where you're signed in**: see every device, sign one out or sign out everywhere else. A private **calendar subscription link** that puts your meetings in Google Calendar, Outlook or Apple Calendar |
 | **Import** (7) | **Bulk invitations** from a pasted list or a CSV, and **task import** into a project from a Trello, Asana, Jira, Monday or spreadsheet CSV, with a preview first. Assignees get one summary notification |
 | **Backups** (7, 9) | Automatic daily SQLite backups: a consistent snapshot, checked with an integrity check, compressed and kept in S3 storage (or the backup folder); the newest 7 are kept. Operators can back up now, download a backup, and restore one by setting `SOFTEX_RESTORE_BACKUP` |
 | **Clients** (8, 11) | Responsive React web app: sidebar navigation on desktop, bottom navigation on mobile, ⌘K global search, dark mode, keyboard and screen-reader-friendly controls, and an installable web app that works offline: the app shell and recently viewed data stay available read-only on poor connections, and cached data is wiped on sign-out |
@@ -87,7 +89,7 @@ Every push to `main` publishes an image to `ghcr.io/zlanquapea/softex` (see *CI/
 | `SOFTEX_SECURE_COOKIES` | `false` | Set to `true` behind HTTPS |
 | `SOFTEX_PUBLIC_URL` | `http://localhost:4000` | Public address used in email links and the SSO redirect URI |
 | `SOFTEX_SMTP_URL` | *(unset)* | e.g. `smtps://user:pass@smtp.example.com:465`. Without it, emails are kept in the admin outbox but not sent |
-| `SOFTEX_MAIL_FROM` | `SoftEX <no-reply@softex.local>` | Sender address |
+| `SOFTEX_MAIL_FROM` | `Küü <no-reply@softex.local>` | Sender address |
 | `SOFTEX_SECRET_KEY` | *(unset)* | Long random string used to encrypt stored secrets. Required for single sign-on |
 | `SOFTEX_CLAMAV_HOST` / `SOFTEX_CLAMAV_PORT` | *(unset)* / `3310` | ClamAV daemon for malware scanning of uploads |
 | `ANTHROPIC_API_KEY` | *(unset)* | Makes AI assistance available (admins still have to enable it) |

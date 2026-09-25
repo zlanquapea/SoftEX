@@ -28,16 +28,16 @@ export function renderHtml(subject: string, text: string, action?: { label: stri
     .map((p) => `<p style="margin:0 0 14px;line-height:1.55">${escapeHtml(p).replace(/\n/g, '<br>')}</p>`)
     .join('');
   const button = action
-    ? `<p style="margin:22px 0"><a href="${escapeHtml(action.url)}" style="background:#6757d8;color:#fff;padding:11px 18px;border-radius:9px;text-decoration:none;font-weight:600;display:inline-block">${escapeHtml(action.label)}</a></p>`
+    ? `<p style="margin:22px 0"><a href="${escapeHtml(action.url)}" style="background:#b5461b;color:#fff;padding:11px 18px;border-radius:9px;text-decoration:none;font-weight:600;display:inline-block">${escapeHtml(action.label)}</a></p>`
     : '';
-  return `<!doctype html><html><body style="margin:0;background:#f7f8fa;font-family:-apple-system,Segoe UI,Helvetica,Arial,sans-serif;color:#1c2333">
+  return `<!doctype html><html><body style="margin:0;background:#fef6eb;font-family:-apple-system,Segoe UI,Helvetica,Arial,sans-serif;color:#2b1d16">
 <table width="100%" cellpadding="0" cellspacing="0" style="padding:28px 12px"><tr><td align="center">
-<table width="100%" cellpadding="0" cellspacing="0" style="max-width:560px;background:#fff;border:1px solid #e7e9ee;border-radius:14px;padding:28px">
+<table width="100%" cellpadding="0" cellspacing="0" style="max-width:560px;background:#fffcf7;border:1px solid #eadfd1;border-radius:14px;padding:28px">
 <tr><td>
-<div style="font-weight:800;font-size:18px;margin-bottom:18px"><span style="display:inline-block;width:26px;height:26px;border-radius:8px;background:#7567e8;color:#fff;text-align:center;line-height:26px;margin-right:8px">S</span>SoftEX</div>
+<div style="margin-bottom:18px"><span style="font-weight:800;font-size:26px;letter-spacing:-0.02em;color:#b5461b">Küü</span><br><span style="font-size:12px;color:#8a3314">Work moves forward together.</span></div>
 <h1 style="font-size:19px;margin:0 0 14px">${escapeHtml(subject)}</h1>
 ${paragraphs}${button}
-<p style="margin:26px 0 0;color:#747b8b;font-size:12px">You are receiving this because of your SoftEX account. You can change email preferences in Settings → Notifications.</p>
+<p style="margin:26px 0 0;color:#7a695e;font-size:12px">You are receiving this because of your Küü account. You can change email preferences in Settings → Notifications.</p>
 </td></tr></table></td></tr></table></body></html>`;
 }
 
@@ -160,7 +160,7 @@ export async function queueDigests(ctx: Ctx, at = new Date()) {
       workspaceId: u.workspace_id,
       kind: 'digest',
       to: u.email,
-      subject: `Your SoftEX digest: ${total} update${total === 1 ? '' : 's'} in ${u.workspace_name}`,
+      subject: `Your Küü digest: ${total} update${total === 1 ? '' : 's'} in ${u.workspace_name}`,
       text: `Good morning ${u.name.split(' ')[0]},\n\nHere is what needs your attention:\n\n${items.map((i) => `• ${i.title}`).join('\n')}${total > items.length ? `\n\n…and ${total - items.length} more.` : ''}`,
       action: { label: 'Open your inbox', url: `${ctx.config.publicUrl}/inbox` },
     });

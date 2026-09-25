@@ -158,7 +158,7 @@ export async function startSession(ctx: Ctx, res: Response, userId: string, work
 
 /**
  * Limiter for credential endpoints (§9 "rate limit abuse"). Counts live in the database so the
- * limit holds across every SoftEX server; keys are hashed so no emails or IPs are stored.
+ * limit holds across every Küü server; keys are hashed so no emails or IPs are stored.
  */
 async function rateLimit(ctx: Ctx, key: string, max = 10, windowMs = 15 * 60_000) {
   const t = now();
@@ -267,8 +267,8 @@ export async function sendVerificationEmail(ctx: Ctx, user: { id: string; name: 
   await queueEmail(ctx, {
     kind: 'verify_email',
     to: user.email,
-    subject: 'Confirm your email address for SoftEX',
-    text: `Hi ${user.name.split(' ')[0]},\n\nPlease confirm this is your email address. The link works for three days. If you didn’t create a SoftEX account, you can ignore this email.`,
+    subject: 'Confirm your email address for Küü',
+    text: `Hi ${user.name.split(' ')[0]},\n\nPlease confirm this is your email address. The link works for three days. If you didn’t create a Küü account, you can ignore this email.`,
     action: { label: 'Confirm email address', url: `${ctx.config.publicUrl}/verify-email/${token}` },
   });
 }
@@ -374,7 +374,7 @@ export function authRouter(ctx: Ctx) {
     if (!membership && all.length) {
       throw new HttpError(403, `This workspace has been suspended. Contact ${ctx.config.billing.supportEmail ?? 'support'} for help.`, { code: 'workspace_suspended' });
     }
-    if (!membership) throw new HttpError(403, 'Your access to SoftEX has ended. Contact your workspace administrator.');
+    if (!membership) throw new HttpError(403, 'Your access to Küü has ended. Contact your workspace administrator.');
     const ws = (await db.get('SELECT sso_enabled, sso_required FROM workspaces WHERE id = ?', membership.workspace_id))!;
     if (ws.sso_enabled && ws.sso_required && membership.role !== 'owner') {
       throw new HttpError(403, 'Your workspace requires single sign-on. Use “Sign in with SSO”.', { code: 'sso_required' });
@@ -417,8 +417,8 @@ export function authRouter(ctx: Ctx) {
       await queueEmail(ctx, {
         kind: 'password_reset',
         to: user.email,
-        subject: 'Reset your SoftEX password',
-        text: `Hi ${user.name.split(' ')[0]},\n\nSomeone asked to reset the password for your SoftEX account. The link below works for one hour. If this wasn’t you, you can ignore this email — your password stays the same.`,
+        subject: 'Reset your Küü password',
+        text: `Hi ${user.name.split(' ')[0]},\n\nSomeone asked to reset the password for your Küü account. The link below works for one hour. If this wasn’t you, you can ignore this email — your password stays the same.`,
         action: { label: 'Choose a new password', url: `${ctx.config.publicUrl}/reset-password/${token}` },
       });
     }

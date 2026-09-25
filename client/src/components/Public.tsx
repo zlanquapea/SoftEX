@@ -2,17 +2,17 @@ import { useEffect, type ReactNode } from 'react';
 import { Link, NavLink } from 'react-router-dom';
 import { usePublicPricing, type PublicPricing } from '../pages/Pricing';
 import { useSession } from '../session';
+import { Logo, TAGLINE } from './Logo';
 
 /** Name shown as the business behind the service (falls back to the product name). */
-export const companyName = (info?: PublicPricing) => info?.company.name ?? 'SoftEX';
+export const companyName = (info?: PublicPricing) => info?.company.name ?? 'Küü';
 
 export function PublicHeader() {
   const { me } = useSession();
   return (
     <header className="public-head">
-      <Link to="/" className="brand dark" aria-label="SoftEX home">
-        <span className="brand-mark">S</span>
-        <span>SoftEX</span>
+      <Link to="/" className="brand dark" aria-label="Küü home">
+        <Logo height={30} />
       </Link>
       <nav className="public-nav" aria-label="Website">
         <a href="/#features">Features</a>
@@ -22,7 +22,7 @@ export function PublicHeader() {
       <span className="grow" />
       {me ? (
         <Link className="btn primary sm" to="/">
-          Open SoftEX
+          Open Küü
         </Link>
       ) : (
         <>
@@ -46,9 +46,9 @@ export function PublicFooter() {
       <div className="public-foot-grid">
         <div>
           <div className="brand dark">
-            <span className="brand-mark">S</span>
-            <span>SoftEX</span>
+            <Logo height={30} />
           </div>
+          <p className="brand-tagline">{TAGLINE}</p>
           <p className="muted small">One calm workspace for your team’s conversations, projects, knowledge and meetings.</p>
         </div>
         <div>

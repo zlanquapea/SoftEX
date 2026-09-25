@@ -12,6 +12,7 @@ import { useToast } from './ui';
 import { AccountBanners } from './Plan';
 import { ROLE_LABEL } from '../format';
 import { clearOfflineData } from '../pwa';
+import { Logo } from './Logo';
 
 interface Shell {
   openTask: (id: string) => void;
@@ -125,8 +126,7 @@ export function Layout({ children }: { children: ReactNode }) {
       <div className="app-shell">
         <aside className={`sidebar ${navOpen ? 'open' : ''}`} aria-label="Workspace navigation">
           <div className="brand">
-            <span className="brand-mark">S</span>
-            <span>SoftEX</span>
+            <Logo height={26} onDark />
             <button className="icon-btn sidebar-close" onClick={() => setNavOpen(false)} aria-label="Close navigation">
               <Icon name="x" />
             </button>

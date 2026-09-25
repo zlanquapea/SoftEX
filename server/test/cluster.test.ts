@@ -10,7 +10,7 @@ import WebSocket from 'ws';
 import { createApp, type SoftexApp } from '../src/app.js';
 
 /**
- * Two SoftEX servers sharing one PostgreSQL database, as when a hosting platform runs
+ * Two Küü servers sharing one PostgreSQL database, as when a hosting platform runs
  * several replicas. Runs when SOFTEX_TEST_DATABASE_URL is set (CI does this).
  */
 const url = process.env.SOFTEX_TEST_DATABASE_URL;
@@ -102,7 +102,7 @@ describe.skipIf(!url)('several servers on one PostgreSQL database', () => {
     await bo.next((e) => e.type === 'message.created' && e.message.body === 'marker');
     expect(bo.events.some((e) => e.type === 'message.created' && e.message.body === 'Top secret')).toBe(false);
 
-    // Presence: the owner opens SoftEX on server A; server B learns they are online.
+    // Presence: the owner opens Küü on server A; server B learns they are online.
     const ada = connect(portA, ownerCookie);
     await ada.next((e) => e.type === 'hello');
     await bo.next((e) => e.type === 'presence' && e.userId === owner.body.user.id && e.online === true);

@@ -98,6 +98,7 @@ async function deliver(ctx: Ctx, d: Record<string, any>) {
     return;
   }
   const timestamp = String(Math.floor(Date.now() / 1000));
+  const signature = signPayload(d.secret, timestamp, d.payload);
   let status: number | null = null;
   try {
     await assertSafeWebhookUrl(ctx, d.url);
@@ -107,11 +108,16 @@ async function deliver(ctx: Ctx, d: Record<string, any>) {
       signal: AbortSignal.timeout(10_000),
       headers: {
         'Content-Type': 'application/json',
-        'User-Agent': 'SoftEX-Webhooks/1',
+        'User-Agent': 'Kuu-Webhooks/1',
+        'X-Kuu-Event': d.event,
+        'X-Kuu-Delivery': d.id,
+        'X-Kuu-Timestamp': timestamp,
+        'X-Kuu-Signature': signature,
+        // The product's former name; kept so integrations built before the rename keep working.
         'X-SoftEX-Event': d.event,
         'X-SoftEX-Delivery': d.id,
         'X-SoftEX-Timestamp': timestamp,
-        'X-SoftEX-Signature': signPayload(d.secret, timestamp, d.payload),
+        'X-SoftEX-Signature': signature,
       },
       body: d.payload,
     });

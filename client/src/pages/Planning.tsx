@@ -929,7 +929,7 @@ export function WorkspaceInsights() {
   return (
     <div className="stack">
       <p className="muted">
-        How well SoftEX is working for the team, measured against the product’s success targets. Aggregated counts only; no individual is ranked. Updated {timeAgo(data.generated_at)}.
+        How well Küü is working for the team, measured against the product’s success targets. Aggregated counts only; no individual is ranked. Updated {timeAgo(data.generated_at)}.
       </p>
       <div className="measure-grid">
         {data.measures.map((m) => {

@@ -777,7 +777,7 @@ function SsoSettings() {
   const f = form ?? { enabled: data.enabled, issuer: data.issuer, clientId: data.client_id, clientSecret: '', domain: data.domain, required: data.required, autoProvision: data.auto_provision };
   const set = (patch: Partial<typeof f>) => setForm({ ...f, ...patch });
   if (!data.available) {
-    return <div className="card">Single sign-on needs the server setting <code>SOFTEX_SECRET_KEY</code> (used to encrypt the provider secret). Ask whoever runs SoftEX to set it.</div>;
+    return <div className="card">Single sign-on needs the server setting <code>SOFTEX_SECRET_KEY</code> (used to encrypt the provider secret). Ask whoever runs Küü to set it.</div>;
   }
   return (
     <form
@@ -792,7 +792,7 @@ function SsoSettings() {
       }}
     >
       <h2>Single sign-on (OpenID Connect)</h2>
-      <p className="muted">Works with Google Workspace, Microsoft Entra ID, Okta, Auth0, Keycloak and other OIDC providers. Register SoftEX with your provider using this redirect URI:</p>
+      <p className="muted">Works with Google Workspace, Microsoft Entra ID, Okta, Auth0, Keycloak and other OIDC providers. Register Küü with your provider using this redirect URI:</p>
       <code className="secret">{data.redirect_uri}</code>
       <Field label="Issuer URL" hint="e.g. https://accounts.google.com or https://login.microsoftonline.com/<tenant>/v2.0">
         <input required type="url" value={f.issuer} onChange={(e) => set({ issuer: e.target.value })} />
@@ -841,7 +841,7 @@ function ScimSettings() {
     <div className="card form narrow-form">
       <h2>User provisioning (SCIM 2.0)</h2>
       <p className="muted">
-        Let your identity provider (Okta, Microsoft Entra ID, OneLogin, JumpCloud…) create, update and deactivate SoftEX accounts automatically. Deactivating someone in
+        Let your identity provider (Okta, Microsoft Entra ID, OneLogin, JumpCloud…) create, update and deactivate Küü accounts automatically. Deactivating someone in
         the provider signs them out everywhere and revokes their API tokens. Owners can never be deactivated through SCIM.
       </p>
       <Field label="SCIM base URL">
@@ -912,7 +912,7 @@ function Webhooks() {
       <div className="card">
         <h2>Webhooks</h2>
         <p className="muted">
-          SoftEX POSTs JSON events to these URLs, signed with HMAC-SHA256 in <code>X-SoftEX-Signature</code>. Events about private channels, private projects and direct
+          Küü POSTs JSON events to these URLs, signed with HMAC-SHA256 in <code>X-Kuu-Signature</code>. Events about private channels, private projects and direct
           messages are never sent.
         </p>
         {!data.webhooks.length && <p className="muted">No webhooks yet.</p>}

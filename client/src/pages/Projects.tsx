@@ -139,7 +139,7 @@ function ImportTasks({ open, onClose, projectId, onDone }: { open: boolean; onCl
       {!preview ? (
         <div className="form">
           <p className="muted">
-            Upload a CSV exported from Trello, Asana, Jira, Monday or a spreadsheet. SoftEX recognises columns such as <em>Title</em>, <em>Description</em>,{' '}
+            Upload a CSV exported from Trello, Asana, Jira, Monday or a spreadsheet. Küü recognises columns such as <em>Title</em>, <em>Description</em>,{' '}
             <em>Status</em>, <em>Priority</em>, <em>Due date</em>, <em>Start date</em>, <em>Assignee</em> (email or full name) and <em>Estimate</em>. You’ll see a
             preview before anything is created. Up to 500 tasks at a time.
           </p>

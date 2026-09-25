@@ -69,10 +69,10 @@ export function App() {
 
   useEffect(() => {
     const title = TITLES.find(([re]) => re.test(location.pathname))?.[1];
-    document.title = title ? `${title} · SoftEX` : 'SoftEX';
+    document.title = title ? `${title} · Küü` : 'Küü';
   }, [location.pathname]);
 
-  if (loading) return <Loading label="Starting SoftEX" />;
+  if (loading) return <Loading label="Starting Küü" />;
 
   if (!me) {
     return (

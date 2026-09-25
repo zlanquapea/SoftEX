@@ -59,4 +59,4 @@ export function verifyTotp(secret: string, code: string, time = Date.now()): boo
 }
 
 export const otpauthUrl = (secret: string, email: string) =>
-  `otpauth://totp/SoftEX:${encodeURIComponent(email)}?secret=${secret}&issuer=SoftEX&algorithm=SHA1&digits=6&period=30`;
+  `otpauth://totp/${encodeURIComponent('Küü')}:${encodeURIComponent(email)}?secret=${secret}&issuer=${encodeURIComponent('Küü')}&algorithm=SHA1&digits=6&period=30`;

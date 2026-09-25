@@ -247,7 +247,7 @@ trailer<</Root 1 0 R>>
   });
 });
 
-describe('Ask SoftEX', () => {
+describe('Ask Küü', () => {
   it('answers from permitted sources only, with citations', async () => {
     const prompts: string[] = [];
     env = setup({ ai: { complete: async ({ prompt }) => (prompts.push(prompt), { text: 'Economy class for short flights [1].', refused: false }) } });

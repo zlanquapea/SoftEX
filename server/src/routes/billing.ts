@@ -401,7 +401,7 @@ export function operatorRouter(ctx: Ctx) {
       ctx,
       ws.id,
       `Payment received — ${ws.name} is on ${planName}`,
-      `We received your ${PAYMENT_METHODS[p.method as keyof typeof PAYMENT_METHODS] ?? p.method} payment of ${money(p.amount)} (reference ${p.reference}). ${ws.name} is on the ${planName} plan until ${end.toISOString().slice(0, 10)}.\n\nThank you for choosing SoftEX.`,
+      `We received your ${PAYMENT_METHODS[p.method as keyof typeof PAYMENT_METHODS] ?? p.method} payment of ${money(p.amount)} (reference ${p.reference}). ${ws.name} is on the ${planName} plan until ${end.toISOString().slice(0, 10)}.\n\nThank you for choosing Küü.`,
     );
     res.json(await paymentRow(db, (await db.get('SELECT * FROM payments WHERE id = ?', p.id))!));
   });
@@ -495,11 +495,11 @@ export async function processBillingNotices(ctx: Ctx, at = new Date()) {
     if (plan.status === 'trial' && ws.trial_ends_at) {
       const left = days(ws.trial_ends_at);
       const end = ws.trial_ends_at.slice(0, 10);
-      if (left <= 1) await notice('trial_1', ws.trial_ends_at, `Your SoftEX trial ends tomorrow`, `The Business trial for ${ws.name} ends on ${end}. Choose a plan to keep AI, automations, timelines and more. If you do nothing, ${ws.name} moves to the Free plan and nothing is deleted.`);
-      else if (left <= 7) await notice('trial_7', ws.trial_ends_at, `Your SoftEX trial ends in ${Math.ceil(left)} days`, `The Business trial for ${ws.name} ends on ${end}. Choose a plan any time from Administration → Billing. If you do nothing, ${ws.name} moves to the Free plan and nothing is deleted.`);
+      if (left <= 1) await notice('trial_1', ws.trial_ends_at, `Your Küü trial ends tomorrow`, `The Business trial for ${ws.name} ends on ${end}. Choose a plan to keep AI, automations, timelines and more. If you do nothing, ${ws.name} moves to the Free plan and nothing is deleted.`);
+      else if (left <= 7) await notice('trial_7', ws.trial_ends_at, `Your Küü trial ends in ${Math.ceil(left)} days`, `The Business trial for ${ws.name} ends on ${end}. Choose a plan any time from Administration → Billing. If you do nothing, ${ws.name} moves to the Free plan and nothing is deleted.`);
     } else if (plan.status === 'active' && ws.paid_through) {
       const left = days(ws.paid_through);
-      if (left <= 7) await notice('renew_7', ws.paid_through, `Time to renew SoftEX for ${ws.name}`, `${ws.name}'s ${plan.name} plan is paid until ${ws.paid_through.slice(0, 10)}. Renew from Administration → Billing to avoid interruption.`);
+      if (left <= 7) await notice('renew_7', ws.paid_through, `Time to renew Küü for ${ws.name}`, `${ws.name}'s ${plan.name} plan is paid until ${ws.paid_through.slice(0, 10)}. Renew from Administration → Billing to avoid interruption.`);
     } else if (plan.status === 'grace' && ws.paid_through) {
       await notice('overdue', ws.paid_through, `Payment overdue for ${ws.name}`, `${ws.name}'s ${plan.name} plan ended on ${ws.paid_through.slice(0, 10)}. Paid features keep working for ${GRACE_DAYS} days; after that the workspace moves to the Free plan. Nothing is deleted.`);
     } else if (plan.status === 'free') {

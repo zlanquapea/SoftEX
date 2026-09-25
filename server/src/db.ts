@@ -7,10 +7,10 @@ import pg from 'pg';
 import type { PeerLink } from './realtime.js';
 
 /**
- * Relational schema for the SoftEX core records (see §4 and §12 of the product
+ * Relational schema for the Küü core records (see §4 and §12 of the product
  * documentation). The same portable SQL runs on SQLite (the default: a single
  * file, nothing to install) and on PostgreSQL (set SOFTEX_DATABASE_URL), which
- * lets several SoftEX servers share one database.
+ * lets several Küü servers share one database.
  */
 const SCHEMA = `
 PRAGMA foreign_keys = ON;
@@ -634,7 +634,7 @@ CREATE TABLE IF NOT EXISTS platform_events (
   created_at TEXT NOT NULL
 );
 
--- Server-wide values shared by every SoftEX server, such as the Web Push key pair.
+-- Server-wide values shared by every Küü server, such as the Web Push key pair.
 CREATE TABLE IF NOT EXISTS server_settings (
   key TEXT PRIMARY KEY,
   value TEXT NOT NULL,
@@ -655,7 +655,7 @@ CREATE TABLE IF NOT EXISTS push_subscriptions (
 );
 CREATE INDEX IF NOT EXISTS idx_push_user ON push_subscriptions(user_id);
 
--- Private calendar subscription links ("add SoftEX meetings to Google Calendar / Outlook").
+-- Private calendar subscription links ("add Küü meetings to Google Calendar / Outlook").
 CREATE TABLE IF NOT EXISTS calendar_feeds (
   token_hash TEXT PRIMARY KEY,
   user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -748,7 +748,7 @@ export interface Database {
   update(table: string, id: string, values: Row): Promise<void>;
   transaction<T>(fn: () => Promise<T>): Promise<T>;
   /**
-   * Run `fn` only if no other SoftEX server is running the same job right now
+   * Run `fn` only if no other Küü server is running the same job right now
    * (a PostgreSQL advisory lock; always runs on SQLite, which has one server).
    */
   exclusive<T>(key: string, fn: () => Promise<T>): Promise<T | undefined>;
@@ -916,13 +916,13 @@ class SqliteDatabase extends BaseDatabase {
 
 // ======================= PostgreSQL =======================
 
-// COUNT(*) and SUM() come back as int8/numeric strings; SoftEX's values fit in a JS number.
+// COUNT(*) and SUM() come back as int8/numeric strings; Küü's values fit in a JS number.
 pg.types.setTypeParser(20, (v) => Number(v));
 pg.types.setTypeParser(1700, (v) => Number(v));
 
 const translations = new Map<string, string>();
 
-/** Translate SoftEX's SQLite-flavoured SQL to PostgreSQL. */
+/** Translate Küü's SQLite-flavoured SQL to PostgreSQL. */
 export function toPostgres(sql: string) {
   let out = translations.get(sql);
   if (out) return out;
@@ -967,7 +967,7 @@ class PostgresDatabase extends BaseDatabase {
 
   constructor(url: string) {
     super();
-    // Optional ?schema=name keeps SoftEX's tables in their own PostgreSQL schema.
+    // Optional ?schema=name keeps Küü's tables in their own PostgreSQL schema.
     const parsed = new URL(url);
     const schema = parsed.searchParams.get('schema') ?? undefined;
     if (schema && !/^[a-z_][a-z0-9_]{0,62}$/.test(schema)) throw new Error('schema must be lowercase letters, digits and underscores');

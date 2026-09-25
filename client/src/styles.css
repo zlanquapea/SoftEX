@@ -1,30 +1,36 @@
-/* SoftEX design system — evolved from the original home-screen prototype. */
+/* Küü design system: terracotta and cream, from the brand logo. */
 :root {
-  --ink: #1c2333;
-  --ink-2: #3a4152;
-  --muted: #6b7282;
-  --line: #e7e9ee;
-  --line-2: #f0f1f4;
-  --surface: #ffffff;
-  --surface-2: #fafbfc;
-  --canvas: #f7f8fa;
-  --nav: #202131;
-  --nav-2: #2b2c3d;
-  --nav-line: #343545;
-  --nav-ink: #aeb0be;
-  --accent: #6757d8;
-  --accent-2: #7567e8;
-  --accent-soft: #eeebff;
-  --accent-ink: #4b3db8;
+  /* Brand */
+  --brand-terracotta: #b5461b;
+  --brand-cream: #fef6eb;
+  --brand-peach: #ea9c5e;
+  --brand-deep: #8a3314;
+  /* Interface */
+  --ink: #2b1d16;
+  --ink-2: #4b3a30;
+  --muted: #7a695e;
+  --line: #eadfd1;
+  --line-2: #f3eadf;
+  --surface: #fffcf7;
+  --surface-2: #fcf6ee;
+  --canvas: #fef6eb;
+  --nav: #2e1a12;
+  --nav-2: #3d241a;
+  --nav-line: #4a2e22;
+  --nav-ink: #dcc6b3;
+  --accent: #b5461b;
+  --accent-2: #c4552a;
+  --accent-soft: #fbe6d9;
+  --accent-ink: #8f3413;
   --blue: #4e83e5;
   --green: #3f9a6d;
   --green-soft: #e4f5ec;
   --amber: #c9861a;
-  --amber-soft: #fdf3e1;
-  --red: #d24a4a;
-  --red-soft: #fdeaea;
-  --shadow: 0 1px 2px rgba(27, 31, 49, 0.04), 0 8px 30px rgba(38, 41, 57, 0.05);
-  --shadow-lg: 0 12px 48px rgba(20, 22, 35, 0.18);
+  --amber-soft: #fdf1dc;
+  --red: #c93a3a;
+  --red-soft: #fde6e3;
+  --shadow: 0 1px 2px rgba(64, 30, 12, 0.05), 0 8px 30px rgba(90, 45, 20, 0.06);
+  --shadow-lg: 0 12px 48px rgba(46, 26, 18, 0.2);
   --radius: 14px;
   --radius-sm: 9px;
   --c-purple: #7567e8;
@@ -41,19 +47,19 @@
 
 @media (prefers-color-scheme: dark) {
   :root {
-    --ink: #e8e9ef;
-    --ink-2: #c9cbd6;
-    --muted: #9699a8;
-    --line: #2c2e3c;
-    --line-2: #252734;
-    --surface: #1b1c27;
-    --surface-2: #20212d;
-    --canvas: #14151e;
-    --nav: #101119;
-    --nav-2: #1c1d29;
-    --nav-line: #262736;
-    --accent-soft: #2a2645;
-    --accent-ink: #b4aaff;
+    --ink: #f5ebdf;
+    --ink-2: #dccbba;
+    --muted: #a9978a;
+    --line: #3a2d25;
+    --line-2: #30251e;
+    --surface: #221a15;
+    --surface-2: #2a201a;
+    --canvas: #19130f;
+    --nav: #120c09;
+    --nav-2: #221710;
+    --nav-line: #2f2017;
+    --accent-soft: #3d2217;
+    --accent-ink: #f2a67a;
     --green-soft: #173427;
     --amber-soft: #3a2e14;
     --red-soft: #3d1b1f;
@@ -249,16 +255,16 @@ hr {
 }
 .btn:hover:not(:disabled) {
   background: var(--surface-2);
-  border-color: #d7dae2;
+  border-color: #e0d0bd;
 }
 .btn.primary {
   background: var(--accent);
   border-color: var(--accent);
   color: #fff;
-  box-shadow: 0 4px 12px rgba(103, 87, 216, 0.22);
+  box-shadow: 0 4px 12px rgba(181, 70, 27, 0.24);
 }
 .btn.primary:hover:not(:disabled) {
-  background: #5a4ac9;
+  background: #9c3a14;
 }
 .btn.sm {
   height: 32px;
@@ -331,7 +337,7 @@ hr {
   inset: 0 auto 0 0;
   width: 248px;
   background: var(--nav);
-  color: #e9e9f1;
+  color: #f6e9dc;
   padding: 20px 14px 16px;
   display: flex;
   flex-direction: column;
@@ -351,20 +357,19 @@ hr {
   padding: 0;
   margin-bottom: 20px;
 }
-.brand-mark {
-  display: grid;
-  place-items: center;
-  width: 30px;
-  height: 30px;
-  border-radius: 9px;
-  color: #fff;
-  background: var(--accent-2);
-  font-size: 16px;
+.logo {
+  display: block;
+  flex: none;
+}
+.brand-tagline {
+  color: var(--accent-ink);
+  font-weight: 600;
+  margin: -12px 0 6px;
 }
 .sidebar-close {
   display: none;
   margin-left: auto;
-  color: #aeb0be;
+  color: #dcc6b3;
 }
 .menu-anchor {
   position: relative;
@@ -372,7 +377,7 @@ hr {
 .workspace-switcher {
   margin: 14px 0 20px;
   width: 100%;
-  border: 1px solid #393b4c;
+  border: 1px solid #4a2e22;
   background: var(--nav-2);
   color: #fff;
   border-radius: 10px;
@@ -398,7 +403,7 @@ hr {
 }
 .workspace-switcher small {
   font-size: 11px;
-  color: #999cac;
+  color: #b9a08d;
 }
 .workspace-logo {
   display: grid;
@@ -406,8 +411,8 @@ hr {
   width: 31px;
   height: 31px;
   border-radius: 8px;
-  background: #efae63;
-  color: #5f3713;
+  background: #ea9c5e;
+  color: #4a1f0b;
   font-weight: 700;
   flex-shrink: 0;
 }
@@ -419,7 +424,7 @@ hr {
 }
 .nav-label {
   margin: 0 10px 6px;
-  color: #777989;
+  color: #a88c78;
   font-size: 10px;
   font-weight: 700;
   letter-spacing: 1.4px;
@@ -439,11 +444,11 @@ hr {
 }
 .nav-item.active,
 .nav-item:hover {
-  background: #343446;
+  background: #3d241a;
   color: #fff;
 }
 .nav-item.active {
-  box-shadow: inset 3px 0 #8173f1;
+  box-shadow: inset 3px 0 #ea9c5e;
 }
 .nav-item span {
   flex: 1;
@@ -462,12 +467,12 @@ hr {
 }
 .nav-item b,
 .nav-channel b {
-  background: #7062df;
+  background: #c4552a;
   color: #fff;
 }
 .nav-item em {
-  background: #3e3f51;
-  color: #bfc0ca;
+  background: #4a2e22;
+  color: #e2cebc;
 }
 .nav-label.sub {
   margin: 4px 0 4px 8px;
@@ -483,7 +488,7 @@ hr {
   gap: 8px;
   height: 30px;
   padding: 0 8px;
-  color: #8d90a0;
+  color: #b9a08d;
   border-radius: 7px;
   font-size: 13px;
   text-decoration: none !important;
@@ -500,7 +505,7 @@ hr {
 }
 .nav-channel:hover,
 .nav-channel.active {
-  background: #2d2e3f;
+  background: #3a2218;
   color: #fff;
 }
 .nav-separator {
@@ -515,9 +520,9 @@ hr {
 .invite-btn {
   height: 38px;
   width: 100%;
-  border: 1px dashed #56586a;
+  border: 1px dashed #6a4533;
   border-radius: 8px;
-  color: #bfc1cc;
+  color: #e2cebc;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -525,7 +530,7 @@ hr {
   text-decoration: none !important;
 }
 .invite-btn:hover {
-  border-color: #8173f1;
+  border-color: #ea9c5e;
   color: #fff;
 }
 .profile {
@@ -554,7 +559,7 @@ hr {
 }
 .profile small {
   font-size: 11px;
-  color: #9da0ae;
+  color: #b9a08d;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -581,7 +586,7 @@ hr {
 }
 .dot.status-away,
 .dot.status-todo {
-  background: #b2b5c2;
+  background: #b8a595;
 }
 .dot.status-review {
   background: var(--amber);
@@ -1049,7 +1054,7 @@ main {
   background: #55bf86;
 }
 .presence.off {
-  background: #b9bcc8;
+  background: #c4b1a1;
 }
 .presence.focus {
   background: var(--accent-2);
@@ -2023,7 +2028,7 @@ a.activity:hover {
   gap: 6px;
 }
 .board-card:hover {
-  border-color: #d2d5de;
+  border-color: #e0d0bd;
 }
 .board-card[draggable='true'] {
   cursor: grab;
@@ -2273,7 +2278,7 @@ a.activity:hover {
 }
 .reaction.mine {
   background: var(--accent-soft);
-  border-color: #cfc8ff;
+  border-color: #f1c7ad;
   color: var(--accent-ink);
 }
 .thread-link {
@@ -2519,7 +2524,7 @@ a.activity:hover {
 }
 .markdown pre {
   background: var(--nav);
-  color: #e9e9f1;
+  color: #f6e9dc;
   padding: 12px 14px;
   border-radius: 10px;
   overflow-x: auto;
@@ -2578,7 +2583,7 @@ a.activity:hover {
   box-shadow: var(--shadow);
 }
 .page-card:hover {
-  border-color: #d2d5de;
+  border-color: #e0d0bd;
 }
 .page-card p {
   font-size: 13px;
@@ -2712,7 +2717,7 @@ a.activity:hover {
   box-shadow: var(--shadow);
 }
 .person-card:hover {
-  border-color: #d2d5de;
+  border-color: #e0d0bd;
 }
 .tags {
   display: flex;
@@ -3218,7 +3223,7 @@ a.activity:hover {
   flex-wrap: wrap;
 }
 .ai-box {
-  border: 1px solid #d9d3ff;
+  border: 1px solid #f1c7ad;
   background: linear-gradient(180deg, var(--accent-soft), var(--surface));
   border-radius: 12px;
   padding: 12px 14px;
@@ -3784,7 +3789,7 @@ button.tl-label:hover {
   background: var(--accent);
 }
 
-/* ---------- Ask SoftEX ---------- */
+/* ---------- Ask Küü ---------- */
 .search-result.ask-row {
   background: var(--accent-soft);
 }
@@ -4249,12 +4254,7 @@ button.tl-label:hover {
 .ap-logo {
   width: 26px;
   height: 26px;
-  border-radius: 8px;
-  background: var(--accent-2);
-  color: #fff;
-  display: grid;
-  place-items: center;
-  font-weight: 800;
+  display: block;
 }
 .ap-side i {
   width: 20px;

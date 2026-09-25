@@ -1,12 +1,12 @@
-/* SoftEX service worker: installable app, fast reloads and read-only offline access.
+/* Küü service worker: installable app, fast reloads and read-only offline access.
  *
- * - App shell (index.html, hashed assets, icons) is cached so SoftEX opens without a network.
+ * - App shell (index.html, hashed assets, icons) is cached so Küü opens without a network.
  * - Workspace data (GET /api/...) is fetched network-first; the last good copy is used only
  *   when the network is unavailable, so people on poor connections can still read their
  *   tasks, channels and knowledge. Writes are never cached or replayed.
  * - Cached workspace data is deleted on sign-out and whenever the server says the session
  *   is gone, so the next person on a shared device cannot read it.
- * - Push notifications are shown while SoftEX is closed; tapping one opens the item.
+ * - Push notifications are shown while Küü is closed; tapping one opens the item.
  */
 const VERSION = 'v1';
 const SHELL = `softex-shell-${VERSION}`;
@@ -105,7 +105,7 @@ self.addEventListener('fetch', (event) => {
             c.match(req).then((hit) => {
               if (!hit) return new Response(JSON.stringify({ error: 'You are offline and this has not been loaded before.' }), { status: 503, headers: { 'Content-Type': 'application/json' } });
               const headers = new Headers(hit.headers);
-              headers.set('X-SoftEX-Offline', '1');
+              headers.set('X-Kuu-Offline', '1');
               return hit.blob().then((body) => new Response(body, { status: hit.status, headers }));
             }),
           ),
@@ -119,15 +119,15 @@ self.addEventListener('push', (event) => {
   try {
     data = event.data ? event.data.json() : {};
   } catch {
-    data = { title: event.data ? event.data.text() : 'SoftEX' };
+    data = { title: event.data ? event.data.text() : 'Küü' };
   }
   event.waitUntil(
-    self.registration.showNotification(data.title || 'SoftEX', {
+    self.registration.showNotification(data.title || 'Küü', {
       body: data.body || '',
       tag: data.tag,
       icon: '/favicon.svg',
       badge: '/favicon.svg',
-      // Only paths inside SoftEX ("//host" would leave the site).
+      // Only paths inside Küü ("//host" would leave the site).
       data: { url: typeof data.url === 'string' && /^\/(?![/\\])/.test(data.url) ? data.url : '/inbox' },
     }),
   );
