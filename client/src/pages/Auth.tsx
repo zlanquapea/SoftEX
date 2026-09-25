@@ -6,20 +6,20 @@ import { useApi } from '../hooks';
 import { useSession } from '../session';
 import { ROLE_LABEL } from '../format';
 import { usePublicPricing } from './Pricing';
+import { Logo, TAGLINE } from '../components/Logo';
 
 function AuthFrame({ title, subtitle, children }: { title: string; subtitle?: ReactNode; children: ReactNode }) {
   return (
     <div className="auth">
       <div className="auth-card">
         <div className="brand dark">
-          <span className="brand-mark">S</span>
-          <span>SoftEX</span>
+          <Logo height={34} />
         </div>
         <h1>{title}</h1>
         {subtitle && <p className="muted">{subtitle}</p>}
         {children}
       </div>
-      <p className="auth-foot muted">One calm workspace for conversations, projects, knowledge and meetings.</p>
+      <p className="auth-foot muted">{TAGLINE}</p>
     </div>
   );
 }
@@ -94,7 +94,7 @@ export function Login() {
         </div>
       </form>
       <p className="muted center">
-        New to SoftEX? <Link to="/register">Create a workspace</Link>
+        New to Küü? <Link to="/register">Create a workspace</Link>
         {pricing?.mode === 'saas' && (
           <>
             {' · '}
@@ -234,7 +234,7 @@ export function AcceptInvite() {
             <input required value={name} onChange={(e) => setName(e.target.value)} autoFocus />
           </Field>
         )}
-        <Field label={invite.existing_account ? 'Your SoftEX password' : 'Choose a password'} hint={invite.existing_account ? undefined : 'At least 8 characters.'}>
+        <Field label={invite.existing_account ? 'Your Küü password' : 'Choose a password'} hint={invite.existing_account ? undefined : 'At least 8 characters.'}>
           <input type="password" required minLength={invite.existing_account ? 1 : 8} value={password} onChange={(e) => setPassword(e.target.value)} />
         </Field>
         {!invite.existing_account && pricing?.mode === 'saas' && <TermsCheckbox checked={acceptTerms} onChange={setAcceptTerms} />}

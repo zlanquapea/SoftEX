@@ -5,7 +5,7 @@ import { PublicPage, companyName } from '../components/Public';
 import { usePublicPricing, type PublicPricing } from './Pricing';
 
 /*
- * Starting-point legal documents for a hosted SoftEX service. They describe how the
+ * Starting-point legal documents for a hosted Küü service. They describe how the
  * software actually handles data, but they are not legal advice: the operator must
  * have them reviewed by a lawyer and fill in company details (SOFTEX_COMPANY_NAME,
  * SOFTEX_COMPANY_ADDRESS, SOFTEX_LEGAL_EMAIL) before launch.
@@ -17,7 +17,7 @@ function LegalFrame({ title, children }: { title: string; children: (info: Publi
   const { data } = usePublicPricing();
   const unconfigured = data && !data.company.name;
   return (
-    <PublicPage title={`${title} · SoftEX`}>
+    <PublicPage title={`${title} · Küü`}>
       <article className="legal">
         {unconfigured && (
           <p className="hint-box warn">
@@ -62,7 +62,7 @@ export function Terms() {
         return (
           <>
             <p>
-              These terms are an agreement between you and {us} (“we”, “us”) for the use of SoftEX, a hosted workspace for team communication, tasks, projects, documents
+              These terms are an agreement between you and {us} (“we”, “us”) for the use of Küü, a hosted workspace for team communication, tasks, projects, documents
               and meetings (the “Service”). By creating an account or using the Service you agree to them. If you use the Service for an organisation, you confirm you may
               accept these terms on its behalf, and “you” includes that organisation.
             </p>
@@ -168,7 +168,7 @@ export function Privacy() {
         return (
           <>
             <p>
-              This policy explains what personal information {us} (“we”) handles when you use SoftEX, why, and your choices. For content inside a workspace, the
+              This policy explains what personal information {us} (“we”) handles when you use Küü, why, and your choices. For content inside a workspace, the
               organisation that owns the workspace decides how it is used; we process it on their behalf to provide the Service.
             </p>
 

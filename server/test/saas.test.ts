@@ -17,7 +17,7 @@ const saas = (extra: Partial<AppOptions> = {}) =>
     operatorEmails: ['ops@softex.test'],
     ai,
     ...extra,
-    billing: { paymentInstructions: 'Send to Orange Money 0770 000 000 (SoftEX Ltd).', supportEmail: 'help@softex.test', lrdPerUsd: 190, ...extra.billing },
+    billing: { paymentInstructions: 'Send to Orange Money 0770 000 000 (Küü Ltd).', supportEmail: 'help@softex.test', lrdPerUsd: 190, ...extra.billing },
   });
 
 /** Confirm an account's email address using the link from its verification email. */
@@ -37,7 +37,7 @@ async function verifiedOwner(name = 'Owner') {
 /** Sign up the operator (a normal account whose email is in SOFTEX_OPERATOR_EMAILS) with MFA on. */
 async function operator() {
   const agent = env.agent();
-  await agent.post('/api/auth/register').send({ name: 'Ops', email: 'ops@softex.test', password: 'password123', workspaceName: 'SoftEX HQ', acceptTerms: true });
+  await agent.post('/api/auth/register').send({ name: 'Ops', email: 'ops@softex.test', password: 'password123', workspaceName: 'Küü HQ', acceptTerms: true });
   await flushJobs(env);
   await verify('ops@softex.test');
   const { secret } = (await agent.post('/api/me/mfa/setup')).body;
@@ -63,7 +63,7 @@ describe('sign-up on a hosted server', () => {
     expect(blocked.body.details.code).toBe('email_unverified');
 
     await flushJobs(env);
-    expect(env.sent.find((m) => m.to === owner.email)!.subject).toBe('Confirm your email address for SoftEX');
+    expect(env.sent.find((m) => m.to === owner.email)!.subject).toBe('Confirm your email address for Küü');
     expect((await owner.agent.post('/api/me/verify-email/resend')).status).toBe(200);
     await flushJobs(env);
     await verify(owner.email);
@@ -269,7 +269,7 @@ describe('billing reminders', () => {
     expect(await processBillingNotices(env.softex.ctx)).toBe(1);
     expect(await processBillingNotices(env.softex.ctx)).toBe(0);
     await flushJobs(env);
-    expect(env.sent.some((m) => m.to === owner.email && m.subject === 'Your SoftEX trial ends in 5 days')).toBe(true);
+    expect(env.sent.some((m) => m.to === owner.email && m.subject === 'Your Küü trial ends in 5 days')).toBe(true);
     await endTrial(owner.me.workspace.id);
     expect(await processBillingNotices(env.softex.ctx)).toBe(1);
     await flushJobs(env);

@@ -10,7 +10,7 @@ export interface RealtimeEvent {
 
 /**
  * Who may receive an event. Audiences are plain data (not functions) so they can be sent
- * to other SoftEX servers, each of which checks them against the database for its own
+ * to other Küü servers, each of which checks them against the database for its own
  * connected clients.
  */
 export type Audience =
@@ -23,7 +23,7 @@ export type Audience =
 /** Turns an audience into a per-client check (set up by the app with database access). */
 export type AudienceResolver = (workspaceId: string, audience: Audience) => Promise<(auth: Auth) => boolean | Promise<boolean>>;
 
-/** Messages exchanged between SoftEX servers. */
+/** Messages exchanged between Küü servers. */
 type PeerMessage =
   | { t: 'event'; origin: string; workspaceId: string; event: RealtimeEvent; audience: Audience }
   | { t: 'disconnect'; origin: string; workspaceId: string; userId: string }
@@ -186,7 +186,7 @@ export class RealtimeHub {
     return keys;
   }
 
-  /** Whether the person has SoftEX open anywhere (on any server). */
+  /** Whether the person has Küü open anywhere (on any server). */
   isOnline(workspaceId: string, userId: string) {
     return this.isLocallyOnline(workspaceId, userId) || this.remoteOnline().has(`${workspaceId}:${userId}`);
   }

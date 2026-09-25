@@ -4,7 +4,7 @@ import { decryptSecret, encryptSecret } from './routes/sso.js';
 import { now } from './util.js';
 
 /**
- * Web Push (§5.5 notifications): alerts on phones and desktops when SoftEX isn't open.
+ * Web Push (§5.5 notifications): alerts on phones and desktops when Küü isn't open.
  * Each subscription belongs to a browser session, so signing out, revoking the device or
  * changing the password stops the alerts. Payloads are end-to-end encrypted to the device.
  */
@@ -17,7 +17,7 @@ export interface PushSubscriptionInput {
 export interface PushPayload {
   title: string;
   body?: string;
-  /** Path inside SoftEX to open when the notification is tapped. */
+  /** Path inside Küü to open when the notification is tapped. */
   url?: string;
   /** Notifications with the same tag replace each other on the device. */
   tag?: string;

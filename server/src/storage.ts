@@ -5,7 +5,7 @@ import type { Readable } from 'node:stream';
 /**
  * Where uploaded file contents live. The local disk works for a single server;
  * S3-compatible object storage (AWS S3, Cloudflare R2, Backblaze B2, MinIO…) lets
- * several SoftEX servers share the same files.
+ * several Küü servers share the same files.
  */
 export interface FileStore {
   readonly kind: 'local' | 's3';

@@ -157,8 +157,12 @@ describe('webhooks', () => {
     expect(received).toHaveLength(1);
     const { headers, body } = received[0];
     expect(JSON.parse(body)).toMatchObject({ type: 'message.created', data: { body: 'hello world' } });
-    const expected = `sha256=${createHmac('sha256', hook.secret).update(`${headers['x-softex-timestamp']}.${body}`).digest('hex')}`;
+    const expected = `sha256=${createHmac('sha256', hook.secret).update(`${headers['x-kuu-timestamp']}.${body}`).digest('hex')}`;
+    expect(headers['x-kuu-signature']).toBe(expected);
+    expect(headers['x-kuu-event']).toBe('message.created');
+    // Integrations built before the rename still get the old header names.
     expect(headers['x-softex-signature']).toBe(expected);
+    expect(headers['x-softex-timestamp']).toBe(headers['x-kuu-timestamp']);
     const deliveries = (await owner.agent.get(`/api/integrations/webhooks/${hook.id}/deliveries`)).body;
     expect(deliveries[0].status).toBe('delivered');
   });

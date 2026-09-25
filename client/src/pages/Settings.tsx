@@ -209,7 +209,7 @@ function Notifications() {
           />
           <span>
             <strong>Urgent messages while I am away</strong>
-            <small className="muted block">Only when you are not connected to SoftEX.</small>
+            <small className="muted block">Only when you are not connected to Küü.</small>
           </span>
         </label>
         <p className="muted small">Invitations, password resets and meeting invitations are always emailed.</p>
@@ -219,7 +219,7 @@ function Notifications() {
   );
 }
 
-/** Push notifications for this phone or computer, including when SoftEX is closed. */
+/** Push notifications for this phone or computer, including when Küü is closed. */
 function DeviceNotifications() {
   const act = useAction();
   const { data: config } = useApi<{ enabled: boolean; publicKey?: string }>('/push/config');
@@ -252,7 +252,7 @@ function DeviceNotifications() {
     <div className="card form">
       <h2>Notifications on this device</h2>
       <p className="muted">
-        Get mentions, assignments and urgent messages on this phone or computer when SoftEX is closed. They follow your quiet hours and focus time, except urgent
+        Get mentions, assignments and urgent messages on this phone or computer when Küü is closed. They follow your quiet hours and focus time, except urgent
         messages.
       </p>
       {state === null && <Loading />}
@@ -274,11 +274,11 @@ function DeviceNotifications() {
           <button className="btn primary" disabled={busy} onClick={turnOn}>
             Turn on notifications
           </button>
-          <small className="muted block">On iPhone and iPad, first add SoftEX to your Home Screen (Share → Add to Home Screen), then open it from there.</small>
+          <small className="muted block">On iPhone and iPad, first add Küü to your Home Screen (Share → Add to Home Screen), then open it from there.</small>
         </div>
       )}
       {state === 'denied' && <p className="muted">Notifications are blocked for this site. Allow them in your browser’s site settings, then reload.</p>}
-      {state === 'unavailable' && <p className="muted">Push notifications aren’t available here. Install SoftEX (or open the production site) to use them.</p>}
+      {state === 'unavailable' && <p className="muted">Push notifications aren’t available here. Install Küü (or open the production site) to use them.</p>}
       {state === 'unsupported' && <p className="muted">This browser doesn’t support notifications.</p>}
       <p className="muted small">Per-channel preferences (all, mentions only, muted) are in each channel’s header.</p>
     </div>
@@ -540,7 +540,7 @@ function ApiTokens() {
       >
         <h2>Personal API tokens</h2>
         <p className="muted">
-          Tokens let scripts and other tools use the SoftEX API as you, with your permissions. Send them as <code>Authorization: Bearer sx_…</code>. See{' '}
+          Tokens let scripts and other tools use the Küü API as you, with your permissions. Send them as <code>Authorization: Bearer sx_…</code>. See{' '}
           <a href="https://github.com/zlanquapea/SoftEX/blob/main/docs/API.md" target="_blank" rel="noopener noreferrer">
             the API guide
           </a>

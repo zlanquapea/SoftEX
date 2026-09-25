@@ -7,6 +7,7 @@ import { Loading } from '../components/ui';
 import { useApi } from '../hooks';
 import { useSession } from '../session';
 import { PublicPage } from '../components/Public';
+import { Logo } from '../components/Logo';
 
 export interface PublicPricing {
   mode: 'self_hosted' | 'saas';
@@ -96,7 +97,7 @@ export function Pricing() {
       </section>
     </>
   );
-  return me ? <div className="page">{body}</div> : <PublicPage title="Pricing · SoftEX">{body}</PublicPage>;
+  return me ? <div className="page">{body}</div> : <PublicPage title="Pricing · Küü">{body}</PublicPage>;
 }
 
 /** Target of the link in the "confirm your email" message. */
@@ -118,8 +119,7 @@ export function VerifyEmail() {
     <div className="auth">
       <div className="auth-card center">
         <div className="brand dark">
-          <span className="brand-mark">S</span>
-          <span>SoftEX</span>
+          <Logo height={34} />
         </div>
         {state === 'working' && <Loading label="Confirming" />}
         {state === 'done' && (
@@ -137,7 +137,7 @@ export function VerifyEmail() {
           </>
         )}
         <Link className="btn primary block" to="/">
-          {me ? 'Back to SoftEX' : 'Sign in'}
+          {me ? 'Back to Küü' : 'Sign in'}
         </Link>
       </div>
     </div>

@@ -53,7 +53,7 @@ export async function openBackup(ctx: Ctx, name: string) {
   return store.open(prefix + name);
 }
 
-/** Check that a snapshot file is a healthy SoftEX database. */
+/** Check that a snapshot file is a healthy Küü database. */
 export function verifySnapshot(path: string) {
   const db = new DatabaseSync(path, { readOnly: true });
   try {

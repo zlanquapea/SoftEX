@@ -15,7 +15,7 @@ try {
   accessSync(dataDir, constants.W_OK);
 } catch (error) {
   console.error(
-    `SoftEX cannot write to its data directory ${dataDir} (${(error as Error).message}).\n` +
+    `Küü cannot write to its data directory ${dataDir} (${(error as Error).message}).\n` +
       'If it is a mounted volume owned by root (for example on Railway), give the app user write access, ' +
       'or on Railway set the service variable RAILWAY_RUN_UID=0.',
   );
@@ -82,7 +82,7 @@ if (process.env.SOFTEX_RESTORE_BACKUP) {
   try {
     await restoreOnStartup({ dbPath, backupName: process.env.SOFTEX_RESTORE_BACKUP, files: s3 ? new S3FileStore(s3) : new LocalFileStore(join(dataDir, 'uploads')), backupDir });
   } catch (error) {
-    console.error(`SoftEX could not restore the backup: ${(error as Error).message}`);
+    console.error(`Küü could not restore the backup: ${(error as Error).message}`);
     process.exit(1);
   }
 }
@@ -138,9 +138,9 @@ const port = Number(process.env.PORT ?? 4000);
 try {
   await ready;
 } catch (error) {
-  console.error(`SoftEX could not start: the database is not reachable or could not be prepared.\n${(error as Error).message}`);
+  console.error(`Küü could not start: the database is not reachable or could not be prepared.\n${(error as Error).message}`);
   process.exit(1);
 }
 server.listen(port, () => {
-  console.log(`SoftEX server listening on http://localhost:${port}`);
+  console.log(`Küü server listening on http://localhost:${port}`);
 });

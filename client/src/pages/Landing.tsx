@@ -10,7 +10,7 @@ const FEATURES: { icon: string; title: string; text: string }[] = [
   { icon: 'folder', title: 'Projects, timelines and workload', text: 'Boards, milestones, a timeline you can drag, and a workload view that shows who is overloaded before deadlines slip.' },
   { icon: 'book', title: 'Knowledge that stays current', text: 'Policies, how-tos and files in one searchable place, with owners, approvals, review dates and full version history.' },
   { icon: 'video', title: 'Meetings that end with decisions', text: 'Agendas, notes, decisions and follow-up tasks captured in the meeting, and a summary sent to everyone afterwards.' },
-  { icon: 'spark', title: 'Ask SoftEX', text: 'Ask a question and get an answer with links to the messages, pages and decisions it came from — only from what you can already see.' },
+  { icon: 'spark', title: 'Ask Küü', text: 'Ask a question and get an answer with links to the messages, pages and decisions it came from — only from what you can already see.' },
   { icon: 'refresh', title: 'Automations and reminders', text: 'Hand work to the right person when a task moves, get reminded before things are due, and schedule messages for later.' },
   { icon: 'shield', title: 'Secure by default', text: 'Two-step sign-in, single sign-on, detailed permissions, guest expiry and an audit log of every important action.' },
 ];
@@ -18,7 +18,7 @@ const FEATURES: { icon: string; title: string; text: string }[] = [
 const FAQ: [string, string][] = [
   ['Do I need a card to start?', 'No. Create a workspace and you get the Business plan free for 30 days. Afterwards you can stay on the Free plan for as long as you like, or choose a paid plan.'],
   ['How do we pay?', 'An admin chooses a plan in the app, pays with Orange Money, MTN Mobile Money or bank transfer, and enters the transaction ID. Your plan starts as soon as the payment is confirmed.'],
-  ['Does it work on phones and slow connections?', 'Yes. SoftEX works in any modern browser and installs on Android and iPhone home screens like an app. Pages are kept small, and recently viewed information stays readable when your connection drops.'],
+  ['Does it work on phones and slow connections?', 'Yes. Küü works in any modern browser and installs on Android and iPhone home screens like an app. Pages are kept small, and recently viewed information stays readable when your connection drops.'],
   ['Who owns our data?', 'You do. Admins can export everything at any time, and owners can delete the workspace permanently. See the Privacy Policy for the details.'],
   ['Can we invite people from outside our company?', 'Yes. On paid plans, guests see only the channels and projects you share with them, and their access expires automatically. Guests are free.'],
   ['What happens if we stop paying?', 'After a short grace period your workspace moves to the Free plan. Nothing is deleted; paid features pause until you pay again.'],
@@ -29,7 +29,7 @@ function AppPreview() {
   return (
     <div className="app-preview" aria-hidden="true">
       <div className="ap-side">
-        <span className="ap-logo">S</span>
+        <img className="ap-logo" src="/favicon.svg" alt="" />
         <i className="active" />
         <i />
         <i />
@@ -87,13 +87,13 @@ export function Landing() {
   const standard = data?.plans.find((p) => p.id === 'standard');
   const business = data?.plans.find((p) => p.id === 'business');
   return (
-    <PublicPage title="SoftEX — one workspace for your team">
+    <PublicPage title="Küü — work moves forward together">
       <section className="hero">
         <div className="hero-copy">
-          <p className="eyebrow">TEAM WORKSPACE · MADE FOR LIBERIA</p>
+          <p className="eyebrow">WORK MOVES FORWARD TOGETHER · MADE FOR LIBERIA</p>
           <h1>Stop chasing work across WhatsApp, email and spreadsheets.</h1>
           <p className="hero-sub">
-            SoftEX brings your team’s conversations, tasks, projects, documents and meetings into one calm place — so everyone knows what matters today, who owns
+            Küü brings your team’s conversations, tasks, projects, documents and meetings into one calm place — so everyone knows what matters today, who owns
             it, and what was decided.
           </p>
           <div className="row-gap wrap">
@@ -119,7 +119,7 @@ export function Landing() {
         <AppPreview />
       </section>
 
-      <section className="replace-strip" aria-label="What SoftEX replaces">
+      <section className="replace-strip" aria-label="What Küü replaces">
         <p className="muted">One workspace instead of scattered tools</p>
         <div>
           {['Group chats', 'Email threads', 'Task spreadsheets', 'Shared folders', 'Meeting notes'].map((t) => (
@@ -151,7 +151,7 @@ export function Landing() {
           <p className="eyebrow">BUILT FOR HOW WE WORK HERE</p>
           <h2>Priced and designed for Liberian teams</h2>
           <p className="muted">
-            Global tools are priced for Silicon Valley budgets and need card payments many teams here can’t make. SoftEX costs a fraction of what they charge, you pay the way
+            Global tools are priced for Silicon Valley budgets and need card payments many teams here can’t make. Küü costs a fraction of what they charge, you pay the way
             you already pay for everything else, and it stays usable when the network doesn’t.
           </p>
         </div>

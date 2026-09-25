@@ -1,4 +1,4 @@
-/** Typed client for the SoftEX REST API. All requests use the session cookie. */
+/** Typed client for the Küü REST API. All requests use the session cookie. */
 
 export class ApiError extends Error {
   constructor(public status: number, message: string, public details?: any) {

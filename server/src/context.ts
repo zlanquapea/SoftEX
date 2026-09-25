@@ -54,7 +54,7 @@ export interface MailTransport {
   }): Promise<unknown>;
 }
 
-/** The subset of the Anthropic client SoftEX uses, injectable for tests. */
+/** The subset of the Anthropic client Küü uses, injectable for tests. */
 export interface AiClient {
   complete(input: { system: string; prompt: string; jsonSchema?: Record<string, unknown> }): Promise<{ text: string; refused: boolean }>;
 }
@@ -147,7 +147,7 @@ export async function notify(ctx: Ctx, workspaceId: string, input: NotifyInput) 
   };
   await ctx.db.insert('notifications', row);
   const silent = !input.urgent && inQuietHours(user);
-  // Urgent items also go out by email when the person is not connected to SoftEX right now.
+  // Urgent items also go out by email when the person is not connected to Küü right now.
   if (input.urgent && user.email_urgent && !ctx.hub.isOnline(workspaceId, input.userId)) {
     await queueEmail(ctx, {
       workspaceId,
@@ -155,7 +155,7 @@ export async function notify(ctx: Ctx, workspaceId: string, input: NotifyInput) 
       to: user.email,
       subject: `Urgent: ${input.title}`,
       text: input.body ? `${input.title}\n\n“${input.body.replace(/@\[([^\]]+)\]\([0-9a-f-]{36}\)/g, '@$1')}”` : input.title,
-      action: { label: 'Open in SoftEX', url: `${ctx.config.publicUrl}${input.link ?? '/inbox'}` },
+      action: { label: 'Open in Küü', url: `${ctx.config.publicUrl}${input.link ?? '/inbox'}` },
     });
   }
   // Phones and closed browsers get a push notification when the person isn't connected right now.

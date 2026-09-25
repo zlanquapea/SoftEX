@@ -33,7 +33,7 @@ async function registration() {
   return (await navigator.serviceWorker.getRegistration()) ?? null;
 }
 
-/** Whether this device gets push notifications from SoftEX. */
+/** Whether this device gets push notifications from Küü. */
 export async function pushState(serverEnabled: boolean): Promise<PushState> {
   if (!pushSupported()) return 'unsupported';
   if (!serverEnabled) return 'unavailable';
@@ -48,7 +48,7 @@ function keyBytes(base64url: string) {
   return Uint8Array.from(atob(padded), (c) => c.charCodeAt(0));
 }
 
-/** Ask for permission, subscribe with the push service and register the device with SoftEX. */
+/** Ask for permission, subscribe with the push service and register the device with Küü. */
 export async function enablePush(publicKey: string, save: (sub: PushSubscriptionJSON) => Promise<unknown>) {
   const permission = await Notification.requestPermission();
   if (permission !== 'granted') return false;

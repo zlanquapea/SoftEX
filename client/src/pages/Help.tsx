@@ -6,7 +6,7 @@ export function Help() {
       <div className="page-head">
         <div>
           <h1>Help</h1>
-          <p className="muted">How SoftEX keeps conversation, decisions and delivery connected.</p>
+          <p className="muted">How Küü keeps conversation, decisions and delivery connected.</p>
         </div>
       </div>
       <div className="card doc markdown">

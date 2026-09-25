@@ -8,7 +8,7 @@ import { hashPassword, newId, now, pickColor, randomToken, sha256 } from '../uti
 /**
  * SCIM 2.0 user provisioning (RFC 7643/7644), §5.7 "automated provisioning".
  * Identity providers (Okta, Microsoft Entra ID, OneLogin, JumpCloud…) create,
- * update and deactivate SoftEX members automatically. Authenticated with a
+ * update and deactivate Küü members automatically. Authenticated with a
  * per-workspace bearer token that admins generate; only its hash is stored.
  */
 
@@ -123,7 +123,7 @@ export function scimRouter(ctx: Ctx) {
       changePassword: { supported: false },
       sort: { supported: false },
       etag: { supported: false },
-      authenticationSchemes: [{ type: 'oauthbearertoken', name: 'Bearer token', description: 'Token generated in SoftEX Administration → Single sign-on', primary: true }],
+      authenticationSchemes: [{ type: 'oauthbearertoken', name: 'Bearer token', description: 'Token generated in Küü Administration → Single sign-on', primary: true }],
     });
   });
 

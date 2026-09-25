@@ -184,9 +184,9 @@ await alex.post(`/messages/${copyMsg.id}/task`, { ownerId: maya.id, dueDate: day
 await jordan.c.post(`/channels/${mobile.channel_id}/messages`, { body: 'Nav prototype v3 is ready for review — bottom tabs for Home, Inbox, Chats, My work and Search, per the spec.' });
 await nina.c.post(`/channels/${mobile.channel_id}/messages`, { body: `${m('Jordan Wells', jordan.id)} the tab labels tested well. One participant missed the search tab, maybe add a label?` });
 
-await leo.c.post(`/channels/${general.id}/messages`, { body: 'Welcome to SoftEX, everyone 👋 Use **#announcements** for company notices and project channels for day-to-day work.' });
+await leo.c.post(`/channels/${general.id}/messages`, { body: 'Welcome to Küü, everyone 👋 Use **#announcements** for company notices and project channels for day-to-day work.' });
 await nina.c.post(`/channels/${general.id}/messages`, { body: 'Lunch & learn on Friday: “What customers told us in September”. Bring questions!' });
-await alex.post(`/channels/${announcements.id}/messages`, { body: '**Office closed Monday** for the public holiday. Urgent issues: page Leo via SoftEX with the *Urgent* flag.' });
+await alex.post(`/channels/${announcements.id}/messages`, { body: '**Office closed Monday** for the public holiday. Urgent issues: page Leo via Küü with the *Urgent* flag.' });
 
 const dm = await maya.c.post('/dms', { userIds: [me.user.id] });
 await maya.c.post(`/channels/${dm.id}/messages`, { body: 'Do you have 10 minutes after the sync to go through the launch copy?' });
@@ -240,15 +240,15 @@ Applies to all employees and contractors travelling on Acme business.
 ## Expenses
 1. Submit receipts within 30 days.
 2. Meals up to the local daily allowance are reimbursed.
-3. Anything over £500 needs an approval request in SoftEX (**Requests → Purchase**).
+3. Anything over £500 needs an approval request in Küü (**Requests → Purchase**).
 
 > Questions? Ask the page owner from the button above.`,
 });
 await alex.post('/pages', {
-  title: 'How we use SoftEX',
+  title: 'How we use Küü',
   status: 'approved',
   reviewDate: day(-2),
-  body: `# How we use SoftEX
+  body: `# How we use Küü
 
 - **Channels** for team and project discussion; **Chats** for quick 1:1s.
 - Every task has **one owner** and a due date.
@@ -268,7 +268,7 @@ await nina.c.post('/checkins', { projectId: research.id, done: 'Finished synthes
 await jordan.c.post('/checkins', { projectId: mobile.id, done: 'Nav prototype v3', next: 'Offline sync conflict handling', blockers: 'Developer account for beta builds' });
 for (const item of [
   { title: 'Complete your profile', description: 'Add your title, time zone and expertise so people can find you.', link: '/settings' },
-  { title: 'Read “How we use SoftEX”', description: 'Our working agreements in five bullet points.', link: '/knowledge' },
+  { title: 'Read “How we use Küü”', description: 'Our working agreements in five bullet points.', link: '/knowledge' },
   { title: 'Turn on multifactor authentication', description: 'Settings → Security.', link: '/settings?tab=security' },
   { title: 'Say hello in #general', link: `/channels/${general.id}` },
 ]) {

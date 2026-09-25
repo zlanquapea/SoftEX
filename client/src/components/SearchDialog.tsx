@@ -159,7 +159,7 @@ export function SearchDialog({ open, initial, onClose }: { open: boolean; initia
               <button className="search-result ask-row" onClick={runAsk}>
                 <Icon name="spark" />
                 <span>
-                  <strong>Ask SoftEX: “{q.trim()}”</strong>
+                  <strong>Ask Küü: “{q.trim()}”</strong>
                   <small>Get an answer with sources from messages, knowledge, decisions and files you can access. Shift+Enter</small>
                 </span>
               </button>

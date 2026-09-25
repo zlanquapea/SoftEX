@@ -2,7 +2,7 @@
   "name": "softex",
   "private": true,
   "version": "0.2.0",
-  "description": "SoftEX — a unified workspace for team communication, projects, documents, meetings and knowledge.",
+  "description": "Küü — a unified workspace for team communication, projects, documents, meetings and knowledge.",
   "workspaces": [
     "server",
     "client"

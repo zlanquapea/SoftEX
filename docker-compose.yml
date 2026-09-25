@@ -1,6 +1,6 @@
-# Self-hosting example: SoftEX + ClamAV malware scanning + Mailpit (a local
+# Self-hosting example: Küü + ClamAV malware scanning + Mailpit (a local
 # inbox for testing email). For production, point SOFTEX_SMTP_URL at your real
-# mail provider and put SoftEX behind HTTPS.
+# mail provider and put Küü behind HTTPS.
 services:
   softex:
     build: .
@@ -11,7 +11,7 @@ services:
       SOFTEX_PUBLIC_URL: ${SOFTEX_PUBLIC_URL:-http://localhost:4000}
       SOFTEX_SECRET_KEY: ${SOFTEX_SECRET_KEY:?Set SOFTEX_SECRET_KEY to a long random string}
       SOFTEX_SMTP_URL: ${SOFTEX_SMTP_URL:-smtp://mailpit:1025}
-      SOFTEX_MAIL_FROM: ${SOFTEX_MAIL_FROM:-SoftEX <no-reply@softex.local>}
+      SOFTEX_MAIL_FROM: ${SOFTEX_MAIL_FROM:-Küü <no-reply@kuu.local>}
       SOFTEX_CLAMAV_HOST: clamav
       SOFTEX_SECURE_COOKIES: ${SOFTEX_SECURE_COOKIES:-false}
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}

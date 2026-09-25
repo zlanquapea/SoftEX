@@ -4,7 +4,7 @@
 
 Please **do not open a public issue** for security problems. Use GitHub's *Report a vulnerability* button on the repository's Security tab (private vulnerability reporting). Include steps to reproduce and the impact you observed. We aim to acknowledge reports within 3 working days.
 
-## How SoftEX protects data
+## How Küü protects data
 
 - **Authorization:** every request, and every derived surface (search, activity feeds, notifications, emails, webhooks, exports and AI prompts), goes through the checks in `server/src/access.ts`. The tests in `server/test/` cover isolation between workspaces, private channels and projects, and guest access.
 - **Accounts:**

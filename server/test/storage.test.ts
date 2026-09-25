@@ -5,7 +5,7 @@ import { S3FileStore } from '../src/storage.js';
 import { createBackup, listBackups } from '../src/backup.js';
 import { registerOwner, setup, type TestEnv } from './helpers.js';
 
-/** Just enough of the S3 API (path-style PUT/GET/DELETE) to exercise SoftEX's storage adapter. */
+/** Just enough of the S3 API (path-style PUT/GET/DELETE) to exercise Küü's storage adapter. */
 function fakeS3() {
   const objects = new Map<string, { body: Buffer; type: string }>();
   const server = createServer((req, res) => {

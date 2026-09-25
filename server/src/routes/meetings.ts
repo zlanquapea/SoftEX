@@ -61,7 +61,7 @@ function icsLines(lines: string[]) {
 
 /** iCalendar invite used for both the download endpoint and email attachments. */
 export function buildIcs(m: IcsMeeting, publicUrl: string, method: 'PUBLISH' | 'REQUEST' | 'CANCEL' = 'PUBLISH') {
-  return icsLines(['BEGIN:VCALENDAR', 'VERSION:2.0', 'PRODID:-//SoftEX//Meetings//EN', `METHOD:${method}`, ...vevent(m, publicUrl, method === 'CANCEL'), 'END:VCALENDAR']);
+  return icsLines(['BEGIN:VCALENDAR', 'VERSION:2.0', 'PRODID:-//Kuu//Meetings//EN', `METHOD:${method}`, ...vevent(m, publicUrl, method === 'CANCEL'), 'END:VCALENDAR']);
 }
 
 /**
@@ -107,10 +107,10 @@ export function calendarFeedRouter(ctx: Ctx) {
       icsLines([
         'BEGIN:VCALENDAR',
         'VERSION:2.0',
-        'PRODID:-//SoftEX//Meetings//EN',
+        'PRODID:-//Kuu//Meetings//EN',
         'METHOD:PUBLISH',
         'CALSCALE:GREGORIAN',
-        `X-WR-CALNAME:${icsEscape(`SoftEX · ${feed.workspace_name}`)}`,
+        `X-WR-CALNAME:${icsEscape(`Küü · ${feed.workspace_name}`)}`,
         'REFRESH-INTERVAL;VALUE=DURATION:PT1H',
         'X-PUBLISHED-TTL:PT1H',
         ...visible.flatMap((m) => vevent(m as IcsMeeting, ctx.config.publicUrl)),
@@ -262,7 +262,7 @@ export function meetingsRouter(ctx: Ctx) {
         starts_at: startsAt,
         duration_min: body.durationMin,
         location: body.location,
-        video_url: body.video ? `${ctx.config.meetingBaseUrl.replace(/\/$/, '')}/SoftEX-${id.replace(/-/g, '').slice(0, 20)}` : '',
+        video_url: body.video ? `${ctx.config.meetingBaseUrl.replace(/\/$/, '')}/Kuu-${id.replace(/-/g, '').slice(0, 20)}` : '',
         organizer_id: auth.userId,
         created_at: now(),
       });
