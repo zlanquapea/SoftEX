@@ -129,36 +129,36 @@ export const isSaas = (ctx: Ctx) => ctx.config.mode === 'saas';
 /** People who run the service (SOFTEX_OPERATOR_EMAILS). Only meaningful in SaaS mode. */
 export const isOperator = (ctx: Ctx, email: string | undefined) => isSaas(ctx) && !!email && ctx.config.operatorEmails.includes(email.toLowerCase());
 
-export function activeMemberCount(db: Database, workspaceId: string) {
-  return db.get(
+export async function activeMemberCount(db: Database, workspaceId: string) {
+  return (await db.get(
     `SELECT COUNT(*) AS n FROM memberships WHERE workspace_id = ? AND deactivated_at IS NULL
        AND (guest_expires_at IS NULL OR guest_expires_at > ?)`,
     workspaceId,
     new Date().toISOString(),
-  )!.n as number;
+  ))!.n as number;
 }
 
 /** Members who are billed: everyone active except guests. */
-export function billableSeats(db: Database, workspaceId: string) {
+export async function billableSeats(db: Database, workspaceId: string) {
   return Math.max(
     1,
-    db.get(`SELECT COUNT(*) AS n FROM memberships WHERE workspace_id = ? AND deactivated_at IS NULL AND role != 'guest'`, workspaceId)!.n as number,
+    (await db.get(`SELECT COUNT(*) AS n FROM memberships WHERE workspace_id = ? AND deactivated_at IS NULL AND role != 'guest'`, workspaceId))!.n as number,
   );
 }
 
-export function storageUsed(db: Database, workspaceId: string) {
-  return (db.get(`SELECT COALESCE(SUM(v.size), 0) AS n FROM file_versions v JOIN files f ON f.id = v.file_id WHERE f.workspace_id = ?`, workspaceId)!.n ??
+export async function storageUsed(db: Database, workspaceId: string) {
+  return ((await db.get(`SELECT COALESCE(SUM(v.size), 0) AS n FROM file_versions v JOIN files f ON f.id = v.file_id WHERE f.workspace_id = ?`, workspaceId))!.n ??
     0) as number;
 }
 
 export const monthStart = (at = new Date()) => new Date(Date.UTC(at.getUTCFullYear(), at.getUTCMonth(), 1)).toISOString();
 
-export function aiUsedThisMonth(db: Database, workspaceId: string, since?: string) {
-  return db.get('SELECT COUNT(*) AS n FROM ai_usage WHERE workspace_id = ? AND created_at >= ?', workspaceId, since ?? monthStart())!.n as number;
+export async function aiUsedThisMonth(db: Database, workspaceId: string, since?: string) {
+  return (await db.get('SELECT COUNT(*) AS n FROM ai_usage WHERE workspace_id = ? AND created_at >= ?', workspaceId, since ?? monthStart()))!.n as number;
 }
 
-export function effectivePlan(ctx: Ctx, workspace: Row | string, at = new Date()): EffectivePlan {
-  const ws = typeof workspace === 'string' ? ctx.db.get('SELECT * FROM workspaces WHERE id = ?', workspace)! : workspace;
+export async function effectivePlan(ctx: Ctx, workspace: Row | string, at = new Date()): Promise<EffectivePlan> {
+  const ws = typeof workspace === 'string' ? (await ctx.db.get('SELECT * FROM workspaces WHERE id = ?', workspace))! : workspace;
   if (!isSaas(ctx)) {
     return {
       id: 'unlimited',
@@ -190,7 +190,7 @@ export function effectivePlan(ctx: Ctx, workspace: Row | string, at = new Date()
     id = 'business';
   }
   const plan = catalog[id];
-  const seats = billableSeats(ctx.db, ws.id);
+  const seats = await billableSeats(ctx.db, ws.id);
   return {
     id,
     name: status === 'trial' ? `${plan.name} trial` : plan.name,
@@ -205,8 +205,8 @@ export function effectivePlan(ctx: Ctx, workspace: Row | string, at = new Date()
   };
 }
 
-export function hasFeature(ctx: Ctx, workspaceId: string, feature: Feature) {
-  return effectivePlan(ctx, workspaceId).features.includes(feature);
+export async function hasFeature(ctx: Ctx, workspaceId: string, feature: Feature) {
+  return (await effectivePlan(ctx, workspaceId)).features.includes(feature);
 }
 
 /** 402 Payment Required with a machine-readable code the web app turns into an upgrade prompt. */
@@ -214,8 +214,8 @@ export function planError(message: string, details: Record<string, unknown>) {
   return new HttpError(402, message, { code: 'plan_limit', ...details });
 }
 
-export function requireFeature(ctx: Ctx, workspaceId: string, feature: Feature) {
-  const plan = effectivePlan(ctx, workspaceId);
+export async function requireFeature(ctx: Ctx, workspaceId: string, feature: Feature) {
+  const plan = await effectivePlan(ctx, workspaceId);
   if (!plan.features.includes(feature)) {
     const needed = feature === 'ai' || feature === 'sso' || feature === 'scim' || feature === 'retention' ? 'Business' : 'Standard';
     throw planError(`${FEATURE_LABEL[feature]} is available on the ${needed} plan. An admin can upgrade under Administration → Billing.`, {
@@ -226,10 +226,10 @@ export function requireFeature(ctx: Ctx, workspaceId: string, feature: Feature) 
 }
 
 /** Check there is room for `adding` more active members (and guest access when adding guests). */
-export function requireMemberCapacity(ctx: Ctx, workspaceId: string, adding = 1, role?: string) {
-  const plan = effectivePlan(ctx, workspaceId);
-  if (role === 'guest' && !plan.features.includes('guests')) requireFeature(ctx, workspaceId, 'guests');
-  if (plan.member_limit != null && activeMemberCount(ctx.db, workspaceId) + adding > plan.member_limit) {
+export async function requireMemberCapacity(ctx: Ctx, workspaceId: string, adding = 1, role?: string) {
+  const plan = await effectivePlan(ctx, workspaceId);
+  if (role === 'guest' && !plan.features.includes('guests')) await requireFeature(ctx, workspaceId, 'guests');
+  if (plan.member_limit != null && await activeMemberCount(ctx.db, workspaceId) + adding > plan.member_limit) {
     throw planError(`The ${plan.name} plan allows up to ${plan.member_limit} members. An admin can upgrade under Administration → Billing.`, {
       limit: 'members',
       plan: plan.id,
@@ -237,9 +237,9 @@ export function requireMemberCapacity(ctx: Ctx, workspaceId: string, adding = 1,
   }
 }
 
-export function requireStorage(ctx: Ctx, workspaceId: string, bytes: number) {
-  const plan = effectivePlan(ctx, workspaceId);
-  if (plan.storage_limit != null && storageUsed(ctx.db, workspaceId) + bytes > plan.storage_limit) {
+export async function requireStorage(ctx: Ctx, workspaceId: string, bytes: number) {
+  const plan = await effectivePlan(ctx, workspaceId);
+  if (plan.storage_limit != null && await storageUsed(ctx.db, workspaceId) + bytes > plan.storage_limit) {
     throw planError('This workspace has used all of its file storage. Delete old files or upgrade under Administration → Billing.', {
       limit: 'storage',
       plan: plan.id,
@@ -247,12 +247,12 @@ export function requireStorage(ctx: Ctx, workspaceId: string, bytes: number) {
   }
 }
 
-export function requireAiQuota(ctx: Ctx, workspaceId: string) {
-  const plan = effectivePlan(ctx, workspaceId);
-  if (!plan.features.includes('ai')) requireFeature(ctx, workspaceId, 'ai');
+export async function requireAiQuota(ctx: Ctx, workspaceId: string) {
+  const plan = await effectivePlan(ctx, workspaceId);
+  if (!plan.features.includes('ai')) await requireFeature(ctx, workspaceId, 'ai');
   if (plan.ai_limit == null) return;
   const since = plan.status === 'trial' ? new Date(0).toISOString() : monthStart();
-  if (aiUsedThisMonth(ctx.db, workspaceId, since) >= plan.ai_limit) {
+  if (await aiUsedThisMonth(ctx.db, workspaceId, since) >= plan.ai_limit) {
     throw planError(
       plan.status === 'trial'
         ? 'This workspace has used all AI requests included in the trial. Choose a plan under Administration → Billing to continue.'
@@ -263,9 +263,9 @@ export function requireAiQuota(ctx: Ctx, workspaceId: string) {
 }
 
 /** On hosted servers, actions that reach other people or cost money need a verified email address. */
-export function requireVerifiedEmail(ctx: Ctx, auth: { userId: string }) {
+export async function requireVerifiedEmail(ctx: Ctx, auth: { userId: string }) {
   if (!isSaas(ctx)) return;
-  const user = ctx.db.get('SELECT email_verified_at FROM users WHERE id = ?', auth.userId);
+  const user = await ctx.db.get('SELECT email_verified_at FROM users WHERE id = ?', auth.userId);
   if (!user?.email_verified_at) {
     throw new HttpError(403, 'Please verify your email address first. Use the link we emailed you, or resend it from the banner at the top of the page.', {
       code: 'email_unverified',

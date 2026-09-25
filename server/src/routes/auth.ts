@@ -39,11 +39,11 @@ function tokenFrom(req: IncomingMessage) {
 }
 
 /** Resolve the session for an HTTP or WebSocket request; null when anonymous or revoked. */
-export function authenticate(ctx: Ctx, req: IncomingMessage): Auth | null {
+export async function authenticate(ctx: Ctx, req: IncomingMessage): Promise<Auth | null> {
   const token = tokenFrom(req);
   if (!token) return null;
   if (token.startsWith('sx_')) return authenticateApiToken(ctx, token);
-  const row = ctx.db.get(
+  const row = await ctx.db.get(
     `SELECT s.user_id, s.workspace_id, m.role FROM sessions s
        JOIN memberships m ON m.workspace_id = s.workspace_id AND m.user_id = s.user_id
        JOIN workspaces w ON w.id = s.workspace_id
@@ -58,8 +58,8 @@ export function authenticate(ctx: Ctx, req: IncomingMessage): Auth | null {
 }
 
 /** Personal API tokens (§5.7 public API): act as the user, limited by the token's scope. */
-function authenticateApiToken(ctx: Ctx, token: string): Auth | null {
-  const row = ctx.db.get(
+async function authenticateApiToken(ctx: Ctx, token: string): Promise<Auth | null> {
+  const row = await ctx.db.get(
     `SELECT t.id, t.user_id, t.workspace_id, t.scope, m.role FROM api_tokens t
        JOIN memberships m ON m.workspace_id = t.workspace_id AND m.user_id = t.user_id
        JOIN workspaces w ON w.id = t.workspace_id
@@ -70,19 +70,19 @@ function authenticateApiToken(ctx: Ctx, token: string): Auth | null {
     now(),
   );
   if (!row) return null;
-  ctx.db.run('UPDATE api_tokens SET last_used_at = ? WHERE id = ?', now(), row.id);
+  await ctx.db.run('UPDATE api_tokens SET last_used_at = ? WHERE id = ?', now(), row.id);
   return { userId: row.user_id, workspaceId: row.workspace_id, role: row.role as Role, tokenScope: row.scope };
 }
 
 const tokenWindows = new Map<string, { count: number; reset: number }>();
 
 export function requireAuth(ctx: Ctx) {
-  return (req: Request, _res: Response, next: NextFunction) => {
-    const auth = authenticate(ctx, req);
+  return async (req: Request, _res: Response, next: NextFunction) => {
+    const auth = await authenticate(ctx, req);
     if (!auth) return next(new HttpError(401, 'Please sign in'));
     req.auth = auth;
     if (auth.tokenScope) {
-      if (!hasFeature(ctx, auth.workspaceId, 'api')) {
+      if (!await hasFeature(ctx, auth.workspaceId, 'api')) {
         return next(planError('API access is available on the Standard plan.', { feature: 'api' }));
       }
       if (auth.tokenScope === 'read' && req.method !== 'GET') return next(new HttpError(403, 'This API token is read-only'));
@@ -97,7 +97,7 @@ export function requireAuth(ctx: Ctx) {
       else if (++w.count > 600) return next(new HttpError(429, 'Rate limit exceeded for this API token'));
     }
     // Workspaces that require MFA block everything except MFA enrolment until it is set up.
-    const needsMfa = ctx.db.get(
+    const needsMfa = await ctx.db.get(
       `SELECT 1 FROM workspaces w, users u WHERE w.id = ? AND u.id = ? AND w.require_mfa = 1 AND u.mfa_enabled = 0`,
       auth.workspaceId,
       auth.userId,
@@ -109,10 +109,10 @@ export function requireAuth(ctx: Ctx) {
   };
 }
 
-export function startSession(ctx: Ctx, res: Response, userId: string, workspaceId: string) {
+export async function startSession(ctx: Ctx, res: Response, userId: string, workspaceId: string) {
   const token = randomToken();
   const expires = new Date(Date.now() + SESSION_DAYS * 86_400_000);
-  ctx.db.insert('sessions', {
+  await ctx.db.insert('sessions', {
     token_hash: sha256(token),
     user_id: userId,
     workspace_id: workspaceId,
@@ -147,27 +147,27 @@ const Email = z.string().trim().toLowerCase().email().max(200);
 const Password = z.string().min(8, 'must be at least 8 characters').max(200);
 const Name = z.string().trim().min(1).max(80);
 
-export function mePayload(ctx: Ctx, auth: Auth) {
-  const user = ctx.db.get(
+export async function mePayload(ctx: Ctx, auth: Auth) {
+  const user = (await ctx.db.get(
     `SELECT id, name, email, title, timezone, working_hours, expertise, status, status_text, focus_until,
             quiet_start, quiet_end, color, mfa_enabled, email_digest, email_urgent, email_verified_at FROM users WHERE id = ?`,
     auth.userId,
-  )!;
-  const workspace = ctx.db.get('SELECT * FROM workspaces WHERE id = ?', auth.workspaceId)!;
-  const membership = ctx.db.get(
+  ))!;
+  const workspace = (await ctx.db.get('SELECT * FROM workspaces WHERE id = ?', auth.workspaceId))!;
+  const membership = (await ctx.db.get(
     'SELECT role, guest_expires_at, sponsor_id FROM memberships WHERE workspace_id = ? AND user_id = ?',
     auth.workspaceId,
     auth.userId,
-  )!;
-  const workspaces = ctx.db.all(
+  ))!;
+  const workspaces = await ctx.db.all(
     `SELECT w.id, w.name, m.role FROM workspaces w JOIN memberships m ON m.workspace_id = w.id
       WHERE m.user_id = ? AND m.deactivated_at IS NULL AND w.suspended_at IS NULL ORDER BY w.name`,
     auth.userId,
   );
-  const memberCount = ctx.db.get(
+  const memberCount = (await ctx.db.get(
     'SELECT COUNT(*) AS n FROM memberships WHERE workspace_id = ? AND deactivated_at IS NULL',
     auth.workspaceId,
-  )!.n;
+  ))!.n;
   return {
     user: {
       ...user,
@@ -191,7 +191,7 @@ export function mePayload(ctx: Ctx, auth: Auth) {
       legal_hold: !!workspace.legal_hold,
       ai_available: !!ctx.ai,
       plan: (({ id, name, status, trial_ends_at, paid_through, features }) => ({ id, name, status, trial_ends_at, paid_through, features }))(
-        effectivePlan(ctx, workspace),
+        await effectivePlan(ctx, workspace),
       ),
     },
     mode: ctx.config.mode,
@@ -204,17 +204,17 @@ export function mePayload(ctx: Ctx, auth: Auth) {
 }
 
 /** Email a link that proves the person owns their address (hosted servers). */
-export function sendVerificationEmail(ctx: Ctx, user: { id: string; name: string; email: string }) {
+export async function sendVerificationEmail(ctx: Ctx, user: { id: string; name: string; email: string }) {
   const token = randomToken();
-  ctx.db.run('DELETE FROM email_verifications WHERE user_id = ?', user.id);
-  ctx.db.insert('email_verifications', {
+  await ctx.db.run('DELETE FROM email_verifications WHERE user_id = ?', user.id);
+  await ctx.db.insert('email_verifications', {
     token_hash: sha256(token),
     user_id: user.id,
     email: user.email,
     expires_at: new Date(Date.now() + 3 * 86_400_000).toISOString(),
     created_at: now(),
   });
-  queueEmail(ctx, {
+  await queueEmail(ctx, {
     kind: 'verify_email',
     to: user.email,
     subject: 'Confirm your email address for SoftEX',
@@ -227,7 +227,7 @@ export function authRouter(ctx: Ctx) {
   const r = Router();
   const { db } = ctx;
 
-  r.post('/auth/register', (req, res) => {
+  r.post('/auth/register', async (req, res) => {
     const body = parse(
       z.object({ name: Name, email: Email, password: Password, workspaceName: z.string().trim().min(2).max(80), acceptTerms: z.boolean().optional() }),
       req.body,
@@ -235,16 +235,16 @@ export function authRouter(ctx: Ctx) {
     if (isSaas(ctx) && !body.acceptTerms) throw badRequest('Please accept the Terms of Service and Privacy Policy to continue');
     rateLimit(`register:${req.ip}`, 20);
     const { registration } = ctx.config;
-    if (registration === 'closed' || (registration === 'first' && db.get('SELECT 1 FROM workspaces LIMIT 1'))) {
+    if (registration === 'closed' || (registration === 'first' && await db.get('SELECT 1 FROM workspaces LIMIT 1'))) {
       throw new HttpError(403, 'New workspaces cannot be created on this server. Ask an admin to invite you.');
     }
-    if (db.get('SELECT 1 FROM users WHERE email = ?', body.email)) {
+    if (await db.get('SELECT 1 FROM users WHERE email = ?', body.email)) {
       throw new HttpError(409, 'An account with this email already exists. Sign in instead.');
     }
     const userId = newId();
     const workspaceId = newId();
-    db.transaction(() => {
-      db.insert('users', {
+    await db.transaction(async () => {
+      await db.insert('users', {
         id: userId,
         email: body.email,
         name: body.name,
@@ -255,16 +255,16 @@ export function authRouter(ctx: Ctx) {
         terms_version: body.acceptTerms ? TERMS_VERSION : null,
         created_at: now(),
       });
-      db.insert('workspaces', {
+      await db.insert('workspaces', {
         id: workspaceId,
         name: body.workspaceName,
         plan: 'free',
         trial_ends_at: isSaas(ctx) ? new Date(Date.now() + ctx.config.billing.trialDays * 86_400_000).toISOString() : null,
         created_at: now(),
       });
-      db.insert('memberships', { workspace_id: workspaceId, user_id: userId, role: 'owner', created_at: now() });
+      await db.insert('memberships', { workspace_id: workspaceId, user_id: userId, role: 'owner', created_at: now() });
       const generalId = newId();
-      db.insert('channels', {
+      await db.insert('channels', {
         id: generalId,
         workspace_id: workspaceId,
         name: 'general',
@@ -273,9 +273,9 @@ export function authRouter(ctx: Ctx) {
         created_by: userId,
         created_at: now(),
       });
-      db.insert('channel_members', { channel_id: generalId, user_id: userId, joined_at: now() });
+      await db.insert('channel_members', { channel_id: generalId, user_id: userId, joined_at: now() });
       const annId = newId();
-      db.insert('channels', {
+      await db.insert('channels', {
         id: annId,
         workspace_id: workspaceId,
         name: 'announcements',
@@ -284,21 +284,21 @@ export function authRouter(ctx: Ctx) {
         created_by: userId,
         created_at: now(),
       });
-      db.insert('channel_members', { channel_id: annId, user_id: userId, joined_at: now() });
-      audit(ctx, workspaceId, userId, 'workspace.created', 'workspace', workspaceId, { name: body.workspaceName });
+      await db.insert('channel_members', { channel_id: annId, user_id: userId, joined_at: now() });
+      await audit(ctx, workspaceId, userId, 'workspace.created', 'workspace', workspaceId, { name: body.workspaceName });
     });
-    if (isSaas(ctx)) sendVerificationEmail(ctx, { id: userId, name: body.name, email: body.email });
-    startSession(ctx, res, userId, workspaceId);
-    res.status(201).json(mePayload(ctx, { userId, workspaceId, role: 'owner' }));
+    if (isSaas(ctx)) await sendVerificationEmail(ctx, { id: userId, name: body.name, email: body.email });
+    await startSession(ctx, res, userId, workspaceId);
+    res.status(201).json(await mePayload(ctx, { userId, workspaceId, role: 'owner' }));
   });
 
-  r.post('/auth/login', (req, res) => {
+  r.post('/auth/login', async (req, res) => {
     const body = parse(
       z.object({ email: Email, password: z.string().min(1).max(200), code: z.string().optional(), workspaceId: z.string().optional() }),
       req.body,
     );
     rateLimit(`login:${req.ip}:${body.email}`);
-    const user = db.get('SELECT * FROM users WHERE email = ?', body.email);
+    const user = await db.get('SELECT * FROM users WHERE email = ?', body.email);
     if (!user || !verifyPassword(body.password, user.password_hash)) {
       throw new HttpError(401, 'Email or password is incorrect');
     }
@@ -306,7 +306,7 @@ export function authRouter(ctx: Ctx) {
       if (!body.code) throw new HttpError(401, 'Enter the code from your authenticator app', { code: 'mfa_required' });
       if (!verifyTotp(user.mfa_secret, body.code)) throw new HttpError(401, 'That code is not valid', { code: 'mfa_required' });
     }
-    const all = db.all(
+    const all = await db.all(
       `SELECT m.workspace_id, m.role, w.suspended_at FROM memberships m JOIN workspaces w ON w.id = m.workspace_id
         WHERE m.user_id = ? AND m.deactivated_at IS NULL
          AND (m.guest_expires_at IS NULL OR m.guest_expires_at > ?) ORDER BY m.created_at`,
@@ -319,46 +319,46 @@ export function authRouter(ctx: Ctx) {
       throw new HttpError(403, `This workspace has been suspended. Contact ${ctx.config.billing.supportEmail ?? 'support'} for help.`, { code: 'workspace_suspended' });
     }
     if (!membership) throw new HttpError(403, 'Your access to SoftEX has ended. Contact your workspace administrator.');
-    const ws = db.get('SELECT sso_enabled, sso_required FROM workspaces WHERE id = ?', membership.workspace_id)!;
+    const ws = (await db.get('SELECT sso_enabled, sso_required FROM workspaces WHERE id = ?', membership.workspace_id))!;
     if (ws.sso_enabled && ws.sso_required && membership.role !== 'owner') {
       throw new HttpError(403, 'Your workspace requires single sign-on. Use “Sign in with SSO”.', { code: 'sso_required' });
     }
-    startSession(ctx, res, user.id, membership.workspace_id);
-    audit(ctx, membership.workspace_id, user.id, 'auth.login', 'user', user.id, { ip: req.ip });
-    res.json(mePayload(ctx, { userId: user.id, workspaceId: membership.workspace_id, role: membership.role }));
+    await startSession(ctx, res, user.id, membership.workspace_id);
+    await audit(ctx, membership.workspace_id, user.id, 'auth.login', 'user', user.id, { ip: req.ip });
+    res.json(await mePayload(ctx, { userId: user.id, workspaceId: membership.workspace_id, role: membership.role }));
   });
 
-  r.post('/auth/logout', (req, res) => {
+  r.post('/auth/logout', async (req, res) => {
     const token = tokenFrom(req);
-    if (token) db.run('DELETE FROM sessions WHERE token_hash = ?', sha256(token));
+    if (token) await db.run('DELETE FROM sessions WHERE token_hash = ?', sha256(token));
     res.clearCookie(COOKIE, { path: '/' });
     res.json({ ok: true });
   });
 
-  r.post('/auth/verify-email', (req, res) => {
+  r.post('/auth/verify-email', async (req, res) => {
     const { token } = parse(z.object({ token: z.string().min(10).max(200) }), req.body);
     rateLimit(`verify:${req.ip}`, 30);
-    const row = db.get('SELECT * FROM email_verifications WHERE token_hash = ? AND expires_at > ?', sha256(token), now());
-    const user = row ? db.get('SELECT id, email FROM users WHERE id = ?', row.user_id) : undefined;
+    const row = await db.get('SELECT * FROM email_verifications WHERE token_hash = ? AND expires_at > ?', sha256(token), now());
+    const user = row ? await db.get('SELECT id, email FROM users WHERE id = ?', row.user_id) : undefined;
     // The link only counts for the address it was sent to.
     if (!row || !user || user.email !== row.email) throw new HttpError(400, 'This confirmation link has expired or was already used. Sign in and send a new one.');
-    db.transaction(() => {
-      db.run('UPDATE users SET email_verified_at = COALESCE(email_verified_at, ?) WHERE id = ?', now(), user.id);
-      db.run('DELETE FROM email_verifications WHERE user_id = ?', user.id);
+    await db.transaction(async () => {
+      await db.run('UPDATE users SET email_verified_at = COALESCE(email_verified_at, ?) WHERE id = ?', now(), user.id);
+      await db.run('DELETE FROM email_verifications WHERE user_id = ?', user.id);
     });
     res.json({ ok: true });
   });
 
   // ----- Password reset by email -----
 
-  r.post('/auth/forgot', (req, res) => {
+  r.post('/auth/forgot', async (req, res) => {
     const { email } = parse(z.object({ email: Email }), req.body);
     rateLimit(`forgot:${req.ip}`, 10);
-    const user = db.get('SELECT id, name, email FROM users WHERE email = ?', email);
+    const user = await db.get('SELECT id, name, email FROM users WHERE email = ?', email);
     if (user) {
       const token = randomToken();
-      db.insert('password_resets', { token_hash: sha256(token), user_id: user.id, expires_at: new Date(Date.now() + 3_600_000).toISOString(), created_at: now() });
-      queueEmail(ctx, {
+      await db.insert('password_resets', { token_hash: sha256(token), user_id: user.id, expires_at: new Date(Date.now() + 3_600_000).toISOString(), created_at: now() });
+      await queueEmail(ctx, {
         kind: 'password_reset',
         to: user.email,
         subject: 'Reset your SoftEX password',
@@ -370,19 +370,19 @@ export function authRouter(ctx: Ctx) {
     res.json({ ok: true });
   });
 
-  r.post('/auth/reset', (req, res) => {
+  r.post('/auth/reset', async (req, res) => {
     const body = parse(z.object({ token: z.string().min(10), password: Password }), req.body);
     rateLimit(`reset:${req.ip}`, 20);
-    const reset = db.get('SELECT * FROM password_resets WHERE token_hash = ? AND used_at IS NULL AND expires_at > ?', sha256(body.token), now());
+    const reset = await db.get('SELECT * FROM password_resets WHERE token_hash = ? AND used_at IS NULL AND expires_at > ?', sha256(body.token), now());
     if (!reset) throw new HttpError(400, 'This reset link has expired or was already used. Request a new one.');
-    db.transaction(() => {
-      db.run('UPDATE password_resets SET used_at = ? WHERE token_hash = ?', now(), reset.token_hash);
-      db.update('users', reset.user_id, { password_hash: hashPassword(body.password) });
+    await db.transaction(async () => {
+      await db.run('UPDATE password_resets SET used_at = ? WHERE token_hash = ?', now(), reset.token_hash);
+      await db.update('users', reset.user_id, { password_hash: hashPassword(body.password) });
       // The reset link reached this inbox, which proves the address.
-      db.run('UPDATE users SET email_verified_at = COALESCE(email_verified_at, ?) WHERE id = ?', now(), reset.user_id);
-      db.run('DELETE FROM sessions WHERE user_id = ?', reset.user_id);
-      for (const m of db.all('SELECT workspace_id FROM memberships WHERE user_id = ?', reset.user_id)) {
-        audit(ctx, m.workspace_id, reset.user_id, 'user.password_reset', 'user', reset.user_id);
+      await db.run('UPDATE users SET email_verified_at = COALESCE(email_verified_at, ?) WHERE id = ?', now(), reset.user_id);
+      await db.run('DELETE FROM sessions WHERE user_id = ?', reset.user_id);
+      for (const m of await db.all('SELECT workspace_id FROM memberships WHERE user_id = ?', reset.user_id)) {
+        await audit(ctx, m.workspace_id, reset.user_id, 'user.password_reset', 'user', reset.user_id);
       }
     });
     res.json({ ok: true });
@@ -390,8 +390,8 @@ export function authRouter(ctx: Ctx) {
 
   // ----- Invitations (public: token is the credential) -----
 
-  const loadInvitation = (token: string) => {
-    const invite = db.get(
+  const loadInvitation = async (token: string) => {
+    const invite = await db.get(
       `SELECT i.*, w.name AS workspace_name, u.name AS inviter_name FROM invitations i
          JOIN workspaces w ON w.id = i.workspace_id JOIN users u ON u.id = i.invited_by
         WHERE i.token_hash = ? AND i.accepted_at IS NULL AND i.revoked_at IS NULL AND i.expires_at > ?`,
@@ -402,9 +402,9 @@ export function authRouter(ctx: Ctx) {
     return invite;
   };
 
-  r.get('/invitations/:token', (req, res) => {
-    const invite = loadInvitation(req.params.token);
-    const existing = !!db.get('SELECT 1 FROM users WHERE email = ?', invite.email);
+  r.get('/invitations/:token', async (req, res) => {
+    const invite = await loadInvitation(req.params.token);
+    const existing = !!await db.get('SELECT 1 FROM users WHERE email = ?', invite.email);
     res.json({
       email: invite.email,
       role: invite.role,
@@ -414,18 +414,18 @@ export function authRouter(ctx: Ctx) {
     });
   });
 
-  r.post('/invitations/:token/accept', (req, res) => {
-    const invite = loadInvitation(req.params.token);
-    const target = db.get('SELECT suspended_at FROM workspaces WHERE id = ?', invite.workspace_id)!;
+  r.post('/invitations/:token/accept', async (req, res) => {
+    const invite = await loadInvitation(req.params.token);
+    const target = (await db.get('SELECT suspended_at FROM workspaces WHERE id = ?', invite.workspace_id))!;
     if (target.suspended_at) throw new HttpError(403, 'This workspace has been suspended.', { code: 'workspace_suspended' });
-    const alreadyActive = db.get(
+    const alreadyActive = await db.get(
       `SELECT 1 FROM memberships m JOIN users u ON u.id = m.user_id WHERE m.workspace_id = ? AND u.email = ? AND m.deactivated_at IS NULL`,
       invite.workspace_id,
       invite.email,
     );
-    if (!alreadyActive) requireMemberCapacity(ctx, invite.workspace_id, 1, invite.role);
+    if (!alreadyActive) await requireMemberCapacity(ctx, invite.workspace_id, 1, invite.role);
     const body = parse(z.object({ name: Name.optional(), password: z.string().min(1).max(200), acceptTerms: z.boolean().optional() }), req.body);
-    let user = db.get('SELECT * FROM users WHERE email = ?', invite.email);
+    let user = await db.get('SELECT * FROM users WHERE email = ?', invite.email);
     if (user) {
       if (!verifyPassword(body.password, user.password_hash)) throw new HttpError(401, 'Password is incorrect');
     } else {
@@ -433,7 +433,7 @@ export function authRouter(ctx: Ctx) {
       if (isSaas(ctx) && !body.acceptTerms) throw badRequest('Please accept the Terms of Service and Privacy Policy to continue');
       parse(Password, body.password);
       const id = newId();
-      db.insert('users', {
+      await db.insert('users', {
         id,
         email: invite.email,
         name: body.name,
@@ -445,16 +445,16 @@ export function authRouter(ctx: Ctx) {
         terms_version: body.acceptTerms ? TERMS_VERSION : null,
         created_at: now(),
       });
-      user = db.get('SELECT * FROM users WHERE id = ?', id)!;
+      user = (await db.get('SELECT * FROM users WHERE id = ?', id))!;
     }
     const userId = user.id as string;
-    db.run('UPDATE users SET email_verified_at = COALESCE(email_verified_at, ?) WHERE id = ?', now(), userId);
-    db.transaction(() => {
+    await db.run('UPDATE users SET email_verified_at = COALESCE(email_verified_at, ?) WHERE id = ?', now(), userId);
+    await db.transaction(async () => {
       const guestExpires =
         invite.role === 'guest' ? new Date(Date.now() + (invite.guest_days ?? 30) * 86_400_000).toISOString() : null;
-      const existing = db.get('SELECT * FROM memberships WHERE workspace_id = ? AND user_id = ?', invite.workspace_id, userId);
+      const existing = await db.get('SELECT * FROM memberships WHERE workspace_id = ? AND user_id = ?', invite.workspace_id, userId);
       if (existing) {
-        db.run(
+        await db.run(
           `UPDATE memberships SET role = ?, deactivated_at = NULL, guest_expires_at = ?, sponsor_id = ?
             WHERE workspace_id = ? AND user_id = ?`,
           invite.role,
@@ -464,7 +464,7 @@ export function authRouter(ctx: Ctx) {
           userId,
         );
       } else {
-        db.insert('memberships', {
+        await db.insert('memberships', {
           workspace_id: invite.workspace_id,
           user_id: userId,
           role: invite.role,
@@ -474,29 +474,29 @@ export function authRouter(ctx: Ctx) {
         });
       }
       if (invite.role !== 'guest') {
-        const defaults = db.all(
+        const defaults = await db.all(
           `SELECT id FROM channels WHERE workspace_id = ? AND kind IN ('public','announcement') AND name IN ('general','announcements')`,
           invite.workspace_id,
         );
         for (const c of defaults) {
-          db.run('INSERT OR IGNORE INTO channel_members (channel_id, user_id, joined_at) VALUES (?, ?, ?)', c.id, userId, now());
+          await db.run('INSERT OR IGNORE INTO channel_members (channel_id, user_id, joined_at) VALUES (?, ?, ?)', c.id, userId, now());
         }
       }
       for (const channelId of parseJson<string[]>(invite.channel_ids, [])) {
-        if (db.get('SELECT 1 FROM channels WHERE id = ? AND workspace_id = ?', channelId, invite.workspace_id)) {
-          db.run('INSERT OR IGNORE INTO channel_members (channel_id, user_id, joined_at) VALUES (?, ?, ?)', channelId, userId, now());
+        if (await db.get('SELECT 1 FROM channels WHERE id = ? AND workspace_id = ?', channelId, invite.workspace_id)) {
+          await db.run('INSERT OR IGNORE INTO channel_members (channel_id, user_id, joined_at) VALUES (?, ?, ?)', channelId, userId, now());
         }
       }
       for (const projectId of parseJson<string[]>(invite.project_ids, [])) {
-        if (db.get('SELECT 1 FROM projects WHERE id = ? AND workspace_id = ?', projectId, invite.workspace_id)) {
-          db.run('INSERT OR IGNORE INTO project_members (project_id, user_id) VALUES (?, ?)', projectId, userId);
+        if (await db.get('SELECT 1 FROM projects WHERE id = ? AND workspace_id = ?', projectId, invite.workspace_id)) {
+          await db.run('INSERT OR IGNORE INTO project_members (project_id, user_id) VALUES (?, ?)', projectId, userId);
         }
       }
-      db.run('UPDATE invitations SET accepted_at = ? WHERE id = ?', now(), invite.id);
-      audit(ctx, invite.workspace_id, userId, 'invitation.accepted', 'invitation', invite.id, { role: invite.role });
+      await db.run('UPDATE invitations SET accepted_at = ? WHERE id = ?', now(), invite.id);
+      await audit(ctx, invite.workspace_id, userId, 'invitation.accepted', 'invitation', invite.id, { role: invite.role });
     });
-    startSession(ctx, res, userId, invite.workspace_id);
-    res.json(mePayload(ctx, { userId, workspaceId: invite.workspace_id, role: invite.role }));
+    await startSession(ctx, res, userId, invite.workspace_id);
+    res.json(await mePayload(ctx, { userId, workspaceId: invite.workspace_id, role: invite.role }));
   });
 
   return r;
@@ -507,9 +507,9 @@ export function meRouter(ctx: Ctx) {
   const r = Router();
   const { db } = ctx;
 
-  r.get('/me', (req, res) => res.json(mePayload(ctx, authOf(req))));
+  r.get('/me', async (req, res) => res.json(await mePayload(ctx, authOf(req))));
 
-  r.patch('/me', (req, res) => {
+  r.patch('/me', async (req, res) => {
     const auth = authOf(req);
     const Time = z.string().regex(/^\d{2}:\d{2}$/).nullable();
     const body = parse(
@@ -536,77 +536,77 @@ export function meRouter(ctx: Ctx) {
         throw badRequest('timezone: Unknown time zone');
       }
     }
-    db.update('users', auth.userId, body);
-    const payload = mePayload(ctx, auth);
-    ctx.hub.publish(auth.workspaceId, {
+    await db.update('users', auth.userId, body);
+    const payload = await mePayload(ctx, auth);
+    await ctx.hub.publish(auth.workspaceId, {
       type: 'user.updated',
       user: { id: auth.userId, name: payload.user.name, status: payload.user.status, status_text: payload.user.status_text, color: payload.user.color },
     });
     res.json(payload);
   });
 
-  r.post('/me/verify-email/resend', (req, res) => {
+  r.post('/me/verify-email/resend', async (req, res) => {
     const auth = authOf(req);
     rateLimit(`verify-resend:${auth.userId}`, 5, 60 * 60_000);
-    const user = db.get('SELECT id, name, email, email_verified_at FROM users WHERE id = ?', auth.userId)!;
+    const user = (await db.get('SELECT id, name, email, email_verified_at FROM users WHERE id = ?', auth.userId))!;
     if (user.email_verified_at) throw badRequest('Your email address is already confirmed');
-    sendVerificationEmail(ctx, user as { id: string; name: string; email: string });
+    await sendVerificationEmail(ctx, user as { id: string; name: string; email: string });
     res.json({ ok: true, email: user.email });
   });
 
-  r.post('/me/password', (req, res) => {
+  r.post('/me/password', async (req, res) => {
     const auth = authOf(req);
     const body = parse(z.object({ current: z.string(), next: Password }), req.body);
-    const user = db.get('SELECT password_hash FROM users WHERE id = ?', auth.userId)!;
+    const user = (await db.get('SELECT password_hash FROM users WHERE id = ?', auth.userId))!;
     if (!verifyPassword(body.current, user.password_hash)) throw new HttpError(401, 'Current password is incorrect');
-    db.update('users', auth.userId, { password_hash: hashPassword(body.next) });
+    await db.update('users', auth.userId, { password_hash: hashPassword(body.next) });
     const keep = sha256(tokenFrom(req) ?? '');
-    db.run('DELETE FROM sessions WHERE user_id = ? AND token_hash != ?', auth.userId, keep);
-    audit(ctx, auth.workspaceId, auth.userId, 'user.password_changed', 'user', auth.userId);
+    await db.run('DELETE FROM sessions WHERE user_id = ? AND token_hash != ?', auth.userId, keep);
+    await audit(ctx, auth.workspaceId, auth.userId, 'user.password_changed', 'user', auth.userId);
     res.json({ ok: true });
   });
 
-  r.post('/me/mfa/setup', (req, res) => {
+  r.post('/me/mfa/setup', async (req, res) => {
     const auth = authOf(req);
-    const user = db.get('SELECT email, mfa_enabled FROM users WHERE id = ?', auth.userId)!;
+    const user = (await db.get('SELECT email, mfa_enabled FROM users WHERE id = ?', auth.userId))!;
     if (user.mfa_enabled) throw badRequest('Multifactor authentication is already enabled');
     const secret = generateSecret();
-    db.update('users', auth.userId, { mfa_secret: secret });
+    await db.update('users', auth.userId, { mfa_secret: secret });
     res.json({ secret, otpauth_url: otpauthUrl(secret, user.email) });
   });
 
-  r.post('/me/mfa/enable', (req, res) => {
+  r.post('/me/mfa/enable', async (req, res) => {
     const auth = authOf(req);
     const { code } = parse(z.object({ code: z.string() }), req.body);
-    const user = db.get('SELECT mfa_secret FROM users WHERE id = ?', auth.userId)!;
+    const user = (await db.get('SELECT mfa_secret FROM users WHERE id = ?', auth.userId))!;
     if (!user.mfa_secret || !verifyTotp(user.mfa_secret, code)) throw badRequest('That code is not valid. Try the next one.');
-    db.update('users', auth.userId, { mfa_enabled: 1 });
-    audit(ctx, auth.workspaceId, auth.userId, 'user.mfa_enabled', 'user', auth.userId);
-    res.json(mePayload(ctx, auth));
+    await db.update('users', auth.userId, { mfa_enabled: 1 });
+    await audit(ctx, auth.workspaceId, auth.userId, 'user.mfa_enabled', 'user', auth.userId);
+    res.json(await mePayload(ctx, auth));
   });
 
-  r.post('/me/mfa/disable', (req, res) => {
+  r.post('/me/mfa/disable', async (req, res) => {
     const auth = authOf(req);
     const { password } = parse(z.object({ password: z.string() }), req.body);
-    const user = db.get('SELECT password_hash FROM users WHERE id = ?', auth.userId)!;
+    const user = (await db.get('SELECT password_hash FROM users WHERE id = ?', auth.userId))!;
     if (!verifyPassword(password, user.password_hash)) throw new HttpError(401, 'Password is incorrect');
-    const ws = db.get('SELECT require_mfa FROM workspaces WHERE id = ?', auth.workspaceId)!;
+    const ws = (await db.get('SELECT require_mfa FROM workspaces WHERE id = ?', auth.workspaceId))!;
     if (ws.require_mfa) throw badRequest('Your workspace requires multifactor authentication');
-    db.update('users', auth.userId, { mfa_enabled: 0, mfa_secret: null });
-    audit(ctx, auth.workspaceId, auth.userId, 'user.mfa_disabled', 'user', auth.userId);
-    res.json(mePayload(ctx, auth));
+    await db.update('users', auth.userId, { mfa_enabled: 0, mfa_secret: null });
+    await audit(ctx, auth.workspaceId, auth.userId, 'user.mfa_disabled', 'user', auth.userId);
+    res.json(await mePayload(ctx, auth));
   });
 
   // Delete your own account. Content you wrote stays with your workspaces, attributed to "Deleted user";
   // your name, email, credentials and personal settings are erased.
-  r.delete('/me', (req, res) => {
+  r.delete('/me', async (req, res) => {
     const auth = authOf(req);
     if (auth.tokenScope) throw new HttpError(403, 'API tokens cannot delete accounts');
     const body = parse(z.object({ password: z.string().min(1).max(200), code: z.string().max(10).optional() }), req.body);
-    const user = db.get('SELECT * FROM users WHERE id = ?', auth.userId)!;
+    const user = (await db.get('SELECT * FROM users WHERE id = ?', auth.userId))!;
     if (!verifyPassword(body.password, user.password_hash)) throw new HttpError(401, 'Password is incorrect');
     if (user.mfa_enabled && (!body.code || !verifyTotp(user.mfa_secret, body.code))) throw new HttpError(401, 'Enter a valid code from your authenticator app', { code: 'mfa_required' });
-    const soleOwner = db.all(
+    const soleOwner = await db.all(
       `SELECT w.name FROM memberships m JOIN workspaces w ON w.id = m.workspace_id
         WHERE m.user_id = ? AND m.role = 'owner' AND m.deactivated_at IS NULL
           AND NOT EXISTS (SELECT 1 FROM memberships o WHERE o.workspace_id = m.workspace_id AND o.role = 'owner' AND o.deactivated_at IS NULL AND o.user_id != m.user_id)`,
@@ -619,15 +619,15 @@ export function meRouter(ctx: Ctx) {
         { code: 'sole_owner', workspaces: soleOwner.map((w) => w.name) },
       );
     }
-    const workspaces = db.all('SELECT m.workspace_id, w.name FROM memberships m JOIN workspaces w ON w.id = m.workspace_id WHERE m.user_id = ?', auth.userId);
-    db.transaction(() => {
+    const workspaces = await db.all('SELECT m.workspace_id, w.name FROM memberships m JOIN workspaces w ON w.id = m.workspace_id WHERE m.user_id = ?', auth.userId);
+    await db.transaction(async () => {
       for (const table of ['sessions', 'email_verifications', 'password_resets', 'saved_messages', 'notifications', 'reminders', 'channel_members']) {
-        db.run(`DELETE FROM ${table} WHERE user_id = ?`, auth.userId);
+        await db.run(`DELETE FROM ${table} WHERE user_id = ?`, auth.userId);
       }
-      db.run('DELETE FROM scheduled_messages WHERE user_id = ? AND sent_message_id IS NULL', auth.userId);
-      db.run('UPDATE api_tokens SET revoked_at = COALESCE(revoked_at, ?) WHERE user_id = ?', now(), auth.userId);
-      db.run('UPDATE memberships SET deactivated_at = COALESCE(deactivated_at, ?) WHERE user_id = ?', now(), auth.userId);
-      db.update('users', auth.userId, {
+      await db.run('DELETE FROM scheduled_messages WHERE user_id = ? AND sent_message_id IS NULL', auth.userId);
+      await db.run('UPDATE api_tokens SET revoked_at = COALESCE(revoked_at, ?) WHERE user_id = ?', now(), auth.userId);
+      await db.run('UPDATE memberships SET deactivated_at = COALESCE(deactivated_at, ?) WHERE user_id = ?', now(), auth.userId);
+      await db.update('users', auth.userId, {
         email: `deleted-${auth.userId}@deleted.invalid`,
         name: 'Deleted user',
         password_hash: hashPassword(randomToken()),
@@ -642,18 +642,18 @@ export function meRouter(ctx: Ctx) {
         email_digest: 0,
         email_urgent: 0,
       });
-      for (const w of workspaces) audit(ctx, w.workspace_id, null, 'user.account_deleted', 'user', auth.userId);
-      platformEvent(ctx, user.email, 'account.deleted', null, { workspaces: workspaces.length });
+      for (const w of workspaces) await audit(ctx, w.workspace_id, null, 'user.account_deleted', 'user', auth.userId);
+      await platformEvent(ctx, user.email, 'account.deleted', null, { workspaces: workspaces.length });
     });
     for (const w of workspaces) ctx.hub.disconnect(w.workspace_id, auth.userId);
     res.clearCookie(COOKIE, { path: '/' });
     res.json({ deleted: true });
   });
 
-  r.post('/me/switch-workspace', (req, res) => {
+  r.post('/me/switch-workspace', async (req, res) => {
     const auth = authOf(req);
     const { workspaceId } = parse(z.object({ workspaceId: z.string() }), req.body);
-    const m = db.get(
+    const m = await db.get(
       `SELECT m.role FROM memberships m JOIN workspaces w ON w.id = m.workspace_id
         WHERE m.workspace_id = ? AND m.user_id = ? AND m.deactivated_at IS NULL AND w.suspended_at IS NULL
          AND (m.guest_expires_at IS NULL OR m.guest_expires_at > ?)`,
@@ -663,9 +663,9 @@ export function meRouter(ctx: Ctx) {
     );
     if (!m) throw new HttpError(404, 'Workspace not found');
     const token = tokenFrom(req);
-    if (token) db.run('DELETE FROM sessions WHERE token_hash = ?', sha256(token));
-    startSession(ctx, res, auth.userId, workspaceId);
-    res.json(mePayload(ctx, { userId: auth.userId, workspaceId, role: m.role }));
+    if (token) await db.run('DELETE FROM sessions WHERE token_hash = ?', sha256(token));
+    await startSession(ctx, res, auth.userId, workspaceId);
+    res.json(await mePayload(ctx, { userId: auth.userId, workspaceId, role: m.role }));
   });
 
   return r;

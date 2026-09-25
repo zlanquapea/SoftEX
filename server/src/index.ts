@@ -58,6 +58,7 @@ const billing = Object.fromEntries(
 
 const { server } = createApp({
   dbPath: process.env.SOFTEX_DB ?? join(dataDir, 'softex.db'),
+  databaseUrl: process.env.SOFTEX_DATABASE_URL || undefined,
   uploadDir: join(dataDir, 'uploads'),
   meetingBaseUrl: process.env.SOFTEX_MEETING_BASE_URL,
   maxUploadBytes: process.env.SOFTEX_MAX_UPLOAD_MB ? Number(process.env.SOFTEX_MAX_UPLOAD_MB) * 1024 * 1024 : undefined,

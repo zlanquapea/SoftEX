@@ -111,25 +111,25 @@ export function ssoPublicRouter(ctx: Ctx) {
   const { db } = ctx;
   const redirectUri = () => `${ctx.config.publicUrl}/api/auth/sso/callback`;
 
-  const workspaceForEmail = (email: string) =>
-    db.get(`SELECT * FROM workspaces WHERE sso_enabled = 1 AND sso_domain = ? LIMIT 1`, domainOf(email));
+  const workspaceForEmail = async (email: string) =>
+    await db.get(`SELECT * FROM workspaces WHERE sso_enabled = 1 AND sso_domain = ? LIMIT 1`, domainOf(email));
 
-  r.get('/auth/sso/discover', (req, res) => {
+  r.get('/auth/sso/discover', async (req, res) => {
     const { email } = parse(z.object({ email: z.string().trim().toLowerCase().email() }), req.query);
-    const ws = workspaceForEmail(email);
+    const ws = await workspaceForEmail(email);
     res.json({ sso: !!ws, workspace_name: ws?.name ?? null, required: !!ws?.sso_required });
   });
 
   r.get('/auth/sso/start', async (req, res) => {
     const { email } = parse(z.object({ email: z.string().trim().toLowerCase().email() }), req.query);
-    const ws = workspaceForEmail(email);
+    const ws = await workspaceForEmail(email);
     if (!ws) throw new HttpError(404, 'Single sign-on is not set up for this email domain');
     const doc = await discover(ws.sso_issuer);
     const state = randomToken();
     const nonce = randomToken();
     const verifier = randomToken();
-    db.run('DELETE FROM sso_states WHERE created_at < ?', new Date(Date.now() - 15 * 60_000).toISOString());
-    db.insert('sso_states', { state, workspace_id: ws.id, nonce, code_verifier: verifier, created_at: now() });
+    await db.run('DELETE FROM sso_states WHERE created_at < ?', new Date(Date.now() - 15 * 60_000).toISOString());
+    await db.insert('sso_states', { state, workspace_id: ws.id, nonce, code_verifier: verifier, created_at: now() });
     const url = new URL(doc.authorization_endpoint);
     url.search = new URLSearchParams({
       response_type: 'code',
@@ -149,10 +149,10 @@ export function ssoPublicRouter(ctx: Ctx) {
     const fail = (message: string) => res.redirect(`/login?sso_error=${encodeURIComponent(message)}`);
     const q = req.query as Record<string, string | undefined>;
     if (q.error) return fail(q.error_description || q.error);
-    const saved = q.state ? db.get('SELECT * FROM sso_states WHERE state = ?', q.state) : undefined;
+    const saved = q.state ? await db.get('SELECT * FROM sso_states WHERE state = ?', q.state) : undefined;
     if (!saved || !q.code || saved.created_at < new Date(Date.now() - 15 * 60_000).toISOString()) return fail('Your sign-in attempt expired. Please try again.');
-    db.run('DELETE FROM sso_states WHERE state = ?', saved.state);
-    const ws = db.get('SELECT * FROM workspaces WHERE id = ? AND sso_enabled = 1', saved.workspace_id);
+    await db.run('DELETE FROM sso_states WHERE state = ?', saved.state);
+    const ws = await db.get('SELECT * FROM workspaces WHERE id = ? AND sso_enabled = 1', saved.workspace_id);
     if (!ws || !ctx.config.secretKey) return fail('Single sign-on is no longer enabled for this workspace.');
     if (ws.suspended_at) return fail('This workspace has been suspended.');
     try {
@@ -177,16 +177,16 @@ export function ssoPublicRouter(ctx: Ctx) {
       if (!email || claims.email_verified === false || claims.email_verified === 'false') throw new Error('Your identity provider did not return a verified email address');
       if (domainOf(email) !== ws.sso_domain) throw new Error(`Only ${ws.sso_domain} accounts can sign in to ${ws.name}`);
 
-      let user = db.get('SELECT * FROM users WHERE email = ?', email);
-      let membership = user ? db.get('SELECT * FROM memberships WHERE workspace_id = ? AND user_id = ?', ws.id, user.id) : undefined;
+      let user = await db.get('SELECT * FROM users WHERE email = ?', email);
+      let membership = user ? await db.get('SELECT * FROM memberships WHERE workspace_id = ? AND user_id = ?', ws.id, user.id) : undefined;
       if (membership?.deactivated_at) throw new Error('Your access to this workspace has been removed');
       if (!membership) {
         if (!ws.sso_auto_provision) throw new Error('You do not have an account in this workspace yet. Ask an administrator to invite you.');
-        requireMemberCapacity(ctx, ws.id, 1);
-        db.transaction(() => {
+        await requireMemberCapacity(ctx, ws.id, 1);
+        await db.transaction(async () => {
           if (!user) {
             const id = newId();
-            db.insert('users', {
+            await db.insert('users', {
               id,
               email,
               name: (claims.name || email.split('@')[0]).slice(0, 80),
@@ -196,21 +196,21 @@ export function ssoPublicRouter(ctx: Ctx) {
               email_verified_at: now(),
               created_at: now(),
             });
-            user = db.get('SELECT * FROM users WHERE id = ?', id)!;
+            user = (await db.get('SELECT * FROM users WHERE id = ?', id))!;
           }
-          db.insert('memberships', { workspace_id: ws.id, user_id: user!.id, role: 'member', created_at: now() });
-          for (const c of db.all(`SELECT id FROM channels WHERE workspace_id = ? AND kind IN ('public','announcement') AND name IN ('general','announcements')`, ws.id)) {
-            db.run('INSERT OR IGNORE INTO channel_members (channel_id, user_id, joined_at) VALUES (?, ?, ?)', c.id, user!.id, now());
+          await db.insert('memberships', { workspace_id: ws.id, user_id: user!.id, role: 'member', created_at: now() });
+          for (const c of await db.all(`SELECT id FROM channels WHERE workspace_id = ? AND kind IN ('public','announcement') AND name IN ('general','announcements')`, ws.id)) {
+            await db.run('INSERT OR IGNORE INTO channel_members (channel_id, user_id, joined_at) VALUES (?, ?, ?)', c.id, user!.id, now());
           }
-          audit(ctx, ws.id, user!.id, 'sso.provisioned', 'user', user!.id, { email });
+          await audit(ctx, ws.id, user!.id, 'sso.provisioned', 'user', user!.id, { email });
         });
         membership = { role: 'member' };
       }
-      startSession(ctx, res, user!.id, ws.id);
-      audit(ctx, ws.id, user!.id, 'auth.sso_login', 'user', user!.id, { ip: req.ip });
+      await startSession(ctx, res, user!.id, ws.id);
+      await audit(ctx, ws.id, user!.id, 'auth.sso_login', 'user', user!.id, { ip: req.ip });
       res.redirect('/');
     } catch (error) {
-      audit(ctx, ws.id, null, 'auth.sso_failed', 'workspace', ws.id, { reason: (error as Error).message });
+      await audit(ctx, ws.id, null, 'auth.sso_failed', 'workspace', ws.id, { reason: (error as Error).message });
       fail((error as Error).message);
     }
   });
@@ -222,10 +222,10 @@ export function ssoAdminRouter(ctx: Ctx) {
   const r = Router();
   const { db } = ctx;
 
-  r.get('/admin/sso', (req, res) => {
+  r.get('/admin/sso', async (req, res) => {
     const auth = authOf(req);
     requireRole(auth, 'admin');
-    const ws = db.get('SELECT * FROM workspaces WHERE id = ?', auth.workspaceId)!;
+    const ws = (await db.get('SELECT * FROM workspaces WHERE id = ?', auth.workspaceId))!;
     res.json({
       available: !!ctx.config.secretKey,
       enabled: !!ws.sso_enabled,
@@ -259,9 +259,9 @@ export function ssoAdminRouter(ctx: Ctx) {
       }),
       req.body,
     );
-    if (body.enabled) requireFeature(ctx, auth.workspaceId, 'sso');
-    const ws = db.get('SELECT * FROM workspaces WHERE id = ?', auth.workspaceId)!;
-    const clash = db.get('SELECT 1 FROM workspaces WHERE sso_domain = ? AND sso_enabled = 1 AND id != ?', body.domain, auth.workspaceId);
+    if (body.enabled) await requireFeature(ctx, auth.workspaceId, 'sso');
+    const ws = (await db.get('SELECT * FROM workspaces WHERE id = ?', auth.workspaceId))!;
+    const clash = await db.get('SELECT 1 FROM workspaces WHERE sso_domain = ? AND sso_enabled = 1 AND id != ?', body.domain, auth.workspaceId);
     if (body.enabled && clash) throw badRequest('Another workspace already uses single sign-on for this domain');
     if (!body.clientSecret && !ws.sso_client_secret) throw badRequest('clientSecret: Required');
     if (body.enabled) {
@@ -271,7 +271,7 @@ export function ssoAdminRouter(ctx: Ctx) {
         throw badRequest(`Could not read the provider configuration: ${(e as Error).message}`);
       }
     }
-    db.update('workspaces', auth.workspaceId, {
+    await db.update('workspaces', auth.workspaceId, {
       sso_enabled: body.enabled,
       sso_issuer: body.issuer.replace(/\/$/, ''),
       sso_client_id: body.clientId,
@@ -280,7 +280,7 @@ export function ssoAdminRouter(ctx: Ctx) {
       sso_required: body.required,
       sso_auto_provision: body.autoProvision,
     });
-    audit(ctx, auth.workspaceId, auth.userId, 'workspace.sso_updated', 'workspace', auth.workspaceId, {
+    await audit(ctx, auth.workspaceId, auth.userId, 'workspace.sso_updated', 'workspace', auth.workspaceId, {
       enabled: body.enabled,
       issuer: body.issuer,
       domain: body.domain,

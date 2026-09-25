@@ -1,11 +1,14 @@
-import { DatabaseSync, type SQLInputValue } from 'node:sqlite';
+import { AsyncLocalStorage } from 'node:async_hooks';
 import { mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
+import { DatabaseSync, type SQLInputValue } from 'node:sqlite';
+import pg from 'pg';
 
 /**
  * Relational schema for the SoftEX core records (see §4 and §12 of the product
- * documentation). SQLite keeps local development and the pilot dependency-free;
- * the schema uses portable SQL so it can move to PostgreSQL when scale requires.
+ * documentation). The same portable SQL runs on SQLite (the default: a single
+ * file, nothing to install) and on PostgreSQL (set SOFTEX_DATABASE_URL), which
+ * lets several SoftEX servers share one database.
  */
 const SCHEMA = `
 PRAGMA foreign_keys = ON;
@@ -625,9 +628,11 @@ CREATE TABLE IF NOT EXISTS deadline_reminders (
 
 /**
  * Columns added after the first release. Applied idempotently on start-up so
- * existing databases upgrade in place without a separate migration step.
+ * existing databases upgrade in place without a separate migration step. A
+ * backfill runs once, only when the column is first added.
  */
-const ADDED_COLUMNS: [table: string, column: string, definition: string, backfill?: string][] = [
+type Backfill = string | { sqlite: string; postgres: string };
+const ADDED_COLUMNS: [table: string, column: string, definition: string, backfill?: Backfill][] = [
   ['users', 'email_digest', 'INTEGER NOT NULL DEFAULT 1'],
   ['users', 'email_urgent', 'INTEGER NOT NULL DEFAULT 1'],
   ['users', 'last_digest_at', 'TEXT'],
@@ -652,7 +657,15 @@ const ADDED_COLUMNS: [table: string, column: string, definition: string, backfil
   ['users', 'email_verified_at', 'TEXT', 'UPDATE users SET email_verified_at = created_at'],
   ['workspaces', 'plan', "TEXT NOT NULL DEFAULT 'free'"],
   // Workspaces that existed before plans get a fresh 30-day trial when a server switches to SaaS mode.
-  ['workspaces', 'trial_ends_at', 'TEXT', "UPDATE workspaces SET trial_ends_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now', '+30 days')"],
+  [
+    'workspaces',
+    'trial_ends_at',
+    'TEXT',
+    {
+      sqlite: "UPDATE workspaces SET trial_ends_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now', '+30 days')",
+      postgres: `UPDATE workspaces SET trial_ends_at = to_char((now() AT TIME ZONE 'UTC') + interval '30 days', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')`,
+    },
+  ],
   ['workspaces', 'paid_through', 'TEXT'],
   ['workspaces', 'suspended_at', 'TEXT'],
   ['workspaces', 'suspended_reason', 'TEXT'],
@@ -661,37 +674,74 @@ const ADDED_COLUMNS: [table: string, column: string, definition: string, backfil
 ];
 
 export type Row = Record<string, any>;
+export type SqlValue = string | number | bigint | boolean | null | Uint8Array | Record<string, unknown> | unknown[];
 
-export class Database {
-  readonly raw: DatabaseSync;
-
-  constructor(path: string) {
-    if (path !== ':memory:') mkdirSync(dirname(path), { recursive: true });
-    this.raw = new DatabaseSync(path);
-    this.raw.exec('PRAGMA journal_mode = WAL;');
-    this.raw.exec(SCHEMA);
-    for (const [table, column, definition, backfill] of ADDED_COLUMNS) {
-      const exists = (this.raw.prepare(`PRAGMA table_info(${table})`).all() as Row[]).some((c) => c.name === column);
-      if (!exists) {
-        this.raw.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
-        if (backfill) this.raw.exec(backfill);
-      }
-    }
-  }
-
-  all<T = Row>(sql: string, ...params: SQLInputValue[]): T[] {
-    return this.raw.prepare(sql).all(...params) as T[];
-  }
-
-  get<T = Row>(sql: string, ...params: SQLInputValue[]): T | undefined {
-    return this.raw.prepare(sql).get(...params) as T | undefined;
-  }
-
-  run(sql: string, ...params: SQLInputValue[]) {
-    return this.raw.prepare(sql).run(...params);
-  }
-
+/**
+ * Async access to the database. All queries use `?` placeholders and SQLite-flavoured
+ * SQL; the PostgreSQL engine translates placeholders, `INSERT OR IGNORE` and
+ * case-insensitive `LIKE`. Inside `transaction(fn)`, every query made by `fn` (and
+ * anything it awaits) runs in the same transaction.
+ */
+export interface Database {
+  readonly dialect: 'sqlite' | 'postgres';
+  /** Resolves once the schema is in place (queries wait for it automatically). */
+  readonly ready: Promise<void>;
+  all<T = Row>(sql: string, ...params: SqlValue[]): Promise<T[]>;
+  get<T = Row>(sql: string, ...params: SqlValue[]): Promise<T | undefined>;
+  run(sql: string, ...params: SqlValue[]): Promise<{ changes: number }>;
   /** Insert a row from an object; undefined values are skipped. */
+  insert(table: string, values: Row): Promise<{ changes: number }>;
+  /** Update whitelisted columns on a row by id. */
+  update(table: string, id: string, values: Row): Promise<void>;
+  transaction<T>(fn: () => Promise<T>): Promise<T>;
+  /**
+   * Run `fn` only if no other SoftEX server is running the same job right now
+   * (a PostgreSQL advisory lock; always runs on SQLite, which has one server).
+   */
+  exclusive<T>(key: string, fn: () => Promise<T>): Promise<T | undefined>;
+  close(): Promise<void>;
+}
+
+/**
+ * SQL for "start plus N minutes, compared with an ISO timestamp parameter", which the two
+ * engines write differently. Returns [endExpression, parameterExpression].
+ */
+export function minutesAfter(db: Database, start: string, minutes: string): [end: string, param: string] {
+  return db.dialect === 'postgres'
+    ? [`(${start}::timestamptz + ${minutes} * interval '1 minute')`, '?::timestamptz']
+    : [`datetime(${start}, '+' || ${minutes} || ' minutes')`, 'datetime(?)'];
+}
+
+/** SQL for the number of days between two ISO timestamp columns. */
+export function daysBetween(db: Database, from: string, to: string) {
+  return db.dialect === 'postgres' ? `(EXTRACT(EPOCH FROM (${to}::timestamptz - ${from}::timestamptz)) / 86400)` : `(julianday(${to}) - julianday(${from}))`;
+}
+
+/** Open SQLite (a file path or ':memory:') or PostgreSQL (a postgres:// URL). */
+export function openDatabase(target: string): Database {
+  return /^postgres(ql)?:\/\//.test(target) ? new PostgresDatabase(target) : new SqliteDatabase(target);
+}
+
+function toSql(value: unknown): SqlValue {
+  if (value === null || value === undefined) return null;
+  if (typeof value === 'boolean') return value ? 1 : 0;
+  if (typeof value === 'object' && !(value instanceof Uint8Array)) return JSON.stringify(value);
+  return value as SqlValue;
+}
+
+abstract class BaseDatabase implements Database {
+  abstract readonly dialect: 'sqlite' | 'postgres';
+  abstract readonly ready: Promise<void>;
+  abstract all<T = Row>(sql: string, ...params: SqlValue[]): Promise<T[]>;
+  abstract run(sql: string, ...params: SqlValue[]): Promise<{ changes: number }>;
+  abstract transaction<T>(fn: () => Promise<T>): Promise<T>;
+  abstract exclusive<T>(key: string, fn: () => Promise<T>): Promise<T | undefined>;
+  abstract close(): Promise<void>;
+
+  async get<T = Row>(sql: string, ...params: SqlValue[]): Promise<T | undefined> {
+    return (await this.all<T>(sql, ...params))[0];
+  }
+
   insert(table: string, values: Row) {
     const entries = Object.entries(values).filter(([, v]) => v !== undefined);
     const cols = entries.map(([k]) => k).join(', ');
@@ -699,34 +749,228 @@ export class Database {
     return this.run(`INSERT INTO ${table} (${cols}) VALUES (${marks})`, ...entries.map(([, v]) => toSql(v)));
   }
 
-  /** Update whitelisted columns on a row by id. */
-  update(table: string, id: string, values: Row) {
+  async update(table: string, id: string, values: Row) {
     const entries = Object.entries(values).filter(([, v]) => v !== undefined);
     if (!entries.length) return;
     const set = entries.map(([k]) => `${k} = ?`).join(', ');
-    this.run(`UPDATE ${table} SET ${set} WHERE id = ?`, ...entries.map(([, v]) => toSql(v)), id);
+    await this.run(`UPDATE ${table} SET ${set} WHERE id = ?`, ...entries.map(([, v]) => toSql(v)), id);
+  }
+}
+
+// ======================= SQLite =======================
+
+/**
+ * One connection, used by one server. Statements are synchronous; a transaction
+ * that awaits in the middle holds a lock so queries from other requests wait
+ * instead of slipping into it.
+ */
+class SqliteDatabase extends BaseDatabase {
+  readonly dialect = 'sqlite' as const;
+  readonly ready = Promise.resolve();
+  private readonly raw: DatabaseSync;
+  private readonly inTx = new AsyncLocalStorage<true>();
+  private active: Promise<void> | null = null;
+
+  constructor(path: string) {
+    super();
+    if (path !== ':memory:') mkdirSync(dirname(path), { recursive: true });
+    this.raw = new DatabaseSync(path);
+    this.raw.exec('PRAGMA journal_mode = WAL;');
+    this.raw.exec('PRAGMA busy_timeout = 5000;');
+    this.raw.exec(SCHEMA);
+    for (const [table, column, definition, backfill] of ADDED_COLUMNS) {
+      const exists = (this.raw.prepare(`PRAGMA table_info(${table})`).all() as Row[]).some((c) => c.name === column);
+      if (!exists) {
+        this.raw.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
+        if (backfill) this.raw.exec(typeof backfill === 'string' ? backfill : backfill.sqlite);
+      }
+    }
   }
 
-  transaction<T>(fn: () => T): T {
+  /** Wait while another request's transaction is open. */
+  private async turn() {
+    while (this.active && !this.inTx.getStore()) await this.active;
+  }
+
+  async all<T = Row>(sql: string, ...params: SqlValue[]): Promise<T[]> {
+    await this.turn();
+    return this.raw.prepare(sql).all(...(params.map(toSql) as SQLInputValue[])) as T[];
+  }
+
+  async run(sql: string, ...params: SqlValue[]) {
+    await this.turn();
+    const res = this.raw.prepare(sql).run(...(params.map(toSql) as SQLInputValue[]));
+    return { changes: Number(res.changes) };
+  }
+
+  async transaction<T>(fn: () => Promise<T>): Promise<T> {
+    if (this.inTx.getStore()) return fn();
+    await this.turn();
+    let release!: () => void;
+    this.active = new Promise((resolve) => (release = resolve));
     this.raw.exec('BEGIN');
     try {
-      const result = fn();
+      const result = await this.inTx.run(true, fn);
       this.raw.exec('COMMIT');
       return result;
     } catch (error) {
       this.raw.exec('ROLLBACK');
       throw error;
+    } finally {
+      this.active = null;
+      release();
     }
   }
 
-  close() {
+  async exclusive<T>(_key: string, fn: () => Promise<T>) {
+    return fn();
+  }
+
+  async close() {
     this.raw.close();
   }
 }
 
-function toSql(value: unknown): SQLInputValue {
-  if (value === null) return null;
-  if (typeof value === 'boolean') return value ? 1 : 0;
-  if (typeof value === 'object') return JSON.stringify(value);
-  return value as SQLInputValue;
+// ======================= PostgreSQL =======================
+
+// COUNT(*) and SUM() come back as int8/numeric strings; SoftEX's values fit in a JS number.
+pg.types.setTypeParser(20, (v) => Number(v));
+pg.types.setTypeParser(1700, (v) => Number(v));
+
+const translations = new Map<string, string>();
+
+/** Translate SoftEX's SQLite-flavoured SQL to PostgreSQL. */
+export function toPostgres(sql: string) {
+  let out = translations.get(sql);
+  if (out) return out;
+  // Null-safe comparison with a parameter: SQLite's `IS ?` is PostgreSQL's `IS NOT DISTINCT FROM`.
+  let source = sql.replace(/\bIS\s+NOT\s+\?/gi, 'IS DISTINCT FROM ?').replace(/\bIS\s+\?/gi, 'IS NOT DISTINCT FROM ?');
+  // Functions with different names: instr → strpos (same argument order), GROUP_CONCAT → string_agg.
+  source = source.replace(/\binstr\(/gi, 'strpos(').replace(/\bGROUP_CONCAT\(([^()]*)\)/gi, "string_agg($1, ',')");
+  let n = 0;
+  let text = '';
+  let quoted = false;
+  for (const ch of source) {
+    if (ch === "'") quoted = !quoted;
+    text += ch === '?' && !quoted ? `$${++n}` : ch;
+  }
+  if (/\bINSERT\s+OR\s+IGNORE\s+INTO\b/i.test(text)) {
+    text = `${text.replace(/\bINSERT\s+OR\s+IGNORE\s+INTO\b/i, 'INSERT INTO')} ON CONFLICT DO NOTHING`;
+  }
+  // SQLite's LIKE ignores case (for ASCII); PostgreSQL's ILIKE does the same.
+  text = text.replace(/\bLIKE\b/g, 'ILIKE');
+  out = text;
+  translations.set(sql, out);
+  return out;
+}
+
+/** The shared schema with PostgreSQL types: 64-bit integers and double-precision reals. */
+const pgType = (definition: string) => definition.replace(/\bINTEGER\b/g, 'BIGINT').replace(/\bREAL\b/g, 'DOUBLE PRECISION');
+
+const lockId = (key: string) => {
+  let h = 0;
+  for (const ch of key) h = (Math.imul(h, 31) + ch.charCodeAt(0)) | 0;
+  return h;
+};
+
+class PostgresDatabase extends BaseDatabase {
+  readonly dialect = 'postgres' as const;
+  readonly ready: Promise<void>;
+  private readonly pool: pg.Pool;
+  private readonly tx = new AsyncLocalStorage<pg.PoolClient>();
+
+  private readonly schema?: string;
+
+  constructor(url: string) {
+    super();
+    // Optional ?schema=name keeps SoftEX's tables in their own PostgreSQL schema.
+    const parsed = new URL(url);
+    const schema = parsed.searchParams.get('schema') ?? undefined;
+    if (schema && !/^[a-z_][a-z0-9_]{0,62}$/.test(schema)) throw new Error('schema must be lowercase letters, digits and underscores');
+    parsed.searchParams.delete('schema');
+    this.schema = schema;
+    this.pool = new pg.Pool({
+      connectionString: parsed.toString(),
+      max: Number(process.env.SOFTEX_DB_POOL_SIZE ?? 10),
+      options: schema ? `-c search_path=${schema}` : undefined,
+    });
+    this.pool.on('error', (error) => console.error('PostgreSQL connection error', error));
+    this.ready = this.migrate();
+    // Avoid an unhandled rejection before the first query; callers see the error from `ready`.
+    this.ready.catch(() => {});
+  }
+
+  private async migrate() {
+    const client = await this.pool.connect();
+    try {
+      // Several servers may start at once; only one migrates at a time.
+      await client.query('SELECT pg_advisory_lock($1)', [lockId('softex:migrate')]);
+      if (this.schema) await client.query(`CREATE SCHEMA IF NOT EXISTS ${this.schema}`);
+      await client.query(pgType(SCHEMA.replace(/PRAGMA[^;]*;/g, '')));
+      const existing = new Set(
+        (await client.query(`SELECT table_name, column_name FROM information_schema.columns WHERE table_schema = current_schema()`)).rows.map(
+          (r) => `${r.table_name}.${r.column_name}`,
+        ),
+      );
+      for (const [table, column, definition, backfill] of ADDED_COLUMNS) {
+        if (existing.has(`${table}.${column}`)) continue;
+        await client.query(`ALTER TABLE ${table} ADD COLUMN ${column} ${pgType(definition)}`);
+        if (backfill) await client.query(typeof backfill === 'string' ? backfill : backfill.postgres);
+      }
+    } finally {
+      await client.query('SELECT pg_advisory_unlock($1)', [lockId('softex:migrate')]).catch(() => {});
+      client.release();
+    }
+  }
+
+  private async query(sql: string, params: SqlValue[]) {
+    await this.ready;
+    const client = this.tx.getStore() ?? this.pool;
+    return client.query(toPostgres(sql), params.map(toSql));
+  }
+
+  async all<T = Row>(sql: string, ...params: SqlValue[]): Promise<T[]> {
+    return (await this.query(sql, params)).rows as T[];
+  }
+
+  async run(sql: string, ...params: SqlValue[]) {
+    return { changes: (await this.query(sql, params)).rowCount ?? 0 };
+  }
+
+  async transaction<T>(fn: () => Promise<T>): Promise<T> {
+    if (this.tx.getStore()) return fn();
+    await this.ready;
+    const client = await this.pool.connect();
+    try {
+      await client.query('BEGIN');
+      const result = await this.tx.run(client, fn);
+      await client.query('COMMIT');
+      return result;
+    } catch (error) {
+      await client.query('ROLLBACK').catch(() => {});
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
+  async exclusive<T>(key: string, fn: () => Promise<T>) {
+    await this.ready;
+    const client = await this.pool.connect();
+    try {
+      const got = (await client.query('SELECT pg_try_advisory_lock($1) AS ok', [lockId(key)])).rows[0].ok;
+      if (!got) return undefined;
+      try {
+        return await fn();
+      } finally {
+        await client.query('SELECT pg_advisory_unlock($1)', [lockId(key)]);
+      }
+    } finally {
+      client.release();
+    }
+  }
+
+  async close() {
+    await this.pool.end();
+  }
 }

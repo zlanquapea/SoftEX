@@ -78,9 +78,9 @@ export const authOf = (req: Request): Auth => {
 export const USER_FIELDS =
   'u.id, u.name, u.email, u.title, u.timezone, u.working_hours, u.expertise, u.status, u.status_text, u.focus_until, u.color';
 
-export function userSummary(db: Database, userId: string | null | undefined) {
+export async function userSummary(db: Database, userId: string | null | undefined) {
   if (!userId) return null;
-  return db.get('SELECT id, name, color, title FROM users WHERE id = ?', userId) ?? null;
+  return await db.get('SELECT id, name, color, title FROM users WHERE id = ?', userId) ?? null;
 }
 
 // ---------- Notifications ----------
@@ -113,9 +113,9 @@ function inQuietHours(user: Row, at = new Date()) {
  * notification is still stored (and shown in the Inbox) but the live push is
  * marked silent unless it is urgent (§5.5 urgent escalation rules).
  */
-export function notify(ctx: Ctx, workspaceId: string, input: NotifyInput) {
+export async function notify(ctx: Ctx, workspaceId: string, input: NotifyInput) {
   if (input.actorId && input.actorId === input.userId) return;
-  const user = ctx.db.get(
+  const user = await ctx.db.get(
     `SELECT u.* FROM users u JOIN memberships m ON m.user_id = u.id
       WHERE u.id = ? AND m.workspace_id = ? AND m.deactivated_at IS NULL`,
     input.userId,
@@ -134,11 +134,11 @@ export function notify(ctx: Ctx, workspaceId: string, input: NotifyInput) {
     urgent: input.urgent ? 1 : 0,
     created_at: now(),
   };
-  ctx.db.insert('notifications', row);
+  await ctx.db.insert('notifications', row);
   const silent = !input.urgent && inQuietHours(user);
   // Urgent items also go out by email when the person is not connected to SoftEX right now.
   if (input.urgent && user.email_urgent && !ctx.hub.isOnline(workspaceId, input.userId)) {
-    queueEmail(ctx, {
+    await queueEmail(ctx, {
       workspaceId,
       kind: 'urgent',
       to: user.email,
@@ -147,9 +147,9 @@ export function notify(ctx: Ctx, workspaceId: string, input: NotifyInput) {
       action: { label: 'Open in SoftEX', url: `${ctx.config.publicUrl}${input.link ?? '/inbox'}` },
     });
   }
-  ctx.hub.toUser(workspaceId, input.userId, {
+  await ctx.hub.toUser(workspaceId, input.userId, {
     type: 'notification',
-    notification: { ...row, read_at: null, actor: userSummary(ctx.db, input.actorId) },
+    notification: { ...row, read_at: null, actor: await userSummary(ctx.db, input.actorId) },
     silent,
   });
 }
@@ -167,7 +167,7 @@ export interface ActivityInput {
   channelId?: string | null;
 }
 
-export function recordActivity(ctx: Ctx, workspaceId: string, input: ActivityInput) {
+export async function recordActivity(ctx: Ctx, workspaceId: string, input: ActivityInput) {
   const row = {
     id: newId(),
     workspace_id: workspaceId,
@@ -181,10 +181,10 @@ export function recordActivity(ctx: Ctx, workspaceId: string, input: ActivityInp
     link: input.link ?? '',
     created_at: now(),
   };
-  ctx.db.insert('activity', row);
+  await ctx.db.insert('activity', row);
 }
 
-export function audit(
+export async function audit(
   ctx: Ctx,
   workspaceId: string,
   actorId: string | null,
@@ -193,7 +193,7 @@ export function audit(
   targetId: string,
   detail: Record<string, unknown> = {},
 ) {
-  ctx.db.insert('audit_events', {
+  await ctx.db.insert('audit_events', {
     id: newId(),
     workspace_id: workspaceId,
     actor_id: actorId,
@@ -206,8 +206,8 @@ export function audit(
 }
 
 /** Service-level log for the operator; kept even after the workspace it mentions is deleted. */
-export function platformEvent(ctx: Ctx, actor: string, action: string, workspace: Row | null, detail: Record<string, unknown> = {}) {
-  ctx.db.insert('platform_events', {
+export async function platformEvent(ctx: Ctx, actor: string, action: string, workspace: Row | null, detail: Record<string, unknown> = {}) {
+  await ctx.db.insert('platform_events', {
     id: newId(),
     actor,
     action,
@@ -219,6 +219,6 @@ export function platformEvent(ctx: Ctx, actor: string, action: string, workspace
 }
 
 /** Publish an event to everyone who can currently see the given channel. */
-export function publishToChannel(ctx: Ctx, channel: Row, event: { type: string; [k: string]: unknown }) {
-  ctx.hub.publish(channel.workspace_id, event, (auth) => canViewChannel(ctx.db, auth, channel));
+export async function publishToChannel(ctx: Ctx, channel: Row, event: { type: string; [k: string]: unknown }) {
+  await ctx.hub.publish(channel.workspace_id, event, (auth) => canViewChannel(ctx.db, auth, channel));
 }

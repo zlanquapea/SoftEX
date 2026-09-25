@@ -15,7 +15,7 @@ import {
 import type { Database, Row } from '../db.js';
 import { audit, authOf, notify, publishToChannel, recordActivity, type Ctx } from '../context.js';
 import { emitEvent } from '../webhooks.js';
-import { badRequest, extractMentionIds, forbidden, newId, notFound, now, parse } from '../util.js';
+import { badRequest, extractMentionIds, forbidden, newId, notFound, now, parse, filterAsync } from '../util.js';
 
 const ChannelName = z
   .string()
@@ -25,36 +25,36 @@ const ChannelName = z
   .max(60)
   .regex(/^[a-z0-9][a-z0-9-_]*$/, 'use lowercase letters, numbers, hyphens and underscores');
 
-export function serializeMessages(db: Database, auth: Auth, rows: Row[]) {
+export async function serializeMessages(db: Database, auth: Auth, rows: Row[]) {
   if (!rows.length) return [];
   const ids = rows.map((r) => r.id);
   const marks = ids.map(() => '?').join(',');
-  const reactions = db.all(`SELECT message_id, emoji, user_id FROM reactions WHERE message_id IN (${marks})`, ...ids);
-  const replies = db.all(
+  const reactions = await db.all(`SELECT message_id, emoji, user_id FROM reactions WHERE message_id IN (${marks})`, ...ids);
+  const replies = await db.all(
     `SELECT parent_id, COUNT(*) AS n, MAX(created_at) AS last_at FROM messages
       WHERE parent_id IN (${marks}) AND deleted_at IS NULL GROUP BY parent_id`,
     ...ids,
   );
   const saved = new Set(
-    db.all(`SELECT message_id FROM saved_messages WHERE user_id = ? AND message_id IN (${marks})`, auth.userId, ...ids).map(
+    (await db.all(`SELECT message_id FROM saved_messages WHERE user_id = ? AND message_id IN (${marks})`, auth.userId, ...ids)).map(
       (r) => r.message_id,
     ),
   );
-  const acks = db.all(`SELECT message_id, user_id FROM acknowledgements WHERE message_id IN (${marks})`, ...ids);
-  const files = db.all(
+  const acks = await db.all(`SELECT message_id, user_id FROM acknowledgements WHERE message_id IN (${marks})`, ...ids);
+  const files = await db.all(
     `SELECT f.id, f.name, f.message_id, v.mime, v.size FROM files f
        JOIN file_versions v ON v.file_id = f.id AND v.version = f.current_version
       WHERE f.message_id IN (${marks}) AND f.archived_at IS NULL`,
     ...ids,
   );
-  const tasks = db.all(`SELECT id, title, status, source_message_id FROM tasks WHERE source_message_id IN (${marks})`, ...ids);
-  const decisions = db.all(`SELECT id, title, message_id FROM decisions WHERE message_id IN (${marks})`, ...ids);
+  const tasks = await db.all(`SELECT id, title, status, source_message_id FROM tasks WHERE source_message_id IN (${marks})`, ...ids);
+  const decisions = await db.all(`SELECT id, title, message_id FROM decisions WHERE message_id IN (${marks})`, ...ids);
   const users = new Map(
-    db
+    (await db
       .all(
         `SELECT id, name, color, title FROM users WHERE id IN (${[...new Set(rows.map((r) => r.user_id))].map(() => '?').join(',')})`,
         ...new Set(rows.map((r) => r.user_id)),
-      )
+      ))
       .map((u) => [u.id, u]),
   );
   return rows.map((m) => {
@@ -92,8 +92,8 @@ export function serializeMessages(db: Database, auth: Auth, rows: Row[]) {
   });
 }
 
-function channelList(db: Database, auth: Auth) {
-  const channels = db.all(
+async function channelList(db: Database, auth: Auth) {
+  const channels = await db.all(
     `SELECT c.*, cm.last_read_at, cm.notify, (cm.user_id IS NOT NULL) AS joined, p.name AS project_name
        FROM channels c
        LEFT JOIN channel_members cm ON cm.channel_id = c.id AND cm.user_id = ?
@@ -103,36 +103,34 @@ function channelList(db: Database, auth: Auth) {
     auth.userId,
     auth.workspaceId,
   );
-  return channels
-    .filter((c) => canViewChannel(db, auth, c))
-    .map((c) => {
+  return (await Promise.all((await filterAsync(channels, (c) => canViewChannel(db, auth, c))).map(async (c) => {
       const since = c.last_read_at ?? c.created_at;
       const unread = c.joined
-        ? db.get(
+        ? (await db.get(
             `SELECT COUNT(*) AS n FROM messages WHERE channel_id = ? AND created_at > ? AND user_id != ? AND deleted_at IS NULL`,
             c.id,
             since,
             auth.userId,
-          )!.n
+          ))!.n
         : 0;
       const mentions = c.joined
-        ? db.get(
+        ? (await db.get(
             `SELECT COUNT(*) AS n FROM messages WHERE channel_id = ? AND created_at > ? AND deleted_at IS NULL AND instr(body, ?) > 0`,
             c.id,
             since,
             `(${auth.userId})`,
-          )!.n
+          ))!.n
         : 0;
       const members =
         c.kind === 'dm'
-          ? db.all(
+          ? await db.all(
               `SELECT u.id, u.name, u.color, u.status FROM channel_members m JOIN users u ON u.id = m.user_id
                 WHERE m.channel_id = ? AND u.id != ?`,
               c.id,
               auth.userId,
             )
           : undefined;
-      const lastMessage = db.get(
+      const lastMessage = await db.get(
         `SELECT created_at FROM messages WHERE channel_id = ? AND deleted_at IS NULL ORDER BY created_at DESC LIMIT 1`,
         c.id,
       );
@@ -151,7 +149,7 @@ function channelList(db: Database, auth: Auth) {
         members,
         last_message_at: lastMessage?.created_at ?? null,
       };
-    });
+    })));
 }
 
 export interface NewMessage {
@@ -165,28 +163,28 @@ export interface NewMessage {
  * Post a message as `auth`: permission checks, persistence, live delivery,
  * webhooks and notifications. Used by the API and by scheduled messages.
  */
-export function postMessage(ctx: Ctx, auth: Auth, channel: Row, input: NewMessage) {
+export async function postMessage(ctx: Ctx, auth: Auth, channel: Row, input: NewMessage) {
   const { db } = ctx;
   const body = { body: input.body, parentId: input.parentId ?? null, urgent: !!input.urgent, fileIds: input.fileIds ?? [] };
   if (!body.body && !body.fileIds.length) throw badRequest('Write a message or attach a file');
-  if (!canPostChannel(db, auth, channel)) {
+  if (!await canPostChannel(db, auth, channel)) {
     // Anyone who can read an announcement may reply in its thread.
-    if (!(channel.kind === 'announcement' && body.parentId && canViewChannel(db, auth, channel))) {
+    if (!(channel.kind === 'announcement' && body.parentId && await canViewChannel(db, auth, channel))) {
       throw forbidden(channel.kind === 'announcement' ? 'Only leads and admins can post announcements' : 'You cannot post here');
     }
   }
   let parent: Row | undefined;
   if (body.parentId) {
-    parent = db.get('SELECT * FROM messages WHERE id = ? AND channel_id = ?', body.parentId, channel.id);
+    parent = await db.get('SELECT * FROM messages WHERE id = ? AND channel_id = ?', body.parentId, channel.id);
     if (!parent || parent.parent_id) throw badRequest('Replies must target a top-level message in this channel');
   }
   const id = newId();
   const createdAt = now();
-  db.transaction(() => {
-    if (channel.kind !== 'dm' && !isChannelMember(db, channel.id, auth.userId)) {
-      db.run('INSERT OR IGNORE INTO channel_members (channel_id, user_id, joined_at, last_read_at) VALUES (?, ?, ?, ?)', channel.id, auth.userId, now(), now());
+  await db.transaction(async () => {
+    if (channel.kind !== 'dm' && !await isChannelMember(db, channel.id, auth.userId)) {
+      await db.run('INSERT OR IGNORE INTO channel_members (channel_id, user_id, joined_at, last_read_at) VALUES (?, ?, ?, ?)', channel.id, auth.userId, now(), now());
     }
-    db.insert('messages', {
+    await db.insert('messages', {
       id,
       channel_id: channel.id,
       user_id: auth.userId,
@@ -196,13 +194,13 @@ export function postMessage(ctx: Ctx, auth: Auth, channel: Row, input: NewMessag
       created_at: createdAt,
     });
     for (const fileId of body.fileIds) {
-      db.run('UPDATE files SET message_id = ?, channel_id = ? WHERE id = ? AND owner_id = ? AND message_id IS NULL', id, channel.id, fileId, auth.userId);
+      await db.run('UPDATE files SET message_id = ?, channel_id = ? WHERE id = ? AND owner_id = ? AND message_id IS NULL', id, channel.id, fileId, auth.userId);
     }
-    db.run('UPDATE channel_members SET last_read_at = ? WHERE channel_id = ? AND user_id = ?', createdAt, channel.id, auth.userId);
+    await db.run('UPDATE channel_members SET last_read_at = ? WHERE channel_id = ? AND user_id = ?', createdAt, channel.id, auth.userId);
   });
-  const [message] = serializeMessages(db, auth, [db.get('SELECT * FROM messages WHERE id = ?', id)!]);
-  publishToChannel(ctx, channel, { type: 'message.created', message });
-  emitEvent(
+  const [message] = await serializeMessages(db, auth, [(await db.get('SELECT * FROM messages WHERE id = ?', id))!]);
+  await publishToChannel(ctx, channel, { type: 'message.created', message });
+  await emitEvent(
     ctx,
     auth.workspaceId,
     'message.created',
@@ -211,38 +209,38 @@ export function postMessage(ctx: Ctx, auth: Auth, channel: Row, input: NewMessag
   );
 
   // Notifications: mentions, DMs, thread replies and announcements, respecting channel preferences.
-  const actor = db.get('SELECT name FROM users WHERE id = ?', auth.userId)!;
+  const actor = (await db.get('SELECT name FROM users WHERE id = ?', auth.userId))!;
   const where = channel.kind === 'dm' ? 'a direct message' : `#${channel.name}`;
   const link = `/channels/${channel.id}?message=${parent?.id ?? id}`;
   const preview = body.body.replace(/@\[([^\]]+)\]\([0-9a-f-]{36}\)/g, '@$1');
   const notified = new Set<string>([auth.userId]);
-  const prefs = new Map(db.all('SELECT user_id, notify FROM channel_members WHERE channel_id = ?', channel.id).map((m) => [m.user_id, m.notify]));
+  const prefs = new Map((await db.all('SELECT user_id, notify FROM channel_members WHERE channel_id = ?', channel.id)).map((m) => [m.user_id, m.notify]));
   for (const userId of extractMentionIds(body.body)) {
-    if (notified.has(userId) || !isActiveMember(db, auth.workspaceId, userId)) continue;
-    const role = db.get('SELECT role FROM memberships WHERE workspace_id = ? AND user_id = ?', auth.workspaceId, userId)!.role;
-    if (!canViewChannel(db, { userId, workspaceId: auth.workspaceId, role }, channel)) continue;
+    if (notified.has(userId) || !await isActiveMember(db, auth.workspaceId, userId)) continue;
+    const role = (await db.get('SELECT role FROM memberships WHERE workspace_id = ? AND user_id = ?', auth.workspaceId, userId))!.role;
+    if (!await canViewChannel(db, { userId, workspaceId: auth.workspaceId, role }, channel)) continue;
     if (prefs.get(userId) === 'none' && !body.urgent) continue;
     notified.add(userId);
-    notify(ctx, auth.workspaceId, { userId, kind: 'mention', title: `${actor.name} mentioned you in ${where}`, body: preview, link, actorId: auth.userId, urgent: body.urgent });
+    await notify(ctx, auth.workspaceId, { userId, kind: 'mention', title: `${actor.name} mentioned you in ${where}`, body: preview, link, actorId: auth.userId, urgent: body.urgent });
   }
-  const recipients = (ids: string[], kind: string, title: string) => {
+  const recipients = async (ids: string[], kind: string, title: string) => {
     for (const userId of ids) {
       if (notified.has(userId)) continue;
       const pref = prefs.get(userId) ?? 'all';
       if (pref !== 'all' && !body.urgent && kind !== 'announcement') continue;
       notified.add(userId);
-      notify(ctx, auth.workspaceId, { userId, kind, title, body: preview, link, actorId: auth.userId, urgent: body.urgent });
+      await notify(ctx, auth.workspaceId, { userId, kind, title, body: preview, link, actorId: auth.userId, urgent: body.urgent });
     }
   };
   const memberIds = [...prefs.keys()];
-  if (channel.kind === 'dm') recipients(memberIds, 'dm', `New message from ${actor.name}`);
+  if (channel.kind === 'dm') await recipients(memberIds, 'dm', `New message from ${actor.name}`);
   if (parent) {
-    const threadPeople = db.all('SELECT DISTINCT user_id FROM messages WHERE parent_id = ? OR id = ?', parent.id, parent.id).map((m) => m.user_id);
-    recipients(threadPeople.filter((u) => prefs.has(u)), 'thread', `${actor.name} replied to a thread in ${where}`);
+    const threadPeople = (await db.all('SELECT DISTINCT user_id FROM messages WHERE parent_id = ? OR id = ?', parent.id, parent.id)).map((m) => m.user_id);
+    await recipients(threadPeople.filter((u) => prefs.has(u)), 'thread', `${actor.name} replied to a thread in ${where}`);
   } else if (channel.kind === 'announcement') {
-    recipients(memberIds, 'announcement', `New announcement in #${channel.name}`);
+    await recipients(memberIds, 'announcement', `New announcement in #${channel.name}`);
   } else if (body.urgent) {
-    recipients(memberIds, 'urgent', `Urgent message from ${actor.name} in ${where}`);
+    await recipients(memberIds, 'urgent', `Urgent message from ${actor.name} in ${where}`);
   }
   return message;
 }
@@ -251,12 +249,12 @@ export function channelsRouter(ctx: Ctx) {
   const r = Router();
   const { db } = ctx;
 
-  const addMember = (channelId: string, userId: string) =>
-    db.run('INSERT OR IGNORE INTO channel_members (channel_id, user_id, joined_at, last_read_at) VALUES (?, ?, ?, ?)', channelId, userId, now(), now());
+  const addMember = async (channelId: string, userId: string) =>
+    await db.run('INSERT OR IGNORE INTO channel_members (channel_id, user_id, joined_at, last_read_at) VALUES (?, ?, ?, ?)', channelId, userId, now(), now());
 
-  r.get('/channels', (req, res) => res.json(channelList(db, authOf(req))));
+  r.get('/channels', async (req, res) => res.json(await channelList(db, authOf(req))));
 
-  r.post('/channels', (req, res) => {
+  r.post('/channels', async (req, res) => {
     const auth = authOf(req);
     if (isGuest(auth)) throw forbidden('Guests cannot create channels');
     const body = parse(
@@ -271,14 +269,14 @@ export function channelsRouter(ctx: Ctx) {
       req.body,
     );
     if (body.kind === 'announcement' && !atLeast(auth, 'lead')) throw forbidden('Only leads and admins can create announcement channels');
-    if (db.get('SELECT 1 FROM channels WHERE workspace_id = ? AND name = ? AND kind != ? AND archived_at IS NULL', auth.workspaceId, body.name, 'dm')) {
+    if (await db.get('SELECT 1 FROM channels WHERE workspace_id = ? AND name = ? AND kind != ? AND archived_at IS NULL', auth.workspaceId, body.name, 'dm')) {
       throw badRequest('A channel with this name already exists');
     }
-    if (body.projectId) loadProject(db, auth, body.projectId);
-    if (body.teamId && !db.get('SELECT 1 FROM teams WHERE id = ? AND workspace_id = ?', body.teamId, auth.workspaceId)) throw notFound('Team');
+    if (body.projectId) await loadProject(db, auth, body.projectId);
+    if (body.teamId && !await db.get('SELECT 1 FROM teams WHERE id = ? AND workspace_id = ?', body.teamId, auth.workspaceId)) throw notFound('Team');
     const id = newId();
-    db.transaction(() => {
-      db.insert('channels', {
+    await db.transaction(async () => {
+      await db.insert('channels', {
         id,
         workspace_id: auth.workspaceId,
         name: body.name,
@@ -289,10 +287,10 @@ export function channelsRouter(ctx: Ctx) {
         created_by: auth.userId,
         created_at: now(),
       });
-      addMember(id, auth.userId);
-      for (const userId of body.memberIds) if (isActiveMember(db, auth.workspaceId, userId)) addMember(id, userId);
+      await addMember(id, auth.userId);
+      for (const userId of body.memberIds) if (await isActiveMember(db, auth.workspaceId, userId)) await addMember(id, userId);
     });
-    recordActivity(ctx, auth.workspaceId, {
+    await recordActivity(ctx, auth.workspaceId, {
       actorId: auth.userId,
       verb: 'created',
       objectType: 'channel',
@@ -302,14 +300,14 @@ export function channelsRouter(ctx: Ctx) {
       summary: `created #${body.name}`,
       link: `/channels/${id}`,
     });
-    audit(ctx, auth.workspaceId, auth.userId, 'channel.created', 'channel', id, { kind: body.kind });
-    res.status(201).json(channelList(db, auth).find((c) => c.id === id));
+    await audit(ctx, auth.workspaceId, auth.userId, 'channel.created', 'channel', id, { kind: body.kind });
+    res.status(201).json((await channelList(db, auth)).find((c) => c.id === id));
   });
 
-  r.get('/channels/:id', (req, res) => {
+  r.get('/channels/:id', async (req, res) => {
     const auth = authOf(req);
-    const channel = loadChannel(db, auth, req.params.id);
-    const members = db.all(
+    const channel = await loadChannel(db, auth, req.params.id);
+    const members = await db.all(
       `SELECT u.id, u.name, u.color, u.title, u.status, mm.role FROM channel_members m
          JOIN users u ON u.id = m.user_id
          JOIN memberships mm ON mm.user_id = u.id AND mm.workspace_id = ?
@@ -317,66 +315,66 @@ export function channelsRouter(ctx: Ctx) {
       auth.workspaceId,
       channel.id,
     );
-    const summary = channelList(db, auth).find((c) => c.id === channel.id);
-    const project = channel.project_id ? db.get('SELECT id, name, color FROM projects WHERE id = ?', channel.project_id) : null;
+    const summary = (await channelList(db, auth)).find((c) => c.id === channel.id);
+    const project = channel.project_id ? await db.get('SELECT id, name, color FROM projects WHERE id = ?', channel.project_id) : null;
     res.json({
       ...summary,
       ...{ id: channel.id, name: channel.name, topic: channel.topic, kind: channel.kind, archived_at: channel.archived_at, created_by: channel.created_by },
       project,
       members,
-      can_post: canPostChannel(db, auth, channel),
+      can_post: await canPostChannel(db, auth, channel),
       can_manage: channel.created_by === auth.userId || isAdmin(auth),
       ai_excluded: !!channel.ai_excluded,
     });
   });
 
-  r.patch('/channels/:id', (req, res) => {
+  r.patch('/channels/:id', async (req, res) => {
     const auth = authOf(req);
-    const channel = loadChannel(db, auth, req.params.id);
+    const channel = await loadChannel(db, auth, req.params.id);
     if (channel.kind === 'dm') throw badRequest('Direct messages cannot be renamed');
     if (channel.created_by !== auth.userId && !isAdmin(auth)) throw forbidden('Only the channel creator or an admin can change this channel');
     const body = parse(
       z.object({ name: ChannelName.optional(), topic: z.string().max(250).optional(), archived: z.boolean().optional(), projectId: z.string().nullish() }),
       req.body,
     );
-    if (body.projectId) loadProject(db, auth, body.projectId);
-    db.update('channels', channel.id, {
+    if (body.projectId) await loadProject(db, auth, body.projectId);
+    await db.update('channels', channel.id, {
       name: body.name,
       topic: body.topic,
       project_id: body.projectId === undefined ? undefined : body.projectId,
       archived_at: body.archived === undefined ? undefined : body.archived ? now() : null,
     });
-    if (body.archived !== undefined) audit(ctx, auth.workspaceId, auth.userId, body.archived ? 'channel.archived' : 'channel.restored', 'channel', channel.id);
-    publishToChannel(ctx, channel, { type: 'channel.updated', channelId: channel.id });
+    if (body.archived !== undefined) await audit(ctx, auth.workspaceId, auth.userId, body.archived ? 'channel.archived' : 'channel.restored', 'channel', channel.id);
+    await publishToChannel(ctx, channel, { type: 'channel.updated', channelId: channel.id });
     res.json({ ok: true });
   });
 
-  r.post('/channels/:id/join', (req, res) => {
+  r.post('/channels/:id/join', async (req, res) => {
     const auth = authOf(req);
-    const channel = loadChannel(db, auth, req.params.id);
+    const channel = await loadChannel(db, auth, req.params.id);
     if (channel.kind === 'dm' || channel.kind === 'private') throw forbidden('Ask a member to add you to this channel');
-    addMember(channel.id, auth.userId);
+    await addMember(channel.id, auth.userId);
     res.json({ ok: true });
   });
 
-  r.post('/channels/:id/leave', (req, res) => {
+  r.post('/channels/:id/leave', async (req, res) => {
     const auth = authOf(req);
-    const channel = loadChannel(db, auth, req.params.id);
-    db.run('DELETE FROM channel_members WHERE channel_id = ? AND user_id = ?', channel.id, auth.userId);
+    const channel = await loadChannel(db, auth, req.params.id);
+    await db.run('DELETE FROM channel_members WHERE channel_id = ? AND user_id = ?', channel.id, auth.userId);
     res.json({ ok: true });
   });
 
-  r.post('/channels/:id/members', (req, res) => {
+  r.post('/channels/:id/members', async (req, res) => {
     const auth = authOf(req);
-    const channel = loadChannel(db, auth, req.params.id);
+    const channel = await loadChannel(db, auth, req.params.id);
     if (channel.kind === 'dm') throw badRequest('Start a new group message to add people');
     if (isGuest(auth)) throw forbidden('Guests cannot add people to channels');
-    if (!isChannelMember(db, channel.id, auth.userId)) throw forbidden('Join the channel first');
+    if (!await isChannelMember(db, channel.id, auth.userId)) throw forbidden('Join the channel first');
     const { userIds } = parse(z.object({ userIds: z.array(z.string()).min(1).max(500) }), req.body);
     for (const userId of userIds) {
-      if (!isActiveMember(db, auth.workspaceId, userId)) continue;
-      addMember(channel.id, userId);
-      notify(ctx, auth.workspaceId, {
+      if (!await isActiveMember(db, auth.workspaceId, userId)) continue;
+      await addMember(channel.id, userId);
+      await notify(ctx, auth.workspaceId, {
         userId,
         kind: 'channel',
         title: `You were added to #${channel.name}`,
@@ -384,48 +382,48 @@ export function channelsRouter(ctx: Ctx) {
         actorId: auth.userId,
       });
     }
-    audit(ctx, auth.workspaceId, auth.userId, 'channel.members_added', 'channel', channel.id, { userIds });
-    publishToChannel(ctx, channel, { type: 'channel.updated', channelId: channel.id });
+    await audit(ctx, auth.workspaceId, auth.userId, 'channel.members_added', 'channel', channel.id, { userIds });
+    await publishToChannel(ctx, channel, { type: 'channel.updated', channelId: channel.id });
     res.json({ ok: true });
   });
 
-  r.delete('/channels/:id/members/:userId', (req, res) => {
+  r.delete('/channels/:id/members/:userId', async (req, res) => {
     const auth = authOf(req);
-    const channel = loadChannel(db, auth, req.params.id);
+    const channel = await loadChannel(db, auth, req.params.id);
     if (req.params.userId !== auth.userId && channel.created_by !== auth.userId && !isAdmin(auth)) {
       throw forbidden('Only the channel creator or an admin can remove people');
     }
-    db.run('DELETE FROM channel_members WHERE channel_id = ? AND user_id = ?', channel.id, req.params.userId);
-    audit(ctx, auth.workspaceId, auth.userId, 'channel.member_removed', 'channel', channel.id, { userId: req.params.userId });
+    await db.run('DELETE FROM channel_members WHERE channel_id = ? AND user_id = ?', channel.id, req.params.userId);
+    await audit(ctx, auth.workspaceId, auth.userId, 'channel.member_removed', 'channel', channel.id, { userId: req.params.userId });
     res.json({ ok: true });
   });
 
-  r.patch('/channels/:id/preferences', (req, res) => {
+  r.patch('/channels/:id/preferences', async (req, res) => {
     const auth = authOf(req);
-    const channel = loadChannel(db, auth, req.params.id);
+    const channel = await loadChannel(db, auth, req.params.id);
     const { notify: pref } = parse(z.object({ notify: z.enum(['all', 'mentions', 'none']) }), req.body);
-    db.run('UPDATE channel_members SET notify = ? WHERE channel_id = ? AND user_id = ?', pref, channel.id, auth.userId);
+    await db.run('UPDATE channel_members SET notify = ? WHERE channel_id = ? AND user_id = ?', pref, channel.id, auth.userId);
     res.json({ ok: true });
   });
 
-  r.post('/channels/:id/read', (req, res) => {
+  r.post('/channels/:id/read', async (req, res) => {
     const auth = authOf(req);
-    const channel = loadChannel(db, auth, req.params.id);
-    db.run('UPDATE channel_members SET last_read_at = ? WHERE channel_id = ? AND user_id = ?', now(), channel.id, auth.userId);
+    const channel = await loadChannel(db, auth, req.params.id);
+    await db.run('UPDATE channel_members SET last_read_at = ? WHERE channel_id = ? AND user_id = ?', now(), channel.id, auth.userId);
     res.json({ ok: true });
   });
 
   // ----- Direct and group messages -----
 
-  r.post('/dms', (req, res) => {
+  r.post('/dms', async (req, res) => {
     const auth = authOf(req);
     const { userIds } = parse(z.object({ userIds: z.array(z.string()).min(1).max(8) }), req.body);
     const members = [...new Set([auth.userId, ...userIds])].sort();
-    for (const id of members) if (!isActiveMember(db, auth.workspaceId, id)) throw notFound('Person');
+    for (const id of members) if (!await isActiveMember(db, auth.workspaceId, id)) throw notFound('Person');
     if (isGuest(auth)) {
       // Guests may only message people who share a channel or project with them.
       for (const id of members.filter((m) => m !== auth.userId)) {
-        const shares = db.get(
+        const shares = await db.get(
           `SELECT 1 FROM channel_members a JOIN channel_members b ON a.channel_id = b.channel_id WHERE a.user_id = ? AND b.user_id = ?
            UNION SELECT 1 FROM project_members a JOIN project_members b ON a.project_id = b.project_id WHERE a.user_id = ? AND b.user_id = ?`,
           auth.userId,
@@ -436,18 +434,18 @@ export function channelsRouter(ctx: Ctx) {
         if (!shares) throw forbidden('Guests can only message people they collaborate with');
       }
     }
-    const existing = db
+    const existing = (await db
       .all(
         `SELECT c.id, GROUP_CONCAT(m.user_id) AS members FROM channels c JOIN channel_members m ON m.channel_id = c.id
           WHERE c.workspace_id = ? AND c.kind = 'dm' GROUP BY c.id`,
         auth.workspaceId,
-      )
+      ))
       .find((c) => (c.members as string).split(',').sort().join(',') === members.join(','));
     if (existing) return res.json({ id: existing.id });
     const id = newId();
-    const names = db.all(`SELECT name FROM users WHERE id IN (${members.map(() => '?').join(',')})`, ...members).map((u) => u.name);
-    db.transaction(() => {
-      db.insert('channels', {
+    const names = (await db.all(`SELECT name FROM users WHERE id IN (${members.map(() => '?').join(',')})`, ...members)).map((u) => u.name);
+    await db.transaction(async () => {
+      await db.insert('channels', {
         id,
         workspace_id: auth.workspaceId,
         name: names.join(', ').slice(0, 60),
@@ -455,37 +453,37 @@ export function channelsRouter(ctx: Ctx) {
         created_by: auth.userId,
         created_at: now(),
       });
-      for (const m of members) addMember(id, m);
+      for (const m of members) await addMember(id, m);
     });
     res.status(201).json({ id });
   });
 
   // ----- Messages -----
 
-  r.get('/channels/:id/messages', (req, res) => {
+  r.get('/channels/:id/messages', async (req, res) => {
     const auth = authOf(req);
-    const channel = loadChannel(db, auth, req.params.id);
+    const channel = await loadChannel(db, auth, req.params.id);
     const q = parse(z.object({ before: z.string().optional(), limit: z.coerce.number().int().min(1).max(100).default(50) }), req.query);
-    const rows = db.all(
+    const rows = await db.all(
       `SELECT * FROM messages WHERE channel_id = ? AND parent_id IS NULL ${q.before ? 'AND created_at < ?' : ''}
         ORDER BY created_at DESC LIMIT ?`,
       ...(q.before ? [channel.id, q.before, q.limit] : [channel.id, q.limit]),
     );
-    res.json({ messages: serializeMessages(db, auth, rows.reverse()), has_more: rows.length === q.limit });
+    res.json({ messages: await serializeMessages(db, auth, rows.reverse()), has_more: rows.length === q.limit });
   });
 
-  r.get('/channels/:id/pins', (req, res) => {
+  r.get('/channels/:id/pins', async (req, res) => {
     const auth = authOf(req);
-    const channel = loadChannel(db, auth, req.params.id);
-    const rows = db.all('SELECT * FROM messages WHERE channel_id = ? AND pinned_at IS NOT NULL AND deleted_at IS NULL ORDER BY pinned_at DESC', channel.id);
-    res.json(serializeMessages(db, auth, rows));
+    const channel = await loadChannel(db, auth, req.params.id);
+    const rows = await db.all('SELECT * FROM messages WHERE channel_id = ? AND pinned_at IS NOT NULL AND deleted_at IS NULL ORDER BY pinned_at DESC', channel.id);
+    res.json(await serializeMessages(db, auth, rows));
   });
 
-  r.get('/channels/:id/files', (req, res) => {
+  r.get('/channels/:id/files', async (req, res) => {
     const auth = authOf(req);
-    const channel = loadChannel(db, auth, req.params.id);
+    const channel = await loadChannel(db, auth, req.params.id);
     res.json(
-      db.all(
+      await db.all(
         `SELECT f.id, f.name, f.created_at, v.mime, v.size, u.name AS owner_name FROM files f
            JOIN file_versions v ON v.file_id = f.id AND v.version = f.current_version JOIN users u ON u.id = f.owner_id
           WHERE f.channel_id = ? AND f.archived_at IS NULL ORDER BY f.created_at DESC`,
@@ -494,28 +492,28 @@ export function channelsRouter(ctx: Ctx) {
     );
   });
 
-  const loadMessage = (auth: Auth, id: string) => {
-    const message = db.get('SELECT * FROM messages WHERE id = ?', id);
+  const loadMessage = async (auth: Auth, id: string) => {
+    const message = await db.get('SELECT * FROM messages WHERE id = ?', id);
     if (!message) throw notFound('Message');
-    const channel = loadChannel(db, auth, message.channel_id);
+    const channel = await loadChannel(db, auth, message.channel_id);
     return { message, channel };
   };
 
-  r.get('/messages/:id/thread', (req, res) => {
+  r.get('/messages/:id/thread', async (req, res) => {
     const auth = authOf(req);
-    const { message, channel } = loadMessage(authOf(req), req.params.id);
-    const root = message.parent_id ? db.get('SELECT * FROM messages WHERE id = ?', message.parent_id)! : message;
-    const replies = db.all('SELECT * FROM messages WHERE parent_id = ? ORDER BY created_at', root.id);
+    const { message, channel } = await loadMessage(authOf(req), req.params.id);
+    const root = message.parent_id ? (await db.get('SELECT * FROM messages WHERE id = ?', message.parent_id))! : message;
+    const replies = await db.all('SELECT * FROM messages WHERE parent_id = ? ORDER BY created_at', root.id);
     res.json({
       channel: { id: channel.id, name: channel.name, kind: channel.kind },
-      root: serializeMessages(db, auth, [root])[0],
-      replies: serializeMessages(db, auth, replies),
+      root: (await serializeMessages(db, auth, [root]))[0],
+      replies: await serializeMessages(db, auth, replies),
     });
   });
 
-  r.post('/channels/:id/messages', (req, res) => {
+  r.post('/channels/:id/messages', async (req, res) => {
     const auth = authOf(req);
-    const channel = loadChannel(db, auth, req.params.id);
+    const channel = await loadChannel(db, auth, req.params.id);
     const body = parse(
       z.object({
         body: z.string().trim().max(10_000).default(''),
@@ -525,96 +523,95 @@ export function channelsRouter(ctx: Ctx) {
       }),
       req.body,
     );
-    const message = postMessage(ctx, auth, channel, body);
+    const message = await postMessage(ctx, auth, channel, body);
     res.status(201).json(message);
   });
 
-  const editPolicy = (auth: Auth, message: Row) => {
-    const policy = db.get('SELECT message_edit_policy FROM workspaces WHERE id = ?', auth.workspaceId)!.message_edit_policy;
+  const editPolicy = async (auth: Auth, message: Row) => {
+    const policy = (await db.get('SELECT message_edit_policy FROM workspaces WHERE id = ?', auth.workspaceId))!.message_edit_policy;
     if (policy === 'none') return false;
     if (policy === 'admins') return isAdmin(auth);
     return message.user_id === auth.userId;
   };
 
-  r.patch('/messages/:id', (req, res) => {
+  r.patch('/messages/:id', async (req, res) => {
     const auth = authOf(req);
-    const { message, channel } = loadMessage(auth, req.params.id);
+    const { message, channel } = await loadMessage(auth, req.params.id);
     if (message.deleted_at) throw badRequest('This message was deleted');
-    if (!editPolicy(auth, message)) throw forbidden('Your workspace policy does not allow editing this message');
+    if (!await editPolicy(auth, message)) throw forbidden('Your workspace policy does not allow editing this message');
     const { body } = parse(z.object({ body: z.string().trim().min(1).max(10_000) }), req.body);
-    db.update('messages', message.id, { body, edited_at: now() });
-    const [updated] = serializeMessages(db, auth, [db.get('SELECT * FROM messages WHERE id = ?', message.id)!]);
-    publishToChannel(ctx, channel, { type: 'message.updated', messageId: message.id, channelId: channel.id, parentId: message.parent_id });
+    await db.update('messages', message.id, { body, edited_at: now() });
+    const [updated] = await serializeMessages(db, auth, [(await db.get('SELECT * FROM messages WHERE id = ?', message.id))!]);
+    await publishToChannel(ctx, channel, { type: 'message.updated', messageId: message.id, channelId: channel.id, parentId: message.parent_id });
     res.json(updated);
   });
 
-  r.delete('/messages/:id', (req, res) => {
+  r.delete('/messages/:id', async (req, res) => {
     const auth = authOf(req);
-    const { message, channel } = loadMessage(auth, req.params.id);
-    const allowed = message.user_id === auth.userId ? editPolicy(auth, message) || isAdmin(auth) : isAdmin(auth);
+    const { message, channel } = await loadMessage(auth, req.params.id);
+    const allowed = message.user_id === auth.userId ? await editPolicy(auth, message) || isAdmin(auth) : isAdmin(auth);
     if (!allowed) throw forbidden('You cannot delete this message');
-    db.update('messages', message.id, { deleted_at: now(), pinned_at: null });
-    if (message.user_id !== auth.userId) audit(ctx, auth.workspaceId, auth.userId, 'message.deleted_by_admin', 'message', message.id, { channelId: channel.id });
-    publishToChannel(ctx, channel, { type: 'message.updated', messageId: message.id, channelId: channel.id, parentId: message.parent_id });
+    await db.update('messages', message.id, { deleted_at: now(), pinned_at: null });
+    if (message.user_id !== auth.userId) await audit(ctx, auth.workspaceId, auth.userId, 'message.deleted_by_admin', 'message', message.id, { channelId: channel.id });
+    await publishToChannel(ctx, channel, { type: 'message.updated', messageId: message.id, channelId: channel.id, parentId: message.parent_id });
     res.json({ ok: true });
   });
 
-  r.post('/messages/:id/reactions', (req, res) => {
+  r.post('/messages/:id/reactions', async (req, res) => {
     const auth = authOf(req);
-    const { message, channel } = loadMessage(auth, req.params.id);
+    const { message, channel } = await loadMessage(auth, req.params.id);
     const { emoji } = parse(z.object({ emoji: z.string().min(1).max(16) }), req.body);
-    const exists = db.get('SELECT 1 FROM reactions WHERE message_id = ? AND user_id = ? AND emoji = ?', message.id, auth.userId, emoji);
-    if (exists) db.run('DELETE FROM reactions WHERE message_id = ? AND user_id = ? AND emoji = ?', message.id, auth.userId, emoji);
-    else db.insert('reactions', { message_id: message.id, user_id: auth.userId, emoji });
-    publishToChannel(ctx, channel, { type: 'message.updated', messageId: message.id, channelId: channel.id, parentId: message.parent_id });
+    const exists = await db.get('SELECT 1 FROM reactions WHERE message_id = ? AND user_id = ? AND emoji = ?', message.id, auth.userId, emoji);
+    if (exists) await db.run('DELETE FROM reactions WHERE message_id = ? AND user_id = ? AND emoji = ?', message.id, auth.userId, emoji);
+    else await db.insert('reactions', { message_id: message.id, user_id: auth.userId, emoji });
+    await publishToChannel(ctx, channel, { type: 'message.updated', messageId: message.id, channelId: channel.id, parentId: message.parent_id });
     res.json({ ok: true });
   });
 
-  r.post('/messages/:id/pin', (req, res) => {
+  r.post('/messages/:id/pin', async (req, res) => {
     const auth = authOf(req);
-    const { message, channel } = loadMessage(auth, req.params.id);
-    if (!canPostChannel(db, auth, channel)) throw forbidden();
-    db.update('messages', message.id, message.pinned_at ? { pinned_at: null, pinned_by: null } : { pinned_at: now(), pinned_by: auth.userId });
-    publishToChannel(ctx, channel, { type: 'message.updated', messageId: message.id, channelId: channel.id, parentId: message.parent_id });
+    const { message, channel } = await loadMessage(auth, req.params.id);
+    if (!await canPostChannel(db, auth, channel)) throw forbidden();
+    await db.update('messages', message.id, message.pinned_at ? { pinned_at: null, pinned_by: null } : { pinned_at: now(), pinned_by: auth.userId });
+    await publishToChannel(ctx, channel, { type: 'message.updated', messageId: message.id, channelId: channel.id, parentId: message.parent_id });
     res.json({ pinned: !message.pinned_at });
   });
 
-  r.post('/messages/:id/save', (req, res) => {
+  r.post('/messages/:id/save', async (req, res) => {
     const auth = authOf(req);
-    const { message } = loadMessage(auth, req.params.id);
-    const exists = db.get('SELECT 1 FROM saved_messages WHERE user_id = ? AND message_id = ?', auth.userId, message.id);
-    if (exists) db.run('DELETE FROM saved_messages WHERE user_id = ? AND message_id = ?', auth.userId, message.id);
-    else db.insert('saved_messages', { user_id: auth.userId, message_id: message.id, created_at: now() });
+    const { message } = await loadMessage(auth, req.params.id);
+    const exists = await db.get('SELECT 1 FROM saved_messages WHERE user_id = ? AND message_id = ?', auth.userId, message.id);
+    if (exists) await db.run('DELETE FROM saved_messages WHERE user_id = ? AND message_id = ?', auth.userId, message.id);
+    else await db.insert('saved_messages', { user_id: auth.userId, message_id: message.id, created_at: now() });
     res.json({ saved: !exists });
   });
 
-  r.get('/saved', (req, res) => {
+  r.get('/saved', async (req, res) => {
     const auth = authOf(req);
-    const rows = db
+    const rows = (await filterAsync((await db
       .all(
         `SELECT m.*, c.name AS channel_name, c.kind AS channel_kind FROM saved_messages s JOIN messages m ON m.id = s.message_id
            JOIN channels c ON c.id = m.channel_id WHERE s.user_id = ? AND m.deleted_at IS NULL ORDER BY s.created_at DESC`,
         auth.userId,
-      )
-      .filter((m) => canViewChannel(db, auth, db.get('SELECT * FROM channels WHERE id = ?', m.channel_id)!));
-    const serialized = serializeMessages(db, auth, rows);
+      )), async (m) => canViewChannel(db, auth, (await db.get('SELECT * FROM channels WHERE id = ?', m.channel_id))!)));
+    const serialized = await serializeMessages(db, auth, rows);
     res.json(serialized.map((m, i) => ({ ...m, channel_name: rows[i].channel_name, channel_kind: rows[i].channel_kind })));
   });
 
-  r.post('/messages/:id/ack', (req, res) => {
+  r.post('/messages/:id/ack', async (req, res) => {
     const auth = authOf(req);
-    const { message, channel } = loadMessage(auth, req.params.id);
+    const { message, channel } = await loadMessage(auth, req.params.id);
     if (channel.kind !== 'announcement') throw badRequest('Only announcements can be acknowledged');
-    db.run('INSERT OR IGNORE INTO acknowledgements (message_id, user_id, created_at) VALUES (?, ?, ?)', message.id, auth.userId, now());
-    publishToChannel(ctx, channel, { type: 'message.updated', messageId: message.id, channelId: channel.id, parentId: null });
+    await db.run('INSERT OR IGNORE INTO acknowledgements (message_id, user_id, created_at) VALUES (?, ?, ?)', message.id, auth.userId, now());
+    await publishToChannel(ctx, channel, { type: 'message.updated', messageId: message.id, channelId: channel.id, parentId: null });
     res.json({ ok: true });
   });
 
-  r.get('/messages/:id/acks', (req, res) => {
+  r.get('/messages/:id/acks', async (req, res) => {
     const auth = authOf(req);
-    const { message, channel } = loadMessage(auth, req.params.id);
+    const { message, channel } = await loadMessage(auth, req.params.id);
     if (message.user_id !== auth.userId && !isAdmin(auth)) throw forbidden('Only the author or an admin can view acknowledgements');
-    const members = db.all(
+    const members = await db.all(
       `SELECT u.id, u.name, u.color, a.created_at AS acked_at FROM channel_members cm JOIN users u ON u.id = cm.user_id
          JOIN memberships mm ON mm.user_id = u.id AND mm.workspace_id = ? AND mm.deactivated_at IS NULL
          LEFT JOIN acknowledgements a ON a.message_id = ? AND a.user_id = u.id

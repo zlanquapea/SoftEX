@@ -15,7 +15,7 @@ import {
 } from '../access.js';
 import type { Row } from '../db.js';
 import { audit, authOf, type Ctx } from '../context.js';
-import { HttpError, forbidden, newId, notFound, now, parse, today } from '../util.js';
+import { HttpError, forbidden, newId, notFound, now, parse, today, filterAsync } from '../util.js';
 import { requireAiQuota, requireVerifiedEmail } from '../plans.js';
 import { projectStats } from './projects.js';
 
@@ -41,20 +41,20 @@ export function aiRouter(ctx: Ctx) {
   const r = Router();
   const { db } = ctx;
 
-  const requireAi = (auth: Auth) => {
+  const requireAi = async (auth: Auth) => {
     if (!ctx.ai) throw new HttpError(503, 'AI assistance is not configured on this server');
-    const ws = db.get('SELECT ai_enabled FROM workspaces WHERE id = ?', auth.workspaceId)!;
+    const ws = (await db.get('SELECT ai_enabled FROM workspaces WHERE id = ?', auth.workspaceId))!;
     if (!ws.ai_enabled) throw forbidden('An administrator has not enabled AI assistance for this workspace');
-    requireAiQuota(ctx, auth.workspaceId);
-    requireVerifiedEmail(ctx, auth);
+    await requireAiQuota(ctx, auth.workspaceId);
+    await requireVerifiedEmail(ctx, auth);
     return ctx.ai;
   };
 
   const run = async (auth: Auth, input: { prompt: string; jsonSchema?: Record<string, unknown> }) => {
-    const ai = requireAi(auth);
+    const ai = await requireAi(auth);
     try {
       const out = await ai.complete({ system: SYSTEM, ...input });
-      db.insert('ai_usage', { id: newId(), workspace_id: auth.workspaceId, user_id: auth.userId, feature: 'request', created_at: now() });
+      await db.insert('ai_usage', { id: newId(), workspace_id: auth.workspaceId, user_id: auth.userId, feature: 'request', created_at: now() });
       if (out.refused) throw new HttpError(422, 'The AI assistant declined this request.');
       return out.text;
     } catch (error) {
@@ -64,22 +64,22 @@ export function aiRouter(ctx: Ctx) {
     }
   };
 
-  const threadRecords = (auth: Auth, messageId: string) => {
-    const message = db.get('SELECT * FROM messages WHERE id = ?', messageId);
+  const threadRecords = async (auth: Auth, messageId: string) => {
+    const message = await db.get('SELECT * FROM messages WHERE id = ?', messageId);
     if (!message) throw notFound('Message');
-    const channel = loadChannel(db, auth, message.channel_id);
+    const channel = await loadChannel(db, auth, message.channel_id);
     if (channel.ai_excluded) throw forbidden('AI assistance is turned off for this conversation');
-    if (channel.project_id && db.get('SELECT ai_excluded FROM projects WHERE id = ?', channel.project_id)?.ai_excluded) {
+    if (channel.project_id && (await db.get('SELECT ai_excluded FROM projects WHERE id = ?', channel.project_id))?.ai_excluded) {
       throw forbidden('AI assistance is turned off for this project');
     }
     const rootId = message.parent_id ?? message.id;
-    const rows = db.all(
+    const rows = await db.all(
       `SELECT m.id, m.body, m.created_at, u.id AS user_id, u.name FROM messages m JOIN users u ON u.id = m.user_id
         WHERE (m.id = ? OR m.parent_id = ?) AND m.deleted_at IS NULL ORDER BY m.created_at LIMIT 400`,
       rootId,
       rootId,
     );
-    const members = db.all(
+    const members = await db.all(
       `SELECT u.id, u.name FROM channel_members cm JOIN users u ON u.id = cm.user_id WHERE cm.channel_id = ?`,
       channel.id,
     );
@@ -88,15 +88,15 @@ export function aiRouter(ctx: Ctx) {
 
   const transcript = (rows: Row[]) => rows.map((m) => `[${m.created_at.slice(0, 16).replace('T', ' ')}] ${m.name}: ${fence(plain(m.body))}`).join('\n');
 
-  r.get('/ai/status', (req, res) => {
+  r.get('/ai/status', async (req, res) => {
     const auth = authOf(req);
-    const ws = db.get('SELECT ai_enabled FROM workspaces WHERE id = ?', auth.workspaceId)!;
+    const ws = (await db.get('SELECT ai_enabled FROM workspaces WHERE id = ?', auth.workspaceId))!;
     res.json({ available: !!ctx.ai, enabled: !!ws.ai_enabled });
   });
 
   r.post('/ai/threads/:id/summary', async (req, res) => {
     const auth = authOf(req);
-    const { channel, rootId, rows } = threadRecords(auth, req.params.id);
+    const { channel, rootId, rows } = await threadRecords(auth, req.params.id);
     if (rows.length < 2) throw new HttpError(400, 'There is not enough discussion to summarise yet');
     const summary = await run(auth, {
       prompt: `Summarise this discussion from ${channel.kind === 'dm' ? 'a direct message' : `#${channel.name}`}.
@@ -106,7 +106,7 @@ Use short sections, omitting any that are empty: "Summary" (2–4 sentences), "D
 ${transcript(rows)}
 </records>`,
     });
-    audit(ctx, auth.workspaceId, auth.userId, 'ai.thread_summary', 'message', rootId, { messages: rows.length });
+    await audit(ctx, auth.workspaceId, auth.userId, 'ai.thread_summary', 'message', rootId, { messages: rows.length });
     res.json({ summary, sources: rows.map((m) => ({ id: m.id, channel_id: channel.id })), generated_at: new Date().toISOString() });
   });
 
@@ -139,7 +139,7 @@ ${transcript(rows)}
 
   r.post('/ai/threads/:id/suggest-tasks', async (req, res) => {
     const auth = authOf(req);
-    const { channel, rootId, rows, members } = threadRecords(auth, req.params.id);
+    const { channel, rootId, rows, members } = await threadRecords(auth, req.params.id);
     const text = await run(auth, {
       prompt: `Today is ${today()}. Extract concrete follow-up tasks that people in this discussion agreed to or were asked to do. Skip vague ideas and things already marked done. Return at most 8 tasks.
 
@@ -155,7 +155,7 @@ ${transcript(rows)}
       throw new HttpError(502, 'The AI assistant returned an unexpected answer. Please try again.');
     }
     const byName = new Map(members.map((m) => [m.name.toLowerCase(), m.id]));
-    audit(ctx, auth.workspaceId, auth.userId, 'ai.task_suggestions', 'message', rootId, { suggestions: parsed.tasks.length });
+    await audit(ctx, auth.workspaceId, auth.userId, 'ai.task_suggestions', 'message', rootId, { suggestions: parsed.tasks.length });
     // Suggestions only: the person reviews them and creates tasks through the normal API.
     res.json({
       project_id: channel.project_id,
@@ -172,15 +172,14 @@ ${transcript(rows)}
 
   r.post('/ai/meetings/:id/summary', async (req, res) => {
     const auth = authOf(req);
-    const meeting = db.get('SELECT * FROM meetings WHERE id = ?', req.params.id);
-    if (!meeting || !canViewMeeting(db, auth, meeting)) throw notFound('Meeting');
-    if (meeting.project_id && db.get('SELECT ai_excluded FROM projects WHERE id = ?', meeting.project_id)?.ai_excluded) {
+    const meeting = await db.get('SELECT * FROM meetings WHERE id = ?', req.params.id);
+    if (!meeting || !await canViewMeeting(db, auth, meeting)) throw notFound('Meeting');
+    if (meeting.project_id && (await db.get('SELECT ai_excluded FROM projects WHERE id = ?', meeting.project_id))?.ai_excluded) {
       throw forbidden('AI assistance is turned off for this project');
     }
-    const decisions = db.all('SELECT * FROM decisions WHERE meeting_id = ?', meeting.id).filter((d) => canViewDecision(db, auth, d));
-    const tasks = db
-      .all('SELECT t.*, u.name AS owner_name FROM tasks t LEFT JOIN users u ON u.id = t.owner_id WHERE t.meeting_id = ?', meeting.id)
-      .filter((t) => canViewTask(db, auth, t));
+    const decisions = (await filterAsync((await db.all('SELECT * FROM decisions WHERE meeting_id = ?', meeting.id)), (d) => canViewDecision(db, auth, d)));
+    const tasks = (await filterAsync((await db
+      .all('SELECT t.*, u.name AS owner_name FROM tasks t LEFT JOIN users u ON u.id = t.owner_id WHERE t.meeting_id = ?', meeting.id)), (t) => canViewTask(db, auth, t)));
     if (!meeting.notes.trim() && !decisions.length && !tasks.length) throw new HttpError(400, 'Add notes, decisions or follow-ups before asking for a summary');
     const summary = await run(auth, {
       prompt: `Write a short follow-up summary of the meeting "${fence(meeting.title)}" for people who could not attend. Sections: "Summary", "Decisions", "Follow-ups" (owner and due date when present).
@@ -199,23 +198,23 @@ Follow-up tasks:
 ${tasks.map((t) => `- ${fence(t.title)} — ${t.owner_name ?? 'unassigned'}${t.due_date ? `, due ${t.due_date}` : ''} [${t.status}]`).join('\n') || '- none'}
 </records>`,
     });
-    audit(ctx, auth.workspaceId, auth.userId, 'ai.meeting_summary', 'meeting', meeting.id);
+    await audit(ctx, auth.workspaceId, auth.userId, 'ai.meeting_summary', 'meeting', meeting.id);
     res.json({ summary, generated_at: new Date().toISOString() });
   });
 
   r.post('/ai/projects/:id/brief', async (req, res) => {
     const auth = authOf(req);
-    const project = loadProject(db, auth, req.params.id);
-    if (!canContributeProject(db, auth, project)) throw forbidden();
+    const project = await loadProject(db, auth, req.params.id);
+    if (!await canContributeProject(db, auth, project)) throw forbidden();
     if (project.ai_excluded) throw forbidden('AI assistance is turned off for this project');
     const since = new Date(Date.now() - 7 * 86_400_000).toISOString();
-    const stats = projectStats(db, project.id);
-    const completed = db.all('SELECT title FROM tasks WHERE project_id = ? AND completed_at >= ?', project.id, since);
-    const blocked = db.all(`SELECT title, blocked_reason FROM tasks WHERE project_id = ? AND status = 'blocked'`, project.id);
-    const overdue = db.all(`SELECT title, due_date FROM tasks WHERE project_id = ? AND status != 'done' AND due_date < ?`, project.id, today());
-    const decisions = db.all('SELECT title FROM decisions WHERE project_id = ? AND created_at >= ?', project.id, since);
-    const risks = db.all(`SELECT title, impact FROM risks WHERE project_id = ? AND status = 'open'`, project.id);
-    const checkins = db.all('SELECT done, next, blockers FROM checkins WHERE project_id = ? AND created_at >= ? LIMIT 30', project.id, since);
+    const stats = await projectStats(db, project.id);
+    const completed = await db.all('SELECT title FROM tasks WHERE project_id = ? AND completed_at >= ?', project.id, since);
+    const blocked = await db.all(`SELECT title, blocked_reason FROM tasks WHERE project_id = ? AND status = 'blocked'`, project.id);
+    const overdue = await db.all(`SELECT title, due_date FROM tasks WHERE project_id = ? AND status != 'done' AND due_date < ?`, project.id, today());
+    const decisions = await db.all('SELECT title FROM decisions WHERE project_id = ? AND created_at >= ?', project.id, since);
+    const risks = await db.all(`SELECT title, impact FROM risks WHERE project_id = ? AND status = 'open'`, project.id);
+    const checkins = await db.all('SELECT done, next, blockers FROM checkins WHERE project_id = ? AND created_at >= ? LIMIT 30', project.id, since);
     const brief = await run(auth, {
       prompt: `Draft this week's status update for the project "${fence(project.name)}". Start with one line stating whether it is on track, at risk or off track and why, then short sections "Progress", "Blockers and risks", "Next". Keep it under 200 words. The project owner will review and edit it before sharing.
 
@@ -229,7 +228,7 @@ Open risks: ${risks.map((r) => `${fence(r.title)} [${r.impact}]`).join('; ') || 
 Check-ins: ${checkins.map((c) => `done: ${fence(c.done)}; next: ${fence(c.next)}; blockers: ${fence(c.blockers)}`).join(' | ') || 'none'}
 </records>`,
     });
-    audit(ctx, auth.workspaceId, auth.userId, 'ai.project_brief', 'project', project.id);
+    await audit(ctx, auth.workspaceId, auth.userId, 'ai.project_brief', 'project', project.id);
     res.json({ brief, generated_at: new Date().toISOString() });
   });
 
@@ -241,7 +240,7 @@ Check-ins: ${checkins.map((c) => `done: ${fence(c.done)}; next: ${fence(c.next)}
     ),
   );
 
-  const retrieve = (auth: Auth, question: string) => {
+  const retrieve = async (auth: Auth, question: string) => {
     const terms = [...new Set(question.toLowerCase().match(/[\p{L}\p{N}][\p{L}\p{N}'-]{2,}/gu) ?? [])].filter((t) => !STOP.has(t)).slice(0, 8);
     if (!terms.length) throw new HttpError(400, 'Ask a more specific question');
     const likeAny = (col: string) => `(${terms.map(() => `lower(${col}) LIKE ?`).join(' OR ')})`;
@@ -257,14 +256,14 @@ Check-ins: ${checkins.map((c) => `done: ${fence(c.done)}; next: ${fence(c.next)}
     };
     type Source = { type: string; title: string; link: string; text: string; date: string; score: number };
     const out: Source[] = [];
-    const channelIds = accessibleChannelIds(db, auth).filter((id) => {
-      const c = db.get('SELECT ai_excluded, project_id FROM channels WHERE id = ?', id)!;
-      return !c.ai_excluded && !(c.project_id && db.get('SELECT ai_excluded FROM projects WHERE id = ?', c.project_id)?.ai_excluded);
-    });
-    const projectIds = accessibleProjectIds(db, auth).filter((id) => !db.get('SELECT ai_excluded FROM projects WHERE id = ?', id)!.ai_excluded);
+    const channelIds = (await filterAsync((await accessibleChannelIds(db, auth)), async (id) => {
+      const c = (await db.get('SELECT ai_excluded, project_id FROM channels WHERE id = ?', id))!;
+      return !c.ai_excluded && !(c.project_id && (await db.get('SELECT ai_excluded FROM projects WHERE id = ?', c.project_id))?.ai_excluded);
+    }));
+    const projectIds = (await filterAsync((await accessibleProjectIds(db, auth)), async (id) => !(await db.get('SELECT ai_excluded FROM projects WHERE id = ?', id))!.ai_excluded));
     const projectOk = (id: string | null) => !id || projectIds.includes(id);
     if (channelIds.length) {
-      for (const m of db.all(
+      for (const m of await db.all(
         `SELECT m.id, m.parent_id, m.body, m.created_at, m.channel_id, c.name AS channel_name, c.kind, u.name AS user_name FROM messages m
            JOIN channels c ON c.id = m.channel_id JOIN users u ON u.id = m.user_id
           WHERE m.deleted_at IS NULL AND m.channel_id IN (${channelIds.map(() => '?').join(',')}) AND ${likeAny('m.body')}
@@ -282,25 +281,25 @@ Check-ins: ${checkins.map((c) => `done: ${fence(c.done)}; next: ${fence(c.next)}
         });
       }
     }
-    for (const p of db.all(`SELECT * FROM pages WHERE workspace_id = ? AND archived_at IS NULL AND (${likeAny('title')} OR ${likeAny('body')}) LIMIT 200`, auth.workspaceId, ...likes, ...likes)) {
-      if (!canViewPage(db, auth, p) || !projectOk(p.project_id)) continue;
+    for (const p of await db.all(`SELECT * FROM pages WHERE workspace_id = ? AND archived_at IS NULL AND (${likeAny('title')} OR ${likeAny('body')}) LIMIT 200`, auth.workspaceId, ...likes, ...likes)) {
+      if (!await canViewPage(db, auth, p) || !projectOk(p.project_id)) continue;
       out.push({ type: 'page', title: `${p.title}${p.status === 'approved' ? ' (approved)' : ' (draft)'}`, link: `/knowledge/${p.id}`, text: snippet(`${p.title}. ${p.body}`), date: p.updated_at, score: score(`${p.title} ${p.body}`) + (p.status === 'approved' ? 1 : 0) });
     }
-    for (const d of db.all(`SELECT * FROM decisions WHERE workspace_id = ? AND (${likeAny('title')} OR ${likeAny('rationale')}) LIMIT 200`, auth.workspaceId, ...likes, ...likes)) {
-      if (!canViewDecision(db, auth, d) || !projectOk(d.project_id)) continue;
+    for (const d of await db.all(`SELECT * FROM decisions WHERE workspace_id = ? AND (${likeAny('title')} OR ${likeAny('rationale')}) LIMIT 200`, auth.workspaceId, ...likes, ...likes)) {
+      if (!await canViewDecision(db, auth, d) || !projectOk(d.project_id)) continue;
       out.push({ type: 'decision', title: `Decision: ${d.title}`, link: d.project_id ? `/projects/${d.project_id}?tab=decisions` : '/decisions', text: `${d.title}. ${d.rationale}`, date: d.created_at, score: score(`${d.title} ${d.rationale}`) + 1 });
     }
-    for (const t of db.all(`SELECT * FROM tasks WHERE workspace_id = ? AND (${likeAny('title')} OR ${likeAny('description')}) LIMIT 200`, auth.workspaceId, ...likes, ...likes)) {
-      if (!canViewTask(db, auth, t) || !projectOk(t.project_id)) continue;
-      const owner = t.owner_id ? db.get('SELECT name FROM users WHERE id = ?', t.owner_id)?.name : 'nobody';
+    for (const t of await db.all(`SELECT * FROM tasks WHERE workspace_id = ? AND (${likeAny('title')} OR ${likeAny('description')}) LIMIT 200`, auth.workspaceId, ...likes, ...likes)) {
+      if (!await canViewTask(db, auth, t) || !projectOk(t.project_id)) continue;
+      const owner = t.owner_id ? (await db.get('SELECT name FROM users WHERE id = ?', t.owner_id))?.name : 'nobody';
       out.push({ type: 'task', title: `Task: ${t.title}`, link: `/tasks/${t.id}`, text: `${t.title} — status ${t.status}, owner ${owner}${t.due_date ? `, due ${t.due_date}` : ''}. ${snippet(t.description)}`, date: t.updated_at, score: score(`${t.title} ${t.description}`) });
     }
-    for (const f of db.all(`SELECT * FROM files WHERE workspace_id = ? AND archived_at IS NULL AND (${likeAny('name')} OR ${likeAny("COALESCE(content_text, '')")}) LIMIT 100`, auth.workspaceId, ...likes, ...likes)) {
-      if (!canViewFile(db, auth, f) || !projectOk(f.project_id)) continue;
+    for (const f of await db.all(`SELECT * FROM files WHERE workspace_id = ? AND archived_at IS NULL AND (${likeAny('name')} OR ${likeAny("COALESCE(content_text, '')")}) LIMIT 100`, auth.workspaceId, ...likes, ...likes)) {
+      if (!await canViewFile(db, auth, f) || !projectOk(f.project_id)) continue;
       out.push({ type: 'file', title: `File: ${f.name}`, link: `/files/${f.id}`, text: snippet(`${f.name}. ${f.content_text ?? ''}`), date: f.updated_at, score: score(`${f.name} ${f.content_text ?? ''}`) });
     }
-    for (const m of db.all(`SELECT * FROM meetings WHERE workspace_id = ? AND (${likeAny('title')} OR ${likeAny('notes')}) LIMIT 100`, auth.workspaceId, ...likes, ...likes)) {
-      if (!canViewMeeting(db, auth, m) || !projectOk(m.project_id)) continue;
+    for (const m of await db.all(`SELECT * FROM meetings WHERE workspace_id = ? AND (${likeAny('title')} OR ${likeAny('notes')}) LIMIT 100`, auth.workspaceId, ...likes, ...likes)) {
+      if (!await canViewMeeting(db, auth, m) || !projectOk(m.project_id)) continue;
       out.push({ type: 'meeting', title: `Meeting: ${m.title} (${m.starts_at.slice(0, 10)})`, link: `/meetings/${m.id}`, text: snippet(`${m.title}. ${m.agenda} ${m.notes}`), date: m.starts_at, score: score(`${m.title} ${m.agenda} ${m.notes}`) });
     }
     return out.sort((a, b) => b.score - a.score || b.date.localeCompare(a.date)).slice(0, 15);
@@ -308,11 +307,11 @@ Check-ins: ${checkins.map((c) => `done: ${fence(c.done)}; next: ${fence(c.next)}
 
   r.post('/ai/ask', async (req, res) => {
     const auth = authOf(req);
-    requireAi(auth);
+    await requireAi(auth);
     const { question } = parse(z.object({ question: z.string().trim().min(3).max(500) }), req.body);
-    const sources = retrieve(auth, question);
+    const sources = await retrieve(auth, question);
     if (!sources.length) {
-      audit(ctx, auth.workspaceId, auth.userId, 'ai.ask', 'workspace', auth.workspaceId, { sources: 0 });
+      await audit(ctx, auth.workspaceId, auth.userId, 'ai.ask', 'workspace', auth.workspaceId, { sources: 0 });
       return res.json({ answer: 'I could not find anything you have access to that answers this. Try different words, or ask a colleague in a channel.', sources: [] });
     }
     const answer = await run(auth, {
@@ -324,25 +323,25 @@ Answer using only the numbered records below. Cite the records you rely on with 
 ${sources.map((s, i) => `[${i + 1}] ${s.type.toUpperCase()} · ${fence(s.title)} · ${s.date.slice(0, 10)}\n${fence(s.text)}`).join('\n\n')}
 </records>`,
     });
-    audit(ctx, auth.workspaceId, auth.userId, 'ai.ask', 'workspace', auth.workspaceId, { sources: sources.length });
+    await audit(ctx, auth.workspaceId, auth.userId, 'ai.ask', 'workspace', auth.workspaceId, { sources: sources.length });
     res.json({ answer, sources: sources.map((s, i) => ({ n: i + 1, type: s.type, title: s.title, link: s.link, snippet: s.text.slice(0, 240), date: s.date })) });
   });
 
   // Exclusion controls: channel creators/admins and project managers.
-  r.patch('/ai/exclusions', (req, res) => {
+  r.patch('/ai/exclusions', async (req, res) => {
     const auth = authOf(req);
     const body = parse(z.object({ channelId: z.string().optional(), projectId: z.string().optional(), excluded: z.boolean() }), req.body);
     if (body.channelId) {
-      const channel = loadChannel(db, auth, body.channelId);
+      const channel = await loadChannel(db, auth, body.channelId);
       if (channel.created_by !== auth.userId && !['admin', 'owner'].includes(auth.role)) throw forbidden('Only the channel creator or an admin can change this');
-      db.update('channels', channel.id, { ai_excluded: body.excluded });
-      audit(ctx, auth.workspaceId, auth.userId, 'ai.exclusion_changed', 'channel', channel.id, { excluded: body.excluded });
+      await db.update('channels', channel.id, { ai_excluded: body.excluded });
+      await audit(ctx, auth.workspaceId, auth.userId, 'ai.exclusion_changed', 'channel', channel.id, { excluded: body.excluded });
     }
     if (body.projectId) {
-      const project = loadProject(db, auth, body.projectId);
+      const project = await loadProject(db, auth, body.projectId);
       if (project.owner_id !== auth.userId && !['admin', 'owner'].includes(auth.role)) throw forbidden('Only the project owner or an admin can change this');
-      db.update('projects', project.id, { ai_excluded: body.excluded });
-      audit(ctx, auth.workspaceId, auth.userId, 'ai.exclusion_changed', 'project', project.id, { excluded: body.excluded });
+      await db.update('projects', project.id, { ai_excluded: body.excluded });
+      await audit(ctx, auth.workspaceId, auth.userId, 'ai.exclusion_changed', 'project', project.id, { excluded: body.excluded });
     }
     res.json({ ok: true });
   });

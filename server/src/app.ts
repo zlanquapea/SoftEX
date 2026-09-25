@@ -5,7 +5,7 @@ import { existsSync } from 'node:fs';
 import { createServer, type Server } from 'node:http';
 import { join } from 'node:path';
 import { canViewChannel } from './access.js';
-import { Database } from './db.js';
+import { openDatabase } from './db.js';
 import type { AiClient, Config, Ctx, MailTransport } from './context.js';
 import type { BillingConfig } from './plans.js';
 import { createClaudeClient } from './ai.js';
@@ -32,6 +32,8 @@ export interface AppOptions extends Partial<Omit<Config, 'billing'>> {
   /** Express "trust proxy" setting: a hop count, true/false, or an address list. */
   trustProxy?: boolean | number | string;
   dbPath?: string;
+  /** postgres://… to use PostgreSQL instead of the SQLite file at dbPath. */
+  databaseUrl?: string;
   staticDir?: string;
   /** Requests per minute per client address across the API (default 1200). */
   rateLimitPerMinute?: number;
@@ -46,7 +48,7 @@ export interface SoftexApp {
   app: Express;
   server: Server;
   ctx: Ctx;
-  close: () => void;
+  close: () => Promise<void>;
 }
 
 export function createApp(options: AppOptions = {}): SoftexApp {
@@ -76,7 +78,7 @@ export function createApp(options: AppOptions = {}): SoftexApp {
       ...options.billing,
     },
   };
-  const db = new Database(options.dbPath ?? join(process.cwd(), 'data', 'softex.db'));
+  const db = openDatabase(options.databaseUrl ?? options.dbPath ?? join(process.cwd(), 'data', 'softex.db'));
   const hub = new RealtimeHub();
   const ctx: Ctx = {
     db,
@@ -119,8 +121,8 @@ export function createApp(options: AppOptions = {}): SoftexApp {
   );
   app.use(express.json({ limit: '1mb' }));
 
-  app.get('/api/health', (_req, res) => {
-    db.get('SELECT 1');
+  app.get('/api/health', async (_req, res) => {
+    await db.get('SELECT 1');
     res.json({ ok: true, time: new Date().toISOString() });
   });
   app.use('/api', authRouter(ctx));
@@ -170,11 +172,11 @@ export function createApp(options: AppOptions = {}): SoftexApp {
   }
   app.use(errorHandler);
 
-  hub.onTyping = (auth, channelId) => {
-    const channel = db.get('SELECT * FROM channels WHERE id = ?', channelId);
-    if (!channel || !canViewChannel(db, auth, channel)) return;
-    const user = db.get('SELECT name FROM users WHERE id = ?', auth.userId);
-    hub.publish(auth.workspaceId, { type: 'typing', channelId, userId: auth.userId, name: user?.name }, (a) => a.userId !== auth.userId && canViewChannel(db, a, channel));
+  hub.onTyping = async (auth, channelId) => {
+    const channel = await db.get('SELECT * FROM channels WHERE id = ?', channelId);
+    if (!channel || !await canViewChannel(db, auth, channel)) return;
+    const user = await db.get('SELECT name FROM users WHERE id = ?', auth.userId);
+    await hub.publish(auth.workspaceId, { type: 'typing', channelId, userId: auth.userId, name: user?.name }, async (a) => a.userId !== auth.userId && await canViewChannel(db, a, channel));
   };
 
   const server = createServer(app);
@@ -184,11 +186,11 @@ export function createApp(options: AppOptions = {}): SoftexApp {
     app,
     server,
     ctx,
-    close: () => {
+    close: async () => {
       stopJobs();
       hub.close();
       server.close();
-      db.close();
+      await db.close();
     },
   };
 }

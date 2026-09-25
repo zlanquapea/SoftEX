@@ -6,18 +6,18 @@ import { applyRetention, processDeadlines, processReminders, processScheduledMes
 
 /** Run every background job once. Used by the scheduler and by tests. */
 export async function runJobsOnce(ctx: Ctx) {
-  processScheduledMessages(ctx);
-  processReminders(ctx);
+  await processScheduledMessages(ctx);
+  await processReminders(ctx);
   await processEmailQueue(ctx);
   await processWebhookQueue(ctx);
 }
 
 /** Slower jobs: deadline reminders, retention and digests. */
-export function runPeriodicJobs(ctx: Ctx) {
-  processDeadlines(ctx);
-  applyRetention(ctx);
-  queueDigests(ctx);
-  processBillingNotices(ctx);
+export async function runPeriodicJobs(ctx: Ctx) {
+  await processDeadlines(ctx);
+  await applyRetention(ctx);
+  await queueDigests(ctx);
+  await processBillingNotices(ctx);
 }
 
 /**
@@ -39,9 +39,9 @@ export function startBackgroundJobs(ctx: Ctx) {
     }
   };
   const queues = setInterval(tick, 5_000);
-  const periodic = () => {
+  const periodic = async () => {
     try {
-      runPeriodicJobs(ctx);
+      await runPeriodicJobs(ctx);
     } catch (error) {
       console.error('Periodic job failed', error);
     }

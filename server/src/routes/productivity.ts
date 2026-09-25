@@ -14,9 +14,9 @@ import {
   type Role,
 } from '../access.js';
 import { ActionConfig, ACTIONS, runAutomations, TriggerConfig, TRIGGERS } from '../automations.js';
-import type { Row } from '../db.js';
+import { daysBetween, type Row } from '../db.js';
 import { audit, authOf, notify, type Ctx } from '../context.js';
-import { badRequest, forbidden, HttpError, newId, notFound, now, parse, parseJson, today } from '../util.js';
+import { badRequest, forbidden, HttpError, newId, notFound, now, parse, parseJson, today, filterAsync } from '../util.js';
 import { hasFeature, requireFeature } from '../plans.js';
 import { postMessage } from './channels.js';
 
@@ -28,7 +28,7 @@ export function productivityRouter(ctx: Ctx) {
 
   // ======================= Automations =======================
 
-  const ruleSummary = (a: Row) => ({
+  const ruleSummary = async (a: Row) => ({
     id: a.id,
     project_id: a.project_id,
     name: a.name,
@@ -39,7 +39,7 @@ export function productivityRouter(ctx: Ctx) {
     enabled: !!a.enabled,
     run_count: a.run_count,
     last_run_at: a.last_run_at,
-    created_by: db.get('SELECT id, name FROM users WHERE id = ?', a.created_by) ?? null,
+    created_by: await db.get('SELECT id, name FROM users WHERE id = ?', a.created_by) ?? null,
     created_at: a.created_at,
   });
 
@@ -52,9 +52,9 @@ export function productivityRouter(ctx: Ctx) {
     enabled: z.boolean().default(true),
   });
 
-  const validateAction = (auth: Auth, projectId: string, type: string, cfg: z.infer<typeof ActionConfig>) => {
+  const validateAction = async (auth: Auth, projectId: string, type: string, cfg: z.infer<typeof ActionConfig>) => {
     if ((type === 'assign' || type === 'notify') && (cfg.target ?? 'user') === 'user') {
-      if (!cfg.user_id || !db.get('SELECT 1 FROM memberships WHERE workspace_id = ? AND user_id = ? AND deactivated_at IS NULL', auth.workspaceId, cfg.user_id)) {
+      if (!cfg.user_id || !await db.get('SELECT 1 FROM memberships WHERE workspace_id = ? AND user_id = ? AND deactivated_at IS NULL', auth.workspaceId, cfg.user_id)) {
         throw badRequest('Choose a person for this action');
       }
     }
@@ -62,8 +62,8 @@ export function productivityRouter(ctx: Ctx) {
     if (type === 'add_checklist' && !cfg.items?.length) throw badRequest('Add at least one checklist item');
     if (type === 'post_message') {
       if (!cfg.channel_id) throw badRequest('Choose a channel');
-      const channel = loadChannel(db, auth, cfg.channel_id);
-      if (!canPostChannel(db, auth, channel)) throw forbidden('You cannot post in that channel');
+      const channel = await loadChannel(db, auth, cfg.channel_id);
+      if (!await canPostChannel(db, auth, channel)) throw forbidden('You cannot post in that channel');
       if (channel.kind === 'dm') throw badRequest('Choose a channel, not a direct message');
       if (channel.kind !== 'public' && channel.project_id !== projectId) {
         throw badRequest('Private channels can only be used by automations in their own project');
@@ -71,26 +71,26 @@ export function productivityRouter(ctx: Ctx) {
     }
   };
 
-  r.get('/projects/:id/automations', (req, res) => {
+  r.get('/projects/:id/automations', async (req, res) => {
     const auth = authOf(req);
-    const project = loadProject(db, auth, req.params.id);
+    const project = await loadProject(db, auth, req.params.id);
     res.json({
       triggers: TRIGGERS,
       actions: ACTIONS,
-      can_manage: canManageProject(db, auth, project),
-      automations: db.all('SELECT * FROM automations WHERE project_id = ? ORDER BY created_at', project.id).map(ruleSummary),
+      can_manage: await canManageProject(db, auth, project),
+      automations: (await Promise.all((await db.all('SELECT * FROM automations WHERE project_id = ? ORDER BY created_at', project.id)).map(ruleSummary))),
     });
   });
 
-  r.post('/projects/:id/automations', (req, res) => {
+  r.post('/projects/:id/automations', async (req, res) => {
     const auth = authOf(req);
-    const project = loadProject(db, auth, req.params.id);
-    if (!canManageProject(db, auth, project)) throw forbidden('Only the project owner, a project lead or an admin can add automations');
+    const project = await loadProject(db, auth, req.params.id);
+    if (!await canManageProject(db, auth, project)) throw forbidden('Only the project owner, a project lead or an admin can add automations');
     const body = parse(RuleBody, req.body);
-    requireFeature(ctx, auth.workspaceId, 'automations');
-    validateAction(auth, project.id, body.actionType, body.actionConfig);
+    await requireFeature(ctx, auth.workspaceId, 'automations');
+    await validateAction(auth, project.id, body.actionType, body.actionConfig);
     const id = newId();
-    db.insert('automations', {
+    await db.insert('automations', {
       id,
       workspace_id: auth.workspaceId,
       project_id: project.id,
@@ -103,27 +103,27 @@ export function productivityRouter(ctx: Ctx) {
       created_by: auth.userId,
       created_at: now(),
     });
-    audit(ctx, auth.workspaceId, auth.userId, 'automation.created', 'automation', id, { project: project.id, trigger: body.triggerType, action: body.actionType });
-    res.status(201).json(ruleSummary(db.get('SELECT * FROM automations WHERE id = ?', id)!));
+    await audit(ctx, auth.workspaceId, auth.userId, 'automation.created', 'automation', id, { project: project.id, trigger: body.triggerType, action: body.actionType });
+    res.status(201).json(await ruleSummary((await db.get('SELECT * FROM automations WHERE id = ?', id))!));
   });
 
-  const loadRule = (auth: Auth, id: string) => {
-    const rule = db.get('SELECT * FROM automations WHERE id = ? AND workspace_id = ?', id, auth.workspaceId);
+  const loadRule = async (auth: Auth, id: string) => {
+    const rule = await db.get('SELECT * FROM automations WHERE id = ? AND workspace_id = ?', id, auth.workspaceId);
     if (!rule) throw notFound('Automation');
-    const project = loadProject(db, auth, rule.project_id);
+    const project = await loadProject(db, auth, rule.project_id);
     return { rule, project };
   };
 
-  r.patch('/automations/:id', (req, res) => {
+  r.patch('/automations/:id', async (req, res) => {
     const auth = authOf(req);
-    requireFeature(ctx, auth.workspaceId, 'automations');
-    const { rule, project } = loadRule(auth, req.params.id);
-    if (!canManageProject(db, auth, project)) throw forbidden();
+    await requireFeature(ctx, auth.workspaceId, 'automations');
+    const { rule, project } = await loadRule(auth, req.params.id);
+    if (!await canManageProject(db, auth, project)) throw forbidden();
     const body = parse(RuleBody.partial(), req.body);
     if (body.actionType || body.actionConfig) {
-      validateAction(auth, project.id, body.actionType ?? rule.action_type, body.actionConfig ?? parseJson(rule.action_config, {}));
+      await validateAction(auth, project.id, body.actionType ?? rule.action_type, body.actionConfig ?? parseJson(rule.action_config, {}));
     }
-    db.update('automations', rule.id, {
+    await db.update('automations', rule.id, {
       name: body.name,
       trigger_type: body.triggerType,
       trigger_config: body.triggerConfig,
@@ -131,39 +131,39 @@ export function productivityRouter(ctx: Ctx) {
       action_config: body.actionConfig,
       enabled: body.enabled,
     });
-    audit(ctx, auth.workspaceId, auth.userId, 'automation.updated', 'automation', rule.id, { enabled: body.enabled });
-    res.json(ruleSummary(db.get('SELECT * FROM automations WHERE id = ?', rule.id)!));
+    await audit(ctx, auth.workspaceId, auth.userId, 'automation.updated', 'automation', rule.id, { enabled: body.enabled });
+    res.json(await ruleSummary((await db.get('SELECT * FROM automations WHERE id = ?', rule.id))!));
   });
 
-  r.delete('/automations/:id', (req, res) => {
+  r.delete('/automations/:id', async (req, res) => {
     const auth = authOf(req);
-    const { rule, project } = loadRule(auth, req.params.id);
-    if (!canManageProject(db, auth, project)) throw forbidden();
-    db.run('DELETE FROM automations WHERE id = ?', rule.id);
-    audit(ctx, auth.workspaceId, auth.userId, 'automation.deleted', 'automation', rule.id, { name: rule.name });
+    const { rule, project } = await loadRule(auth, req.params.id);
+    if (!await canManageProject(db, auth, project)) throw forbidden();
+    await db.run('DELETE FROM automations WHERE id = ?', rule.id);
+    await audit(ctx, auth.workspaceId, auth.userId, 'automation.deleted', 'automation', rule.id, { name: rule.name });
     res.json({ ok: true });
   });
 
-  r.get('/automations/:id/runs', (req, res) => {
+  r.get('/automations/:id/runs', async (req, res) => {
     const auth = authOf(req);
-    const { rule } = loadRule(auth, req.params.id);
+    const { rule } = await loadRule(auth, req.params.id);
     res.json(
-      db
+      (await db
         .all(
           `SELECT r.*, t.title AS task_title, t.workspace_id, t.project_id, t.owner_id, t.created_by, t.reviewer_id FROM automation_runs r
              LEFT JOIN tasks t ON t.id = r.task_id WHERE r.automation_id = ? ORDER BY r.created_at DESC LIMIT 50`,
           rule.id,
-        )
+        ))
         .map((run) => ({ id: run.id, outcome: run.outcome, detail: run.detail, created_at: run.created_at, task: run.task_id && run.task_title ? { id: run.task_id, title: run.task_title } : null })),
     );
   });
 
   // ======================= Reminders =======================
 
-  r.get('/reminders', (req, res) => {
+  r.get('/reminders', async (req, res) => {
     const auth = authOf(req);
     res.json(
-      db.all(
+      await db.all(
         `SELECT r.*, t.title AS task_title, m.body AS message_body, m.channel_id FROM reminders r
            LEFT JOIN tasks t ON t.id = r.task_id LEFT JOIN messages m ON m.id = r.message_id
           WHERE r.user_id = ? AND r.workspace_id = ? AND r.sent_at IS NULL ORDER BY r.remind_at`,
@@ -173,7 +173,7 @@ export function productivityRouter(ctx: Ctx) {
     );
   });
 
-  r.post('/reminders', (req, res) => {
+  r.post('/reminders', async (req, res) => {
     const auth = authOf(req);
     const body = parse(
       z.object({ remindAt: Iso, note: z.string().max(500).default(''), messageId: z.string().nullish(), taskId: z.string().nullish() }),
@@ -181,14 +181,14 @@ export function productivityRouter(ctx: Ctx) {
     );
     if (new Date(body.remindAt).getTime() < Date.now() - 60_000) throw badRequest('Choose a time in the future');
     if (body.messageId) {
-      const message = db.get('SELECT * FROM messages WHERE id = ?', body.messageId);
+      const message = await db.get('SELECT * FROM messages WHERE id = ?', body.messageId);
       if (!message) throw notFound('Message');
-      loadChannel(db, auth, message.channel_id);
+      await loadChannel(db, auth, message.channel_id);
     }
-    if (body.taskId) loadTask(db, auth, body.taskId);
+    if (body.taskId) await loadTask(db, auth, body.taskId);
     if (!body.messageId && !body.taskId && !body.note.trim()) throw badRequest('Add a note for the reminder');
     const id = newId();
-    db.insert('reminders', {
+    await db.insert('reminders', {
       id,
       workspace_id: auth.workspaceId,
       user_id: auth.userId,
@@ -198,22 +198,22 @@ export function productivityRouter(ctx: Ctx) {
       remind_at: new Date(body.remindAt).toISOString(),
       created_at: now(),
     });
-    res.status(201).json(db.get('SELECT * FROM reminders WHERE id = ?', id));
+    res.status(201).json(await db.get('SELECT * FROM reminders WHERE id = ?', id));
   });
 
-  r.delete('/reminders/:id', (req, res) => {
+  r.delete('/reminders/:id', async (req, res) => {
     const auth = authOf(req);
-    const changed = db.run('DELETE FROM reminders WHERE id = ? AND user_id = ?', req.params.id, auth.userId);
+    const changed = await db.run('DELETE FROM reminders WHERE id = ? AND user_id = ?', req.params.id, auth.userId);
     if (!changed.changes) throw notFound('Reminder');
     res.json({ ok: true });
   });
 
   // ======================= Scheduled messages =======================
 
-  r.get('/scheduled-messages', (req, res) => {
+  r.get('/scheduled-messages', async (req, res) => {
     const auth = authOf(req);
     res.json(
-      db.all(
+      await db.all(
         `SELECT s.*, c.name AS channel_name, c.kind AS channel_kind FROM scheduled_messages s JOIN channels c ON c.id = s.channel_id
           WHERE s.user_id = ? AND s.workspace_id = ? AND s.sent_message_id IS NULL ORDER BY s.send_at`,
         auth.userId,
@@ -222,19 +222,19 @@ export function productivityRouter(ctx: Ctx) {
     );
   });
 
-  r.post('/channels/:id/scheduled-messages', (req, res) => {
+  r.post('/channels/:id/scheduled-messages', async (req, res) => {
     const auth = authOf(req);
-    const channel = loadChannel(db, auth, req.params.id);
+    const channel = await loadChannel(db, auth, req.params.id);
     const body = parse(z.object({ body: z.string().trim().min(1).max(10_000), sendAt: Iso, parentId: z.string().nullish() }), req.body);
-    if (!canPostChannel(db, auth, channel)) throw forbidden('You cannot post here');
+    if (!await canPostChannel(db, auth, channel)) throw forbidden('You cannot post here');
     const when = new Date(body.sendAt);
     if (when.getTime() < Date.now() + 30_000) throw badRequest('Choose a time at least a minute from now');
     if (when.getTime() > Date.now() + 366 * 86_400_000) throw badRequest('Messages can be scheduled up to a year ahead');
-    if (body.parentId && !db.get('SELECT 1 FROM messages WHERE id = ? AND channel_id = ? AND parent_id IS NULL', body.parentId, channel.id)) {
+    if (body.parentId && !await db.get('SELECT 1 FROM messages WHERE id = ? AND channel_id = ? AND parent_id IS NULL', body.parentId, channel.id)) {
       throw badRequest('Replies must target a top-level message in this channel');
     }
     const id = newId();
-    db.insert('scheduled_messages', {
+    await db.insert('scheduled_messages', {
       id,
       workspace_id: auth.workspaceId,
       channel_id: channel.id,
@@ -244,35 +244,35 @@ export function productivityRouter(ctx: Ctx) {
       send_at: when.toISOString(),
       created_at: now(),
     });
-    res.status(201).json(db.get('SELECT * FROM scheduled_messages WHERE id = ?', id));
+    res.status(201).json(await db.get('SELECT * FROM scheduled_messages WHERE id = ?', id));
   });
 
-  r.patch('/scheduled-messages/:id', (req, res) => {
+  r.patch('/scheduled-messages/:id', async (req, res) => {
     const auth = authOf(req);
-    const item = db.get('SELECT * FROM scheduled_messages WHERE id = ? AND user_id = ? AND sent_message_id IS NULL', req.params.id, auth.userId);
+    const item = await db.get('SELECT * FROM scheduled_messages WHERE id = ? AND user_id = ? AND sent_message_id IS NULL', req.params.id, auth.userId);
     if (!item) throw notFound('Scheduled message');
     const body = parse(z.object({ body: z.string().trim().min(1).max(10_000).optional(), sendAt: Iso.optional() }), req.body);
     if (body.sendAt && new Date(body.sendAt).getTime() < Date.now() + 30_000) throw badRequest('Choose a time at least a minute from now');
-    db.update('scheduled_messages', item.id, { body: body.body, send_at: body.sendAt ? new Date(body.sendAt).toISOString() : undefined, failed_reason: null });
-    res.json(db.get('SELECT * FROM scheduled_messages WHERE id = ?', item.id));
+    await db.update('scheduled_messages', item.id, { body: body.body, send_at: body.sendAt ? new Date(body.sendAt).toISOString() : undefined, failed_reason: null });
+    res.json(await db.get('SELECT * FROM scheduled_messages WHERE id = ?', item.id));
   });
 
-  r.delete('/scheduled-messages/:id', (req, res) => {
+  r.delete('/scheduled-messages/:id', async (req, res) => {
     const auth = authOf(req);
-    const changed = db.run('DELETE FROM scheduled_messages WHERE id = ? AND user_id = ? AND sent_message_id IS NULL', req.params.id, auth.userId);
+    const changed = await db.run('DELETE FROM scheduled_messages WHERE id = ? AND user_id = ? AND sent_message_id IS NULL', req.params.id, auth.userId);
     if (!changed.changes) throw notFound('Scheduled message');
     res.json({ ok: true });
   });
 
   // ======================= Workload (§5.2 "workload views") =======================
 
-  r.get('/workload', (req, res) => {
+  r.get('/workload', async (req, res) => {
     const auth = authOf(req);
-    requireFeature(ctx, auth.workspaceId, 'planning');
+    await requireFeature(ctx, auth.workspaceId, 'planning');
     const q = parse(z.object({ weeks: z.coerce.number().int().min(1).max(12).default(4), projectId: z.string().optional(), teamId: z.string().optional() }), req.query);
-    let projects = accessibleProjectIds(db, auth);
+    let projects = await accessibleProjectIds(db, auth);
     if (q.projectId) {
-      loadProject(db, auth, q.projectId);
+      await loadProject(db, auth, q.projectId);
       projects = [q.projectId];
     }
     // Monday of the current week (UTC) as the first bucket.
@@ -287,23 +287,22 @@ export function productivityRouter(ctx: Ctx) {
     end.setUTCDate(end.getUTCDate() + q.weeks * 7);
     const endStr = end.toISOString().slice(0, 10);
     const tasks = projects.length
-      ? db
+      ? (await filterAsync((await db
           .all(
             `SELECT t.*, p.name AS project_name, p.color AS project_color FROM tasks t JOIN projects p ON p.id = t.project_id
               WHERE t.project_id IN (${projects.map(() => '?').join(',')}) AND t.status != 'done' AND t.owner_id IS NOT NULL
                 AND (t.due_date IS NULL OR t.due_date < ?)`,
             ...projects,
             endStr,
-          )
-          .filter((t) => canViewTask(db, auth, t))
+          )), (t) => canViewTask(db, auth, t)))
       : [];
-    let people = db.all(
+    let people = await db.all(
       `SELECT u.id, u.name, u.color, u.title FROM memberships m JOIN users u ON u.id = m.user_id
         WHERE m.workspace_id = ? AND m.deactivated_at IS NULL AND m.role != 'guest' ORDER BY u.name`,
       auth.workspaceId,
     );
     if (q.teamId) {
-      const members = new Set(db.all('SELECT user_id FROM team_members WHERE team_id = ?', q.teamId).map((m) => m.user_id));
+      const members = new Set((await db.all('SELECT user_id FROM team_members WHERE team_id = ?', q.teamId)).map((m) => m.user_id));
       people = people.filter((p) => members.has(p.id));
     }
     const bucketOf = (t: Row) => {
@@ -330,70 +329,65 @@ export function productivityRouter(ctx: Ctx) {
 
   // ======================= Workspace insights (§2 success measures) =======================
 
-  r.get('/admin/insights', (req, res) => {
+  r.get('/admin/insights', async (req, res) => {
     const auth = authOf(req);
     requireRole(auth, 'lead');
-    requireFeature(ctx, auth.workspaceId, 'insights');
+    await requireFeature(ctx, auth.workspaceId, 'insights');
     const ws = auth.workspaceId;
     const t0 = today();
     const weekStarts = Array.from({ length: 8 }, (_, i) => new Date(Date.now() - (8 - i) * 7 * 86_400_000));
-    const weekly = weekStarts.map((from) => {
+    const weekly = (await Promise.all(weekStarts.map(async (from) => {
       const to = new Date(from.getTime() + 7 * 86_400_000);
       const a = from.toISOString();
       const b = to.toISOString();
-      const active = db.get(
+      const active = (await db.get(
         `SELECT COUNT(DISTINCT user_id) AS n FROM (
            SELECT user_id FROM sessions WHERE workspace_id = ? AND created_at >= ? AND created_at < ?
            UNION SELECT actor_id AS user_id FROM activity WHERE workspace_id = ? AND created_at >= ? AND created_at < ?
            UNION SELECT m.user_id FROM messages m JOIN channels c ON c.id = m.channel_id WHERE c.workspace_id = ? AND m.created_at >= ? AND m.created_at < ?)`,
         ws, a, b, ws, a, b, ws, a, b,
-      )!.n;
-      const messages = db.get(
+      ))!.n;
+      const messages = (await db.get(
         `SELECT COUNT(*) AS n FROM messages m JOIN channels c ON c.id = m.channel_id WHERE c.workspace_id = ? AND m.created_at >= ? AND m.created_at < ?`,
         ws, a, b,
-      )!.n;
-      const completed = db.get(`SELECT COUNT(*) AS n FROM tasks WHERE workspace_id = ? AND completed_at >= ? AND completed_at < ?`, ws, a, b)!.n;
-      const decisions = db.get(`SELECT COUNT(*) AS n FROM decisions WHERE workspace_id = ? AND created_at >= ? AND created_at < ?`, ws, a, b)!.n;
+      ))!.n;
+      const completed = (await db.get(`SELECT COUNT(*) AS n FROM tasks WHERE workspace_id = ? AND completed_at >= ? AND completed_at < ?`, ws, a, b))!.n;
+      const decisions = (await db.get(`SELECT COUNT(*) AS n FROM decisions WHERE workspace_id = ? AND created_at >= ? AND created_at < ?`, ws, a, b))!.n;
       return { week_of: a.slice(0, 10), active_people: active, messages, tasks_completed: completed, decisions };
-    });
-    const members = db.get(`SELECT COUNT(*) AS n FROM memberships WHERE workspace_id = ? AND deactivated_at IS NULL`, ws)!.n;
-    const openProjectTasks = db.get(
-      `SELECT COUNT(*) AS total, SUM(t.owner_id IS NOT NULL) AS owned, SUM(t.due_date IS NOT NULL) AS dated, SUM(t.due_date < ?) AS overdue
+    })));
+    const members = (await db.get(`SELECT COUNT(*) AS n FROM memberships WHERE workspace_id = ? AND deactivated_at IS NULL`, ws))!.n;
+    const openProjectTasks = (await db.get(
+      `SELECT COUNT(*) AS total, SUM(CASE WHEN t.owner_id IS NOT NULL THEN 1 ELSE 0 END) AS owned, SUM(CASE WHEN t.due_date IS NOT NULL THEN 1 ELSE 0 END) AS dated, SUM(CASE WHEN t.due_date < ? THEN 1 ELSE 0 END) AS overdue
          FROM tasks t JOIN projects p ON p.id = t.project_id WHERE t.workspace_id = ? AND t.status != 'done' AND p.archived_at IS NULL`,
       t0,
       ws,
-    )!;
-    const activeProjects = db.get(`SELECT COUNT(*) AS n FROM projects WHERE workspace_id = ? AND archived_at IS NULL`, ws)!.n;
+    ))!;
+    const activeProjects = (await db.get(`SELECT COUNT(*) AS n FROM projects WHERE workspace_id = ? AND archived_at IS NULL`, ws))!.n;
     const since30 = new Date(Date.now() - 30 * 86_400_000).toISOString();
-    const projectsWithDecisions = db.get(
+    const projectsWithDecisions = (await db.get(
       `SELECT COUNT(DISTINCT project_id) AS n FROM decisions WHERE workspace_id = ? AND project_id IS NOT NULL AND created_at >= ?`,
       ws,
       since30,
-    )!.n;
-    const projectsWithUpdates = db.get(
+    ))!.n;
+    const projectsWithUpdates = (await db.get(
       `SELECT COUNT(DISTINCT s.project_id) AS n FROM status_updates s JOIN projects p ON p.id = s.project_id WHERE p.workspace_id = ? AND s.created_at >= ?`,
       ws,
       new Date(Date.now() - 14 * 86_400_000).toISOString(),
-    )!.n;
-    const endedMeetings = db.get(`SELECT COUNT(*) AS n FROM meetings WHERE workspace_id = ? AND ended_at >= ?`, ws, since30)!.n;
-    const meetingsWithOutcomes = db.get(
+    ))!.n;
+    const endedMeetings = (await db.get(`SELECT COUNT(*) AS n FROM meetings WHERE workspace_id = ? AND ended_at >= ?`, ws, since30))!.n;
+    const meetingsWithOutcomes = (await db.get(
       `SELECT COUNT(*) AS n FROM meetings m WHERE m.workspace_id = ? AND m.ended_at >= ?
          AND (EXISTS (SELECT 1 FROM decisions d WHERE d.meeting_id = m.id) OR EXISTS (SELECT 1 FROM tasks t WHERE t.meeting_id = m.id))`,
       ws,
       since30,
-    )!.n;
-    const cycle = db.get(
-      `SELECT AVG(julianday(completed_at) - julianday(created_at)) AS days FROM tasks WHERE workspace_id = ? AND completed_at >= ?`,
+    ))!.n;
+    const cycle = (await db.get(
+      `SELECT AVG(${daysBetween(db, 'created_at', 'completed_at')}) AS days FROM tasks WHERE workspace_id = ? AND completed_at >= ?`,
       ws,
       since30,
-    )!.days;
-    const interruptions = db.get(
-      `SELECT COUNT(*) * 1.0 / MAX(1, (SELECT COUNT(*) FROM memberships WHERE workspace_id = ? AND deactivated_at IS NULL)) / 7 AS per_day
-         FROM notifications WHERE workspace_id = ? AND created_at >= ?`,
-      ws,
-      ws,
-      new Date(Date.now() - 7 * 86_400_000).toISOString(),
-    )!.per_day;
+    ))!.days;
+    const weekNotifications = (await db.get('SELECT COUNT(*) AS n FROM notifications WHERE workspace_id = ? AND created_at >= ?', ws, new Date(Date.now() - 7 * 86_400_000).toISOString()))!.n;
+    const interruptions = weekNotifications / Math.max(1, members) / 7;
     const pct = (n: number, d: number) => (d ? Math.round((n / d) * 100) : null);
     const lastWeek = weekly[weekly.length - 1];
     res.json({
@@ -418,53 +412,53 @@ export function productivityRouter(ctx: Ctx) {
 
 // ======================= Background jobs =======================
 
-const roleOf = (ctx: Ctx, workspaceId: string, userId: string) =>
-  ctx.db.get('SELECT role FROM memberships WHERE workspace_id = ? AND user_id = ? AND deactivated_at IS NULL', workspaceId, userId)?.role as Role | undefined;
+const roleOf = async (ctx: Ctx, workspaceId: string, userId: string) =>
+  (await ctx.db.get('SELECT role FROM memberships WHERE workspace_id = ? AND user_id = ? AND deactivated_at IS NULL', workspaceId, userId))?.role as Role | undefined;
 
 /** Deliver due personal reminders. */
-export function processReminders(ctx: Ctx) {
+export async function processReminders(ctx: Ctx) {
   const { db } = ctx;
-  const due = db.all(`SELECT * FROM reminders WHERE sent_at IS NULL AND remind_at <= ? LIMIT 100`, now());
+  const due = await db.all(`SELECT * FROM reminders WHERE sent_at IS NULL AND remind_at <= ? LIMIT 100`, now());
   for (const r of due) {
-    db.run('UPDATE reminders SET sent_at = ? WHERE id = ?', now(), r.id);
-    const role = roleOf(ctx, r.workspace_id, r.user_id);
+    await db.run('UPDATE reminders SET sent_at = ? WHERE id = ?', now(), r.id);
+    const role = await roleOf(ctx, r.workspace_id, r.user_id);
     if (!role) continue;
     const auth: Auth = { userId: r.user_id, workspaceId: r.workspace_id, role };
     let link = '/inbox';
     let title = r.note ? `Reminder: ${r.note}` : 'Reminder';
     if (r.message_id) {
-      const m = db.get('SELECT * FROM messages WHERE id = ?', r.message_id);
-      const c = m && db.get('SELECT * FROM channels WHERE id = ?', m.channel_id);
-      if (!m || !c || !canViewChannel(db, auth, c)) continue;
+      const m = await db.get('SELECT * FROM messages WHERE id = ?', r.message_id);
+      const c = m && await db.get('SELECT * FROM channels WHERE id = ?', m.channel_id);
+      if (!m || !c || !await canViewChannel(db, auth, c)) continue;
       link = `/channels/${c.id}?message=${m.parent_id ?? m.id}`;
       if (!r.note) title = `Reminder about a message in ${c.kind === 'dm' ? 'a direct message' : `#${c.name}`}`;
     }
     if (r.task_id) {
-      const t = db.get('SELECT * FROM tasks WHERE id = ?', r.task_id);
-      if (!t || !canViewTask(db, auth, t)) continue;
+      const t = await db.get('SELECT * FROM tasks WHERE id = ?', r.task_id);
+      if (!t || !await canViewTask(db, auth, t)) continue;
       link = `/tasks/${t.id}`;
       if (!r.note) title = `Reminder: “${t.title}”`;
     }
-    notify(ctx, r.workspace_id, { userId: r.user_id, kind: 'reminder', title, link, urgent: false });
+    await notify(ctx, r.workspace_id, { userId: r.user_id, kind: 'reminder', title, link, urgent: false });
   }
   return due.length;
 }
 
 /** Send scheduled messages as their author, re-checking access at send time. */
-export function processScheduledMessages(ctx: Ctx) {
+export async function processScheduledMessages(ctx: Ctx) {
   const { db } = ctx;
-  const due = db.all(`SELECT * FROM scheduled_messages WHERE sent_message_id IS NULL AND failed_reason IS NULL AND send_at <= ? LIMIT 100`, now());
+  const due = await db.all(`SELECT * FROM scheduled_messages WHERE sent_message_id IS NULL AND failed_reason IS NULL AND send_at <= ? LIMIT 100`, now());
   for (const s of due) {
-    const role = roleOf(ctx, s.workspace_id, s.user_id);
-    const channel = db.get('SELECT * FROM channels WHERE id = ?', s.channel_id);
+    const role = await roleOf(ctx, s.workspace_id, s.user_id);
+    const channel = await db.get('SELECT * FROM channels WHERE id = ?', s.channel_id);
     const auth: Auth | null = role ? { userId: s.user_id, workspaceId: s.workspace_id, role } : null;
     try {
       if (!auth || !channel) throw new HttpError(403, 'You no longer have access to this conversation');
-      const message = postMessage(ctx, auth, channel, { body: s.body, parentId: s.parent_id });
-      db.run('UPDATE scheduled_messages SET sent_message_id = ? WHERE id = ?', message.id, s.id);
+      const message = await postMessage(ctx, auth, channel, { body: s.body, parentId: s.parent_id });
+      await db.run('UPDATE scheduled_messages SET sent_message_id = ? WHERE id = ?', message.id, s.id);
     } catch (error) {
-      db.run('UPDATE scheduled_messages SET failed_reason = ? WHERE id = ?', (error as Error).message.slice(0, 200), s.id);
-      if (auth) notify(ctx, s.workspace_id, { userId: s.user_id, kind: 'reminder', title: 'A scheduled message could not be sent', body: (error as Error).message, link: '/later' });
+      await db.run('UPDATE scheduled_messages SET failed_reason = ? WHERE id = ?', (error as Error).message.slice(0, 200), s.id);
+      if (auth) await notify(ctx, s.workspace_id, { userId: s.user_id, kind: 'reminder', title: 'A scheduled message could not be sent', body: (error as Error).message, link: '/later' });
     }
   }
   return due.length;
@@ -474,24 +468,24 @@ export function processScheduledMessages(ctx: Ctx) {
  * Deadline reminders: owners hear about tasks due tomorrow and, once, about
  * tasks that became overdue. Overdue tasks also fire "task.overdue" automations.
  */
-export function processDeadlines(ctx: Ctx, at = new Date()) {
+export async function processDeadlines(ctx: Ctx, at = new Date()) {
   const { db } = ctx;
   const t0 = at.toISOString().slice(0, 10);
   const tomorrow = new Date(at.getTime() + 86_400_000).toISOString().slice(0, 10);
-  const once = (taskId: string, due: string, kind: string) => {
-    const res = db.run('INSERT OR IGNORE INTO deadline_reminders (task_id, due_date, kind, created_at) VALUES (?, ?, ?, ?)', taskId, due, kind, now());
+  const once = async (taskId: string, due: string, kind: string) => {
+    const res = await db.run('INSERT OR IGNORE INTO deadline_reminders (task_id, due_date, kind, created_at) VALUES (?, ?, ?, ?)', taskId, due, kind, now());
     return res.changes > 0;
   };
   let sent = 0;
-  for (const t of db.all(`SELECT * FROM tasks WHERE status != 'done' AND owner_id IS NOT NULL AND due_date = ?`, tomorrow)) {
-    if (!once(t.id, t.due_date, 'due_soon')) continue;
-    notify(ctx, t.workspace_id, { userId: t.owner_id, kind: 'deadline', title: `“${t.title}” is due tomorrow`, link: `/tasks/${t.id}` });
+  for (const t of await db.all(`SELECT * FROM tasks WHERE status != 'done' AND owner_id IS NOT NULL AND due_date = ?`, tomorrow)) {
+    if (!await once(t.id, t.due_date, 'due_soon')) continue;
+    await notify(ctx, t.workspace_id, { userId: t.owner_id, kind: 'deadline', title: `“${t.title}” is due tomorrow`, link: `/tasks/${t.id}` });
     sent += 1;
   }
-  for (const t of db.all(`SELECT * FROM tasks WHERE status != 'done' AND due_date IS NOT NULL AND due_date < ?`, t0)) {
-    if (!once(t.id, t.due_date, 'overdue')) continue;
-    if (t.owner_id) notify(ctx, t.workspace_id, { userId: t.owner_id, kind: 'deadline', title: `“${t.title}” is overdue`, body: `It was due ${t.due_date}.`, link: `/tasks/${t.id}` });
-    runAutomations(ctx, 'task.overdue', t);
+  for (const t of await db.all(`SELECT * FROM tasks WHERE status != 'done' AND due_date IS NOT NULL AND due_date < ?`, t0)) {
+    if (!await once(t.id, t.due_date, 'overdue')) continue;
+    if (t.owner_id) await notify(ctx, t.workspace_id, { userId: t.owner_id, kind: 'deadline', title: `“${t.title}” is overdue`, body: `It was due ${t.due_date}.`, link: `/tasks/${t.id}` });
+    await runAutomations(ctx, 'task.overdue', t);
     sent += 1;
   }
   return sent;
@@ -501,14 +495,14 @@ export function processDeadlines(ctx: Ctx, at = new Date()) {
  * Retention (§5.3, §5.7): permanently delete messages older than the
  * workspace's retention period, unless a legal hold is in place.
  */
-export function applyRetention(ctx: Ctx, at = new Date()) {
+export async function applyRetention(ctx: Ctx, at = new Date()) {
   const { db } = ctx;
   let total = 0;
-  for (const ws of db.all('SELECT id, retention_days FROM workspaces WHERE retention_days IS NOT NULL AND legal_hold = 0')) {
+  for (const ws of await db.all('SELECT id, retention_days FROM workspaces WHERE retention_days IS NOT NULL AND legal_hold = 0')) {
     // A workspace that no longer has retention on its plan keeps everything (never delete because of a downgrade).
-    if (!hasFeature(ctx, ws.id, 'retention')) continue;
+    if (!await hasFeature(ctx, ws.id, 'retention')) continue;
     const cutoff = new Date(at.getTime() - ws.retention_days * 86_400_000).toISOString();
-    const res = db.run(
+    const res = await db.run(
       // A thread is kept while any reply is newer than the cutoff; old replies inside it are still removed.
       `DELETE FROM messages WHERE created_at < ? AND channel_id IN (SELECT id FROM channels WHERE workspace_id = ?)
          AND (parent_id IS NOT NULL OR NOT EXISTS (SELECT 1 FROM messages r WHERE r.parent_id = messages.id AND r.created_at >= ?))`,
@@ -517,7 +511,7 @@ export function applyRetention(ctx: Ctx, at = new Date()) {
       cutoff,
     );
     if (res.changes) {
-      audit(ctx, ws.id, null, 'retention.messages_deleted', 'workspace', ws.id, { count: Number(res.changes), before: cutoff.slice(0, 10) });
+      await audit(ctx, ws.id, null, 'retention.messages_deleted', 'workspace', ws.id, { count: Number(res.changes), before: cutoff.slice(0, 10) });
       total += Number(res.changes);
     }
   }

@@ -23,16 +23,23 @@ export class RealtimeHub {
   private wss?: WebSocketServer;
   private heartbeat?: NodeJS.Timeout;
 
-  attach(server: Server, authenticate: (req: IncomingMessage) => Auth | null) {
+  attach(server: Server, authenticate: (req: IncomingMessage) => Promise<Auth | null>) {
     this.wss = new WebSocketServer({ noServer: true });
     server.on('upgrade', (req, socket, head) => {
       if (!req.url?.startsWith('/ws')) return socket.destroy();
-      const auth = authenticate(req);
-      if (!auth) {
-        socket.write('HTTP/1.1 401 Unauthorized\r\n\r\n');
-        return socket.destroy();
-      }
-      this.wss!.handleUpgrade(req, socket, head, (ws) => this.register(ws, auth));
+      authenticate(req).then(
+        (auth) => {
+          if (!auth) {
+            socket.write('HTTP/1.1 401 Unauthorized\r\n\r\n');
+            return socket.destroy();
+          }
+          this.wss!.handleUpgrade(req, socket, head, (ws) => this.register(ws, auth));
+        },
+        (error) => {
+          console.error('WebSocket authentication failed', error);
+          socket.destroy();
+        },
+      );
     });
     this.heartbeat = setInterval(() => {
       for (const client of this.clients) {
@@ -56,7 +63,7 @@ export class RealtimeHub {
       try {
         const msg = JSON.parse(raw.toString());
         if (msg.type === 'typing' && typeof msg.channelId === 'string') {
-          this.onTyping?.(auth, msg.channelId);
+          this.onTyping?.(auth, msg.channelId).catch((error) => console.error('Typing event failed', error));
         }
       } catch {
         /* ignore malformed frames */
@@ -65,14 +72,14 @@ export class RealtimeHub {
     socket.on('close', () => {
       this.clients.delete(client);
       if (!this.isOnline(auth.workspaceId, auth.userId)) {
-        this.publish(auth.workspaceId, { type: 'presence', userId: auth.userId, online: false });
+        void this.publish(auth.workspaceId, { type: 'presence', userId: auth.userId, online: false });
       }
     });
     socket.send(JSON.stringify({ type: 'hello', online: this.onlineUsers(auth.workspaceId) }));
-    if (!wasOnline) this.publish(auth.workspaceId, { type: 'presence', userId: auth.userId, online: true });
+    if (!wasOnline) void this.publish(auth.workspaceId, { type: 'presence', userId: auth.userId, online: true });
   }
 
-  onTyping?: (auth: Auth, channelId: string) => void;
+  onTyping?: (auth: Auth, channelId: string) => Promise<void>;
 
   isOnline(workspaceId: string, userId: string) {
     for (const c of this.clients) if (c.auth.workspaceId === workspaceId && c.auth.userId === userId) return true;
@@ -83,18 +90,28 @@ export class RealtimeHub {
     return [...new Set([...this.clients].filter((c) => c.auth.workspaceId === workspaceId).map((c) => c.auth.userId))];
   }
 
-  /** Publish to every connected client in a workspace that passes the filter. */
-  publish(workspaceId: string, event: RealtimeEvent, filter?: (auth: Auth) => boolean) {
+  /** Deliveries run one after another so events arrive in the order they were published. */
+  private delivery: Promise<void> = Promise.resolve();
+
+  /**
+   * Publish to every connected client in a workspace that passes the filter. Filters may
+   * query the database; a client is skipped if its filter fails. Returns once delivered.
+   */
+  publish(workspaceId: string, event: RealtimeEvent, filter?: (auth: Auth) => boolean | Promise<boolean>) {
     const data = JSON.stringify(event);
-    for (const client of this.clients) {
-      if (client.auth.workspaceId !== workspaceId) continue;
-      if (filter && !filter(client.auth)) continue;
-      if (client.socket.readyState === WebSocket.OPEN) client.socket.send(data);
-    }
+    const deliver = async () => {
+      const targets = [...this.clients].filter((c) => c.auth.workspaceId === workspaceId);
+      const allowed = filter ? await Promise.all(targets.map(async (c) => Promise.resolve(await filter(c.auth)).catch(() => false))) : targets.map(() => true);
+      targets.forEach((client, i) => {
+        if (allowed[i] === true && client.socket.readyState === WebSocket.OPEN) client.socket.send(data);
+      });
+    };
+    this.delivery = this.delivery.then(deliver, deliver).catch((error) => console.error('Realtime delivery failed', error));
+    return this.delivery;
   }
 
   toUser(workspaceId: string, userId: string, event: RealtimeEvent) {
-    this.publish(workspaceId, event, (auth) => auth.userId === userId);
+    return this.publish(workspaceId, event, (auth) => auth.userId === userId);
   }
 
   /** Drop sockets for a user, e.g. after deactivation or logout. */

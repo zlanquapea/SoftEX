@@ -45,7 +45,7 @@ async function operator() {
   return agent;
 }
 
-const endTrial = (workspaceId: string) => db().run('UPDATE workspaces SET trial_ends_at = ? WHERE id = ?', iso(-1), workspaceId);
+const endTrial = async (workspaceId: string) => await db().run('UPDATE workspaces SET trial_ends_at = ? WHERE id = ?', iso(-1), workspaceId);
 
 describe('sign-up on a hosted server', () => {
   it('starts a 30-day Business trial and asks for email confirmation', async () => {
@@ -77,7 +77,7 @@ describe('sign-up on a hosted server', () => {
     const res = await env.agent().post('/api/auth/register').send({ name: 'A', email: 'a@example.com', password: 'password123', workspaceName: 'Acme' });
     expect(res.status).toBe(400);
     const owner = await registerOwner(env);
-    const user = db().get('SELECT terms_accepted_at, terms_version FROM users WHERE id = ?', owner.me.user.id)!;
+    const user = (await db().get('SELECT terms_accepted_at, terms_version FROM users WHERE id = ?', owner.me.user.id))!;
     expect(user.terms_accepted_at).toBeTruthy();
     expect(user.terms_version).toBe((await env.agent().get('/api/public/plans')).body.terms_version);
   });
@@ -106,7 +106,7 @@ describe('plan limits', () => {
     env = saas();
     const owner = await verifiedOwner();
     const wsId = owner.me.workspace.id;
-    endTrial(wsId);
+    await endTrial(wsId);
     expect((await owner.agent.get('/api/me')).body.workspace.plan).toMatchObject({ id: 'free', status: 'free', features: [] });
 
     for (let i = 0; i < 9; i++) await invite(env, owner.agent);
@@ -138,13 +138,13 @@ describe('plan limits', () => {
   it('blocks guests on Free and uploads beyond the storage allowance', async () => {
     env = saas();
     const owner = await verifiedOwner();
-    endTrial(owner.me.workspace.id);
+    await endTrial(owner.me.workspace.id);
     const general = (await owner.agent.get('/api/channels')).body.find((c: { name: string }) => c.name === 'general');
     const guest = await owner.agent.post('/api/admin/invitations').send({ email: 'g@example.com', role: 'guest', channelIds: [general.id] });
     expect([guest.status, guest.body.details.feature]).toEqual([402, 'guests']);
 
     expect((await owner.agent.post('/api/files').attach('file', Buffer.from('hello'), 'a.txt')).status).toBe(201);
-    db().run('UPDATE file_versions SET size = ?', 2 * 1024 ** 3);
+    await db().run('UPDATE file_versions SET size = ?', 2 * 1024 ** 3);
     const over = await owner.agent.post('/api/files').attach('file', Buffer.from('hello'), 'b.txt');
     expect([over.status, over.body.details.limit]).toEqual([402, 'storage']);
   });
@@ -160,7 +160,7 @@ describe('plan limits', () => {
     expect((await ask()).status).toBe(200);
     const third = await ask();
     expect([third.status, third.body.details.limit]).toEqual([402, 'ai']);
-    expect(db().get('SELECT COUNT(*) AS n FROM ai_usage')!.n).toBe(2);
+    expect((await db().get('SELECT COUNT(*) AS n FROM ai_usage'))!.n).toBe(2);
   });
 
   it('stops automations from running after a downgrade, without deleting them', async () => {
@@ -169,11 +169,11 @@ describe('plan limits', () => {
     const project = (await owner.agent.post('/api/projects').send({ name: 'Ops' })).body;
     await owner.agent.post(`/api/projects/${project.id}/automations`).send({ name: 'Urgent', triggerType: 'task.created', actionType: 'set_priority', actionConfig: { priority: 'urgent' } });
     await owner.agent.post('/api/tasks').send({ title: 'A', projectId: project.id });
-    expect(db().get(`SELECT priority FROM tasks WHERE title = 'A'`)!.priority).toBe('urgent');
-    endTrial(owner.me.workspace.id);
+    expect((await db().get(`SELECT priority FROM tasks WHERE title = 'A'`))!.priority).toBe('urgent');
+    await endTrial(owner.me.workspace.id);
     await owner.agent.post('/api/tasks').send({ title: 'B', projectId: project.id });
-    expect(db().get(`SELECT priority FROM tasks WHERE title = 'B'`)!.priority).toBe('medium');
-    expect(db().get('SELECT COUNT(*) AS n FROM automations')!.n).toBe(1);
+    expect((await db().get(`SELECT priority FROM tasks WHERE title = 'B'`))!.priority).toBe('medium');
+    expect((await db().get('SELECT COUNT(*) AS n FROM automations'))!.n).toBe(1);
   });
 });
 
@@ -252,10 +252,10 @@ describe('paying with mobile money', () => {
     env = saas();
     const owner = await verifiedOwner();
     const wsId = owner.me.workspace.id;
-    db().run(`UPDATE workspaces SET plan = 'standard', paid_through = ?, trial_ends_at = ? WHERE id = ?`, iso(-3), iso(-40), wsId);
+    await db().run(`UPDATE workspaces SET plan = 'standard', paid_through = ?, trial_ends_at = ? WHERE id = ?`, iso(-3), iso(-40), wsId);
     expect((await owner.agent.get('/api/me')).body.workspace.plan).toMatchObject({ id: 'standard', status: 'grace' });
     expect((await owner.agent.get('/api/workload')).status).toBe(200);
-    db().run('UPDATE workspaces SET paid_through = ? WHERE id = ?', iso(-8), wsId);
+    await db().run('UPDATE workspaces SET paid_through = ? WHERE id = ?', iso(-8), wsId);
     expect((await owner.agent.get('/api/me')).body.workspace.plan).toMatchObject({ id: 'free', status: 'free' });
     expect((await owner.agent.get('/api/workload')).status).toBe(402);
   });
@@ -265,13 +265,13 @@ describe('billing reminders', () => {
   it('warns before a trial ends, once', async () => {
     env = saas();
     const owner = await verifiedOwner();
-    db().run('UPDATE workspaces SET trial_ends_at = ? WHERE id = ?', iso(5), owner.me.workspace.id);
-    expect(processBillingNotices(env.softex.ctx)).toBe(1);
-    expect(processBillingNotices(env.softex.ctx)).toBe(0);
+    await db().run('UPDATE workspaces SET trial_ends_at = ? WHERE id = ?', iso(5), owner.me.workspace.id);
+    expect(await processBillingNotices(env.softex.ctx)).toBe(1);
+    expect(await processBillingNotices(env.softex.ctx)).toBe(0);
     await flushJobs(env);
     expect(env.sent.some((m) => m.to === owner.email && m.subject === 'Your SoftEX trial ends in 5 days')).toBe(true);
-    endTrial(owner.me.workspace.id);
-    expect(processBillingNotices(env.softex.ctx)).toBe(1);
+    await endTrial(owner.me.workspace.id);
+    expect(await processBillingNotices(env.softex.ctx)).toBe(1);
     await flushJobs(env);
     expect(env.sent.some((m) => m.subject.endsWith('is now on the Free plan'))).toBe(true);
   });

@@ -54,7 +54,7 @@ describe('deleting a workspace', () => {
     expect(stored().length).toBe(2);
 
     for (const table of ['meetings', 'decisions', 'risks', 'automations', 'reminders', 'scheduled_messages', 'requests', 'page_versions', 'task_dependencies', 'status_updates', 'milestones', 'reactions', 'saved_messages', 'teams', 'invitations', 'notifications', 'checklist_items', 'task_comments']) {
-      expect([table, db().get(`SELECT COUNT(*) AS n FROM ${table}`)!.n]).not.toEqual([table, 0]);
+      expect([table, (await db().get(`SELECT COUNT(*) AS n FROM ${table}`))!.n]).not.toEqual([table, 0]);
     }
     // Wrong password, wrong name, and non-owners are refused.
     expect((await owner.agent.delete('/api/admin/workspace').send({ password: 'nope', confirmName: "Ada's Co" })).status).toBe(401);
@@ -65,15 +65,19 @@ describe('deleting a workspace', () => {
     expect(res.status).toBe(200);
     expect(res.body).toEqual({ deleted: true, me: null });
 
-    const tables = db().all(`SELECT name FROM sqlite_master WHERE type = 'table' AND sql LIKE '%workspace_id%' AND name != 'platform_events'`).map((t) => t.name);
-    for (const table of tables) expect([table, db().get(`SELECT COUNT(*) AS n FROM ${table} WHERE workspace_id = ?`, wsId)!.n]).toEqual([table, 0]);
+    const tables = (
+      db().dialect === 'postgres'
+        ? await db().all(`SELECT table_name AS name FROM information_schema.columns WHERE column_name = 'workspace_id' AND table_schema = current_schema() AND table_name != 'platform_events'`)
+        : await db().all(`SELECT name FROM sqlite_master WHERE type = 'table' AND sql LIKE '%workspace_id%' AND name != 'platform_events'`)
+    ).map((t) => t.name);
+    for (const table of tables) expect([table, (await db().get(`SELECT COUNT(*) AS n FROM ${table} WHERE workspace_id = ?`, wsId))!.n]).toEqual([table, 0]);
     // Child tables without a workspace_id column cascade too (the other workspace has none of these rows).
     for (const table of ['messages', 'status_updates', 'page_versions', 'task_dependencies', 'checklist_items', 'task_comments', 'reactions', 'saved_messages', 'milestones', 'meeting_participants', 'automation_runs', 'team_members']) {
-      expect([table, db().get(`SELECT COUNT(*) AS n FROM ${table}`)!.n]).toEqual([table, 0]);
+      expect([table, (await db().get(`SELECT COUNT(*) AS n FROM ${table}`))!.n]).toEqual([table, 0]);
     }
-    expect(db().get('SELECT COUNT(*) AS n FROM file_versions')!.n).toBe(0);
+    expect((await db().get('SELECT COUNT(*) AS n FROM file_versions'))!.n).toBe(0);
     expect(stored().length).toBe(0);
-    expect(db().get(`SELECT * FROM platform_events WHERE action = 'workspace.deleted'`)).toMatchObject({ workspace_id: wsId, workspace_name: "Ada's Co", actor: owner.email });
+    expect(await db().get(`SELECT * FROM platform_events WHERE action = 'workspace.deleted'`)).toMatchObject({ workspace_id: wsId, workspace_name: "Ada's Co", actor: owner.email });
 
     // Everyone is signed out of it; the other workspace still works.
     expect((await owner.agent.get('/api/me')).status).toBe(401);
@@ -109,10 +113,10 @@ describe('deleting an account', () => {
     expect((await member.agent.delete('/api/me').send({ password: 'wrong' })).status).toBe(401);
     expect((await member.agent.delete('/api/me').send({ password: 'password123' })).status).toBe(200);
 
-    const user = db().get('SELECT * FROM users WHERE id = ?', member.id)!;
+    const user = (await db().get('SELECT * FROM users WHERE id = ?', member.id))!;
     expect(user.name).toBe('Deleted user');
     expect(user.email).not.toContain('example.com');
-    expect(db().get('SELECT COUNT(*) AS n FROM api_tokens WHERE user_id = ? AND revoked_at IS NULL', member.id)!.n).toBe(0);
+    expect((await db().get('SELECT COUNT(*) AS n FROM api_tokens WHERE user_id = ? AND revoked_at IS NULL', member.id))!.n).toBe(0);
     expect((await member.agent.get('/api/me')).status).toBe(401);
     expect((await env.agent().post('/api/auth/login').send({ email: member.email, password: 'password123' })).status).toBe(401);
     const messages = (await owner.agent.get(`/api/channels/${general.id}/messages`)).body.messages;

@@ -41,10 +41,10 @@ ${paragraphs}${button}
 </td></tr></table></td></tr></table></body></html>`;
 }
 
-export function queueEmail(ctx: Ctx, input: EmailInput) {
+export async function queueEmail(ctx: Ctx, input: EmailInput) {
   const text = input.action ? `${input.text}\n\n${input.action.label}: ${input.action.url}` : input.text;
   const id = newId();
-  ctx.db.insert('outbound_emails', {
+  await ctx.db.insert('outbound_emails', {
     id,
     workspace_id: input.workspaceId ?? null,
     kind: input.kind,
@@ -74,7 +74,7 @@ const MAX_ATTEMPTS = 6;
 
 /** Deliver due emails. Returns the number processed. */
 export async function processEmailQueue(ctx: Ctx, limit = 20) {
-  const due = ctx.db.all(
+  const due = await ctx.db.all(
     `SELECT * FROM outbound_emails WHERE status = 'queued' AND next_attempt_at <= ? ORDER BY created_at LIMIT ?`,
     now(),
     limit,
@@ -83,7 +83,7 @@ export async function processEmailQueue(ctx: Ctx, limit = 20) {
   for (const email of due) {
     if (!transport) {
       // No SMTP configured: keep a record and log it so developers can follow links.
-      ctx.db.run(`UPDATE outbound_emails SET status = 'logged', last_error = ? WHERE id = ?`, 'Not delivered: SMTP is not configured', email.id);
+      await ctx.db.run(`UPDATE outbound_emails SET status = 'logged', last_error = ? WHERE id = ?`, 'Not delivered: SMTP is not configured', email.id);
       if (process.env.NODE_ENV !== 'test' && !process.env.VITEST) console.log(`[mail:log] to=${email.to_email} subject="${email.subject}"\n${email.text}\n`);
       continue;
     }
@@ -102,11 +102,11 @@ async function deliver(ctx: Ctx, transport: MailTransport, email: Row) {
       html: email.html || undefined,
       attachments: JSON.parse(email.attachments),
     });
-    ctx.db.run(`UPDATE outbound_emails SET status = 'sent', sent_at = ?, attempts = attempts + 1, last_error = NULL WHERE id = ?`, now(), email.id);
+    await ctx.db.run(`UPDATE outbound_emails SET status = 'sent', sent_at = ?, attempts = attempts + 1, last_error = NULL WHERE id = ?`, now(), email.id);
   } catch (error) {
     const attempts = email.attempts + 1;
     const backoffMs = Math.min(6 * 3_600_000, 60_000 * 2 ** attempts);
-    ctx.db.run(
+    await ctx.db.run(
       `UPDATE outbound_emails SET attempts = ?, last_error = ?, status = ?, next_attempt_at = ? WHERE id = ?`,
       attempts,
       String((error as Error).message).slice(0, 500),
@@ -129,8 +129,8 @@ const localHour = (tz: string, at = new Date()) => {
  * Daily digest (§5.5): at 08:00 in each person's time zone, email a summary of
  * notifications they have not read in the app. Skipped when there is nothing new.
  */
-export function queueDigests(ctx: Ctx, at = new Date()) {
-  const users = ctx.db.all(
+export async function queueDigests(ctx: Ctx, at = new Date()) {
+  const users = await ctx.db.all(
     `SELECT u.*, m.workspace_id, w.name AS workspace_name FROM users u
        JOIN memberships m ON m.user_id = u.id AND m.deactivated_at IS NULL
        JOIN workspaces w ON w.id = m.workspace_id
@@ -141,22 +141,22 @@ export function queueDigests(ctx: Ctx, at = new Date()) {
     if (localHour(u.timezone, at) !== 8) continue;
     const since = u.last_digest_at && u.last_digest_at > new Date(at.getTime() - 20 * 3_600_000).toISOString() ? null : u.last_digest_at ?? '';
     if (since === null) continue;
-    const items = ctx.db.all(
+    const items = await ctx.db.all(
       `SELECT title, link, kind FROM notifications WHERE user_id = ? AND workspace_id = ? AND read_at IS NULL AND created_at > ?
         ORDER BY urgent DESC, created_at DESC LIMIT 15`,
       u.id,
       u.workspace_id,
       since,
     );
-    ctx.db.run('UPDATE users SET last_digest_at = ? WHERE id = ?', at.toISOString(), u.id);
+    await ctx.db.run('UPDATE users SET last_digest_at = ? WHERE id = ?', at.toISOString(), u.id);
     if (!items.length) continue;
-    const total = ctx.db.get(
+    const total = (await ctx.db.get(
       'SELECT COUNT(*) AS n FROM notifications WHERE user_id = ? AND workspace_id = ? AND read_at IS NULL AND created_at > ?',
       u.id,
       u.workspace_id,
       since,
-    )!.n;
-    queueEmail(ctx, {
+    ))!.n;
+    await queueEmail(ctx, {
       workspaceId: u.workspace_id,
       kind: 'digest',
       to: u.email,

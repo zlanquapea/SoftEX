@@ -1,4 +1,6 @@
+import { randomUUID } from 'node:crypto';
 import { mkdtempSync, rmSync } from 'node:fs';
+import pg from 'pg';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import request from 'supertest';
@@ -17,15 +19,19 @@ export interface TestEnv {
   softex: SoftexApp;
   sent: SentMail[];
   agent: () => ReturnType<typeof request.agent>;
-  cleanup: () => void;
+  cleanup: () => Promise<void>;
 }
 
 export function setup(options: Partial<AppOptions> = {}): TestEnv {
   resetRateLimits();
   const dir = mkdtempSync(join(tmpdir(), 'softex-test-'));
   const sent: SentMail[] = [];
+  // SOFTEX_TEST_DATABASE_URL runs the suite on PostgreSQL, each test in its own schema.
+  const pgUrl = process.env.SOFTEX_TEST_DATABASE_URL;
+  const schema = pgUrl ? `t_${randomUUID().replace(/-/g, '').slice(0, 20)}` : undefined;
   const softex = createApp({
     dbPath: ':memory:',
+    databaseUrl: pgUrl ? `${pgUrl}${pgUrl.includes('?') ? '&' : '?'}schema=${schema}` : undefined,
     uploadDir: join(dir, 'uploads'),
     startJobs: false,
     publicUrl: 'https://softex.test',
@@ -38,8 +44,14 @@ export function setup(options: Partial<AppOptions> = {}): TestEnv {
     softex,
     sent,
     agent: () => request.agent(softex.app),
-    cleanup: () => {
-      softex.close();
+    cleanup: async () => {
+      await softex.close();
+      if (pgUrl) {
+        const client = new pg.Client({ connectionString: pgUrl });
+        await client.connect();
+        await client.query(`DROP SCHEMA IF EXISTS ${schema} CASCADE`);
+        await client.end();
+      }
       rmSync(dir, { recursive: true, force: true });
     },
   };
