@@ -22,6 +22,7 @@ import {
   type PlanId,
 } from '../plans.js';
 import { HttpError, badRequest, newId, notFound, now, parse, parseJson } from '../util.js';
+import { backupLocation, createBackup, lastBackup, listBackups, openBackup } from '../backup.js';
 
 /**
  * Billing for hosted (SaaS) servers.
@@ -423,6 +424,49 @@ export function operatorRouter(ctx: Ctx) {
 
   r.get('/operator/events', async (_req, res) => {
     res.json((await db.all('SELECT * FROM platform_events ORDER BY created_at DESC LIMIT 200')).map((e) => ({ ...e, detail: parseJson(e.detail, {}) })));
+  });
+
+  // ---------- Backups ----------
+
+  r.get('/operator/backups', async (_req, res) => {
+    const supported = db.dialect === 'sqlite';
+    res.json({
+      supported,
+      enabled: ctx.config.backups.enabled,
+      location: backupLocation(ctx),
+      every_hours: ctx.config.backups.everyHours,
+      keep: ctx.config.backups.keep,
+      last: await lastBackup(ctx),
+      backups: supported ? await listBackups(ctx) : [],
+    });
+  });
+
+  r.post('/operator/backups', async (req, res) => {
+    if (db.dialect !== 'sqlite') throw badRequest('This server uses PostgreSQL. Use your database provider’s backups.');
+    let backup;
+    try {
+      backup = await createBackup(ctx);
+    } catch (error) {
+      throw new HttpError(500, `The backup failed: ${(error as Error).message}`);
+    }
+    await platformEvent(ctx, await actor(req), 'backup.created', null, { name: backup.name, size: backup.size });
+    res.status(201).json(backup);
+  });
+
+  // The whole database (every workspace), so downloads are logged.
+  r.get('/operator/backups/:name/download', async (req, res) => {
+    const name = String(req.params.name);
+    const stream = await openBackup(ctx, name);
+    if (!stream) throw notFound('Backup');
+    await platformEvent(ctx, await actor(req), 'backup.downloaded', null, { name });
+    res.setHeader('Content-Type', 'application/gzip');
+    res.setHeader('Content-Disposition', `attachment; filename="${name}"`);
+    res.setHeader('Cache-Control', 'no-store');
+    stream.on('error', (error) => {
+      console.error('Backup download failed', error);
+      res.destroy();
+    });
+    stream.pipe(res);
   });
 
   return r;

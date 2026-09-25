@@ -4581,3 +4581,11 @@ button.tl-label:hover {
     padding: 20px;
   }
 }
+
+.plain-list {
+  list-style: none;
+  padding: 0;
+  margin: 0 0 12px;
+  display: grid;
+  gap: 4px;
+}

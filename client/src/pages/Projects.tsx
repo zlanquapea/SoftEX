@@ -106,6 +106,148 @@ interface ProjectFull extends Project {
 
 type Tab = 'overview' | 'tasks' | 'timeline' | 'automations' | 'decisions' | 'risks' | 'resources' | 'checkins' | 'activity';
 
+interface ImportPreview {
+  columns: Record<string, string | null>;
+  rows: { line: number; title: string; status: string; priority: string; due_date: string | null; owner: { id: string; name: string } | null; warnings: string[] }[];
+  errors: { line: number; message: string }[];
+}
+
+/** Bring tasks in from a CSV (Trello, Asana, Jira, Monday or a spreadsheet): preview first, then import. */
+function ImportTasks({ open, onClose, projectId, onDone }: { open: boolean; onClose: () => void; projectId: string; onDone: () => void }) {
+  const act = useAction();
+  const [csv, setCsv] = useState('');
+  const [fileName, setFileName] = useState('');
+  const [preview, setPreview] = useState<ImportPreview | null>(null);
+  const [busy, setBusy] = useState(false);
+  const close = () => {
+    setCsv('');
+    setFileName('');
+    setPreview(null);
+    onClose();
+  };
+  const run = async (dryRun: boolean) => {
+    setBusy(true);
+    try {
+      return await act(() => api.post(`/projects/${projectId}/import/tasks`, { csv, dryRun }));
+    } finally {
+      setBusy(false);
+    }
+  };
+  const warnings = preview?.rows.filter((r) => r.warnings.length).length ?? 0;
+  return (
+    <Modal open={open} onClose={close} title="Import tasks" wide>
+      {!preview ? (
+        <div className="form">
+          <p className="muted">
+            Upload a CSV exported from Trello, Asana, Jira, Monday or a spreadsheet. SoftEX recognises columns such as <em>Title</em>, <em>Description</em>,{' '}
+            <em>Status</em>, <em>Priority</em>, <em>Due date</em>, <em>Start date</em>, <em>Assignee</em> (email or full name) and <em>Estimate</em>. You’ll see a
+            preview before anything is created. Up to 500 tasks at a time.
+          </p>
+          <Field label="CSV file">
+            <input
+              type="file"
+              accept=".csv,text/csv"
+              onChange={async (e) => {
+                const file = e.target.files?.[0];
+                if (!file) return;
+                if (file.size > 900_000) {
+                  alert('That file is too large. Split it into smaller files of up to 500 tasks.');
+                  return;
+                }
+                setFileName(file.name);
+                setCsv(await file.text());
+              }}
+            />
+          </Field>
+          <div className="form-actions">
+            <button className="btn" onClick={close}>
+              Cancel
+            </button>
+            <button
+              className="btn primary"
+              disabled={!csv || busy}
+              onClick={async () => {
+                const res = await run(true);
+                if (res) setPreview(res);
+              }}
+            >
+              Preview
+            </button>
+          </div>
+        </div>
+      ) : (
+        <div className="form">
+          <p>
+            <strong>{preview.rows.length}</strong> task{preview.rows.length === 1 ? '' : 's'} ready to import from {fileName || 'your file'}
+            {warnings > 0 && <span className="muted"> · {warnings} with notes below</span>}
+            {preview.errors.length > 0 && <span className="muted"> · {preview.errors.length} row{preview.errors.length === 1 ? '' : 's'} skipped</span>}
+          </p>
+          <div className="table-scroll">
+            <table className="table">
+              <thead>
+                <tr>
+                  <th>Row</th>
+                  <th>Title</th>
+                  <th>Status</th>
+                  <th>Priority</th>
+                  <th>Due</th>
+                  <th>Owner</th>
+                </tr>
+              </thead>
+              <tbody>
+                {preview.rows.slice(0, 100).map((r) => (
+                  <tr key={r.line}>
+                    <td className="muted">{r.line}</td>
+                    <td>
+                      {r.title}
+                      {r.warnings.map((w) => (
+                        <small key={w} className="muted block">
+                          ⚠ {w}
+                        </small>
+                      ))}
+                    </td>
+                    <td>{r.status.replace('_', ' ')}</td>
+                    <td>{r.priority}</td>
+                    <td>{r.due_date ?? '—'}</td>
+                    <td>{r.owner?.name ?? '—'}</td>
+                  </tr>
+                ))}
+                {preview.errors.map((e) => (
+                  <tr key={`e${e.line}`}>
+                    <td className="muted">{e.line}</td>
+                    <td colSpan={5} className="muted">
+                      Skipped: {e.message}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          {preview.rows.length > 100 && <p className="muted small">Showing the first 100 rows.</p>}
+          <div className="form-actions">
+            <button className="btn" onClick={() => setPreview(null)}>
+              Back
+            </button>
+            <button
+              className="btn primary"
+              disabled={busy || !preview.rows.length}
+              onClick={async () => {
+                const res = await run(false);
+                if (res) {
+                  onDone();
+                  close();
+                }
+              }}
+            >
+              Import {preview.rows.length} task{preview.rows.length === 1 ? '' : 's'}
+            </button>
+          </div>
+        </div>
+      )}
+    </Modal>
+  );
+}
+
 export function ProjectDetail() {
   const { id } = useParams();
   const [params, setParams] = useSearchParams();
@@ -113,6 +255,7 @@ export function ProjectDetail() {
   const setTab = (t: Tab) => setParams(t === 'overview' ? {} : { tab: t });
   const { data: project, error, reload } = useApi<ProjectFull>(`/projects/${id}`);
   const [settings, setSettings] = useState(false);
+  const [importing, setImporting] = useState(false);
   const { has } = usePlan();
   useRealtime((e) => e.type === 'task.updated' && e.projectId === id && reload());
 
@@ -144,12 +287,18 @@ export function ProjectDetail() {
             ))}
           </div>
         </div>
+        {project.can_contribute && (
+          <button className="btn" onClick={() => setImporting(true)}>
+            <Icon name="upload" size={16} /> Import tasks
+          </button>
+        )}
         {project.can_manage && (
           <button className="btn" onClick={() => setSettings(true)}>
             <Icon name="settings" size={16} /> Settings
           </button>
         )}
       </div>
+      {project.can_contribute && <ImportTasks open={importing} onClose={() => setImporting(false)} projectId={project.id} onDone={reload} />}
       <Tabs
         value={tab}
         onChange={setTab}

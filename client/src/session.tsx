@@ -1,6 +1,6 @@
 import { createContext, useCallback, useContext, useEffect, useState, type ReactNode } from 'react';
 import { api, type Me, type Person } from './api';
-import { clearOfflineData } from './pwa';
+import { clearOfflineData, disablePush } from './pwa';
 import { realtime } from './realtime';
 
 interface Session {
@@ -70,6 +70,9 @@ export function SessionProvider({ children }: { children: ReactNode }) {
   }, [workspaceId, reloadPeople]);
 
   const logout = useCallback(async () => {
+    // Stop push notifications on this device before the session ends.
+    const endpoint = await disablePush().catch(() => null);
+    if (endpoint) await api.del('/me/push', { endpoint }).catch(() => {});
     await api.post('/auth/logout');
     await clearOfflineData();
     setMe(null);

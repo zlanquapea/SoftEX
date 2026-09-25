@@ -91,3 +91,27 @@ export async function filterAsync<T>(items: readonly T[], predicate: (item: T, i
   const keep = await Promise.all(items.map((item, i) => predicate(item, i)));
   return items.filter((_, i) => keep[i] === true);
 }
+
+/** A short, human-readable device label from a User-Agent header, e.g. "Chrome on Android". */
+export function describeDevice(userAgent: string | null | undefined): string {
+  const ua = userAgent ?? '';
+  if (!ua) return 'Unknown device';
+  const browser =
+    /Edg\//.test(ua) ? 'Edge'
+    : /OPR\/|Opera/.test(ua) ? 'Opera'
+    : /SamsungBrowser/.test(ua) ? 'Samsung Internet'
+    : /Firefox\/|FxiOS/.test(ua) ? 'Firefox'
+    : /Chrome\/|CriOS/.test(ua) ? 'Chrome'
+    : /Safari\//.test(ua) ? 'Safari'
+    : /curl|node|python|axios|okhttp/i.test(ua) ? 'Script'
+    : 'Browser';
+  const os =
+    /Android/.test(ua) ? 'Android'
+    : /iPhone|iPad|iPod/.test(ua) ? 'iOS'
+    : /Windows/.test(ua) ? 'Windows'
+    : /Mac OS X|Macintosh/.test(ua) ? 'macOS'
+    : /CrOS/.test(ua) ? 'ChromeOS'
+    : /Linux/.test(ua) ? 'Linux'
+    : '';
+  return os ? `${browser} on ${os}` : browser;
+}

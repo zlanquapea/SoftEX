@@ -2,9 +2,11 @@ import type { Request } from 'express';
 import type { Auth } from './access.js';
 import { canViewChannel } from './access.js';
 import type { Database, Row } from './db.js';
+import type { BackupConfig } from './backup.js';
 import type { BillingConfig } from './plans.js';
 import type { RealtimeHub } from './realtime.js';
 import type { FileStore } from './storage.js';
+import { sendPush, type PushTransport } from './push.js';
 import { queueEmail } from './mailer.js';
 import { newId, now } from './util.js';
 
@@ -34,6 +36,10 @@ export interface Config {
   billing: BillingConfig;
   /** The business running a hosted service; shown on the website, terms and privacy policy. */
   company: { name?: string; address?: string; email?: string };
+  /** Automatic SQLite backups. */
+  backups: BackupConfig;
+  /** Web Push keys (SOFTEX_VAPID_*); generated and stored in the database when not set. */
+  vapid?: { publicKey?: string; privateKey?: string; subject?: string };
 }
 
 /** Minimal mail transport interface (nodemailer-compatible) so tests can inject a fake. */
@@ -61,6 +67,8 @@ export interface Ctx {
   config: Config;
   mail?: MailTransport;
   ai?: AiClient;
+  /** Web Push delivery; absent when push is turned off. */
+  push?: PushTransport;
 }
 
 declare global {
@@ -149,6 +157,11 @@ export async function notify(ctx: Ctx, workspaceId: string, input: NotifyInput) 
       text: input.body ? `${input.title}\n\n“${input.body.replace(/@\[([^\]]+)\]\([0-9a-f-]{36}\)/g, '@$1')}”` : input.title,
       action: { label: 'Open in SoftEX', url: `${ctx.config.publicUrl}${input.link ?? '/inbox'}` },
     });
+  }
+  // Phones and closed browsers get a push notification when the person isn't connected right now.
+  if (!silent && !ctx.hub.isOnline(workspaceId, input.userId)) {
+    const pushBody = (input.body ?? '').replace(/@\[([^\]]+)\]\([0-9a-f-]{36}\)/g, '@$1').slice(0, 180);
+    await ctx.db.afterCommit(async () => sendPush(ctx, input.userId, { title: input.title, body: pushBody, url: input.link || '/inbox', tag: row.id }));
   }
   await ctx.hub.toUser(workspaceId, input.userId, {
     type: 'notification',

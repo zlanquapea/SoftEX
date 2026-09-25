@@ -182,8 +182,12 @@ export function Privacy() {
                 <b>Workspace content:</b> messages, files, tasks, projects, pages, meeting notes, decisions and other content you and your colleagues add.
               </li>
               <li>
-                <b>Usage and security records:</b> sign-in sessions, IP addresses on sign-in and audit events, and records of actions such as invitations, role changes,
-                exports and AI use.
+                <b>Usage and security records:</b> sign-in sessions (with the device type and IP address, so you can see where you’re signed in), IP addresses on
+                audit events, and records of actions such as invitations, role changes, exports and AI use.
+              </li>
+              <li>
+                <b>Device notifications:</b> if you turn on notifications on a device, the address your browser’s push service gives us for that device. The push
+                service (for example Google, Apple, Mozilla or Microsoft) delivers the notification; its content is encrypted so the push service can’t read it.
               </li>
               <li>
                 <b>Billing details:</b> the plan chosen, amounts, and the payment reference, payer name and phone number you give us when you pay by mobile money or bank
@@ -209,8 +213,9 @@ export function Privacy() {
                 <b>People in your workspace</b>, according to its settings and your role. Workspace admins can see member lists, audit records and exports.
               </li>
               <li>
-                <b>Service providers</b> that run the Service for us under contract: our hosting provider (servers and storage), our email delivery provider and, when a
-                workspace uses AI features, our AI provider (Anthropic), which receives only the content needed for the request you make.
+                <b>Service providers</b> that run the Service for us under contract: our hosting provider (servers and storage), our email delivery provider, your
+                browser’s push service when you turn on device notifications and, when a workspace uses AI features, our AI provider (Anthropic), which receives only
+                the content needed for the request you make.
               </li>
               <li>
                 <b>Authorities</b>, when the law requires it. Where allowed, we will tell the affected workspace first.
@@ -221,7 +226,10 @@ export function Privacy() {
             <h2>4. How long we keep it</h2>
             <ul>
               <li>Workspace content is kept until it is deleted by people in the workspace, by a retention policy the workspace sets, or when the workspace is deleted.</li>
-              <li>When an owner deletes a workspace, its content and files are removed from the Service immediately. Copies in backups are removed as those backups expire on our normal schedule.</li>
+              <li>
+                When an owner deletes a workspace, its content and files are removed from the Service immediately. We keep daily backups for about a week to recover from
+                mistakes and failures; copies in backups are removed as those backups expire.
+              </li>
               <li>
                 When you delete your account, we erase your name, email address, credentials and personal settings. Messages and work you shared with colleagues stay with
                 the workspace, shown as “Deleted user”.

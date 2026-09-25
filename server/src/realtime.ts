@@ -27,6 +27,7 @@ export type AudienceResolver = (workspaceId: string, audience: Audience) => Prom
 type PeerMessage =
   | { t: 'event'; origin: string; workspaceId: string; event: RealtimeEvent; audience: Audience }
   | { t: 'disconnect'; origin: string; workspaceId: string; userId: string }
+  | { t: 'disconnect-sessions'; origin: string; userId: string; sessionIds: string[] }
   | { t: 'presence'; origin: string; online: string[] };
 
 /** A publish/subscribe link between servers (PostgreSQL LISTEN/NOTIFY); absent with one server. */
@@ -117,6 +118,7 @@ export class RealtimeHub {
     if (msg.origin === this.id) return;
     if (msg.t === 'event') void this.deliver(msg.workspaceId, msg.event, msg.audience);
     else if (msg.t === 'disconnect') this.closeLocal(msg.workspaceId, msg.userId);
+    else if (msg.t === 'disconnect-sessions') this.closeSessions(msg.userId, msg.sessionIds);
     else if (msg.t === 'presence') {
       const before = this.remote.get(msg.origin)?.online ?? new Set<string>();
       const now = new Set(msg.online);
@@ -243,6 +245,20 @@ export class RealtimeHub {
   disconnect(workspaceId: string, userId: string) {
     this.closeLocal(workspaceId, userId);
     void this.send({ t: 'disconnect', origin: this.id, workspaceId, userId });
+  }
+
+  private closeSessions(userId: string, sessionIds: string[]) {
+    const ids = new Set(sessionIds);
+    for (const client of this.clients) {
+      if (client.auth.userId === userId && client.auth.sessionId && ids.has(client.auth.sessionId)) client.socket.close(4001, 'signed out');
+    }
+  }
+
+  /** Drop the sockets of particular sessions (e.g. "sign out other devices"), on every server. */
+  disconnectSessions(userId: string, sessionIds: string[]) {
+    if (!sessionIds.length) return;
+    this.closeSessions(userId, sessionIds);
+    void this.send({ t: 'disconnect-sessions', origin: this.id, userId, sessionIds });
   }
 
   async close() {

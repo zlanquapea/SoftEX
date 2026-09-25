@@ -20,6 +20,7 @@ import { authOf, notify, recordActivity, userSummary, type Ctx } from '../contex
 import { emitEvent } from '../webhooks.js';
 import { runAutomations } from '../automations.js';
 import { badRequest, forbidden, newId, notFound, now, parse, today, filterAsync } from '../util.js';
+import { parseCsv, parseLooseDate } from '../csv.js';
 
 const DateStr = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'use YYYY-MM-DD');
 const Status = z.enum(['todo', 'in_progress', 'blocked', 'review', 'done']);
@@ -134,7 +135,8 @@ export function tasksRouter(ctx: Ctx) {
     }
   };
 
-  const createTask = async (auth: Auth, body: z.infer<typeof TaskInput>) => {
+  /** Create a task. `quiet` (used by imports) skips per-task notifications, activity and automations. */
+  const createTask = async (auth: Auth, body: z.infer<typeof TaskInput>, quiet = false) => {
     let project: Row | null = null;
     if (body.parentId) {
       const parent = await loadTask(db, auth, body.parentId);
@@ -193,6 +195,10 @@ export function tasksRouter(ctx: Ctx) {
       }
       if (project) await db.update('projects', project.id, { updated_at: now() });
     });
+    const eventData = { id, title: body.title, project_id: body.projectId ?? null, owner_id: ownerId ?? null, status: body.status, priority: body.priority, due_date: body.dueDate ?? null };
+    await emitEvent(ctx, auth.workspaceId, 'task.created', eventData, { projectId: body.projectId });
+    if (ownerId) await emitEvent(ctx, auth.workspaceId, 'task.assigned', eventData, { projectId: body.projectId });
+    if (quiet) return id;
     await recordActivity(ctx, auth.workspaceId, {
       actorId: auth.userId,
       verb: 'created',
@@ -202,9 +208,6 @@ export function tasksRouter(ctx: Ctx) {
       summary: `created the task “${body.title}”`,
       link: `/tasks/${id}`,
     });
-    const eventData = { id, title: body.title, project_id: body.projectId ?? null, owner_id: ownerId ?? null, status: body.status, priority: body.priority, due_date: body.dueDate ?? null };
-    await emitEvent(ctx, auth.workspaceId, 'task.created', eventData, { projectId: body.projectId });
-    if (ownerId) await emitEvent(ctx, auth.workspaceId, 'task.assigned', eventData, { projectId: body.projectId });
     if (ownerId && ownerId !== auth.userId) {
       await notify(ctx, auth.workspaceId, {
         userId: ownerId,
@@ -300,6 +303,164 @@ export function tasksRouter(ctx: Ctx) {
     const auth = authOf(req);
     const id = await createTask(auth, parse(TaskInput, req.body));
     res.status(201).json((await serializeTasks(db, [(await db.get('SELECT * FROM tasks WHERE id = ?', id))!]))[0]);
+  });
+
+  /**
+   * Import tasks into a project from a CSV file (§7 import tools), e.g. an export from Trello,
+   * Asana, Jira, Monday or a spreadsheet. Columns are recognised by their usual names; with
+   * `dryRun` nothing is saved and the parsed rows come back for review.
+   */
+  r.post('/projects/:id/import/tasks', async (req, res) => {
+    const auth = authOf(req);
+    const body = parse(z.object({ csv: z.string().min(1).max(900_000), dryRun: z.boolean().default(false) }), req.body);
+    const project = await loadProject(db, auth, req.params.id);
+    if (!await canContributeProject(db, auth, project)) throw forbidden('You cannot add tasks to this project');
+    const rows = parseCsv(body.csv);
+    if (rows.length < 2) throw badRequest('The file needs a header row and at least one task.');
+    if (rows.length > 501) throw badRequest('You can import up to 500 tasks at a time. Split the file and import it in parts.');
+    const header = rows[0].map((h) => h.trim().toLowerCase().replace(/[_\s]+/g, ' '));
+    const find = (...names: string[]) => {
+      const i = header.findIndex((h) => names.includes(h));
+      return i >= 0 ? i : null;
+    };
+    const cols = {
+      title: find('title', 'name', 'task', 'task name', 'summary', 'card name', 'subject', 'item', 'item name'),
+      description: find('description', 'notes', 'details', 'card description', 'body', 'content'),
+      status: find('status', 'state', 'list', 'list name', 'section', 'section/column', 'column', 'stage', 'progress'),
+      completed: find('completed', 'completed at', 'done', 'closed', 'resolved'),
+      priority: find('priority', 'importance'),
+      due: find('due', 'due date', 'deadline', 'due at', 'due on', 'end date', 'target date'),
+      start: find('start', 'start date', 'start on', 'starts'),
+      owner: find('owner', 'assignee', 'assigned to', 'assignee email', 'owner email', 'responsible', 'members', 'person'),
+      estimate: find('estimate', 'estimate hours', 'estimated hours', 'hours', 'original estimate', 'time estimate'),
+    };
+    if (cols.title === null) throw badRequest('Couldn’t find a title column. Name it “Title”, “Name” or “Task”.');
+
+    const members = await db.all(
+      `SELECT u.id, u.name, u.email, m.role FROM memberships m JOIN users u ON u.id = m.user_id
+        WHERE m.workspace_id = ? AND m.deactivated_at IS NULL`,
+      auth.workspaceId,
+    );
+    const canOwn = async (userId: string) => {
+      const m = members.find((x) => x.id === userId)!;
+      return !((project.visibility === 'private' || m.role === 'guest') && !await isProjectMember(db, project.id, userId));
+    };
+    const statusOf = (v: string): z.infer<typeof Status> | null => {
+      const s = v.trim().toLowerCase();
+      if (!s) return null;
+      if (/^(done|complete|completed|closed|finished|resolved|shipped)$/.test(s)) return 'done';
+      if (/(progress|doing|started|active|wip|working)/.test(s)) return 'in_progress';
+      if (/(block|hold|waiting|stuck)/.test(s)) return 'blocked';
+      if (/(review|qa|testing|verify|approval)/.test(s)) return 'review';
+      return 'todo';
+    };
+    const priorityOf = (v: string): z.infer<typeof Priority> | null => {
+      const p = v.trim().toLowerCase();
+      if (!p) return null;
+      if (/(urgent|critical|blocker|highest|p0)/.test(p)) return 'urgent';
+      if (/(high|major|p1)/.test(p)) return 'high';
+      if (/(low|minor|trivial|lowest|p3|p4)/.test(p)) return 'low';
+      return 'medium';
+    };
+    const cell = (row: string[], i: number | null) => (i === null ? '' : (row[i] ?? '').trim());
+
+    const parsed: { line: number; input: z.infer<typeof TaskInput>; owner: { id: string; name: string } | null; warnings: string[] }[] = [];
+    const errors: { line: number; message: string }[] = [];
+    for (const [index, row] of rows.slice(1).entries()) {
+      const line = index + 2;
+      const title = cell(row, cols.title).slice(0, 300);
+      if (!title) {
+        errors.push({ line, message: 'No title' });
+        continue;
+      }
+      const warnings: string[] = [];
+      let status = statusOf(cell(row, cols.status)) ?? 'todo';
+      const completed = cell(row, cols.completed).toLowerCase();
+      if (completed && !/^(no|false|0|n)$/.test(completed)) status = 'done';
+      const dateOf = (i: number | null, label: string) => {
+        const raw = cell(row, i);
+        const d = raw ? parseLooseDate(raw) : null;
+        if (raw && !d) warnings.push(`Couldn’t read the ${label} “${raw}”`);
+        return d;
+      };
+      const dueDate = dateOf(cols.due, 'due date');
+      const startDate = dateOf(cols.start, 'start date');
+      const estimateRaw = cell(row, cols.estimate);
+      const estimate = estimateRaw ? Number.parseFloat(estimateRaw.replace(',', '.')) : null;
+      if (estimateRaw && (estimate === null || !Number.isFinite(estimate) || estimate < 0 || estimate > 1000)) warnings.push(`Couldn’t read the estimate “${estimateRaw}”`);
+
+      // Owners are matched by email, then by name; otherwise the task is yours.
+      let owner: { id: string; name: string } | null = { id: auth.userId, name: members.find((m) => m.id === auth.userId)!.name };
+      const ownerRaw = cell(row, cols.owner).split(/[,;]/)[0].trim();
+      if (ownerRaw) {
+        const needle = ownerRaw.toLowerCase();
+        const byEmail = members.filter((m) => m.email === needle);
+        const byName = members.filter((m) => m.name.toLowerCase() === needle);
+        const match = byEmail.length === 1 ? byEmail[0] : byName.length === 1 ? byName[0] : null;
+        if (!match) warnings.push(`No one called “${ownerRaw}” in this workspace; assigned to you`);
+        else if (!await canOwn(match.id)) warnings.push(`${match.name} isn’t a member of this project; assigned to you`);
+        else owner = { id: match.id, name: match.name };
+      }
+      const input = parse(TaskInput, {
+        title,
+        description: cell(row, cols.description).slice(0, 20_000),
+        projectId: project.id,
+        ownerId: owner?.id ?? null,
+        status,
+        priority: priorityOf(cell(row, cols.priority)) ?? 'medium',
+        dueDate,
+        startDate,
+        estimateHours: estimate !== null && Number.isFinite(estimate) && estimate >= 0 && estimate <= 1000 ? estimate : null,
+      });
+      parsed.push({ line, input, owner, warnings });
+    }
+
+    const columns = Object.fromEntries(Object.entries(cols).map(([k, i]) => [k, i === null ? null : rows[0][i].trim()]));
+    if (body.dryRun) {
+      return res.json({
+        columns,
+        rows: parsed.map((p) => ({
+          line: p.line,
+          title: p.input.title,
+          status: p.input.status,
+          priority: p.input.priority,
+          due_date: p.input.dueDate ?? null,
+          owner: p.owner,
+          warnings: p.warnings,
+        })),
+        errors,
+      });
+    }
+    if (!parsed.length) throw badRequest('None of the rows could be imported.', { errors });
+    const ids: string[] = [];
+    await db.transaction(async () => {
+      for (const p of parsed) ids.push(await createTask(auth, p.input, true));
+    });
+    await recordActivity(ctx, auth.workspaceId, {
+      actorId: auth.userId,
+      verb: 'imported',
+      objectType: 'project',
+      objectId: project.id,
+      projectId: project.id,
+      summary: `imported ${ids.length} task${ids.length === 1 ? '' : 's'} into ${project.name}`,
+      link: `/projects/${project.id}`,
+    });
+    // One notification per person, not one per task.
+    const assigned = new Map<string, number>();
+    for (const p of parsed) if (p.owner && p.owner.id !== auth.userId) assigned.set(p.owner.id, (assigned.get(p.owner.id) ?? 0) + 1);
+    for (const [userId, n] of assigned) {
+      await notify(ctx, auth.workspaceId, {
+        userId,
+        kind: 'assigned',
+        title: `You were assigned ${n} imported task${n === 1 ? '' : 's'}`,
+        body: `In ${project.name}`,
+        link: `/projects/${project.id}`,
+        actorId: auth.userId,
+      });
+    }
+    // One refresh signal, visible to the same people who can see the project's tasks.
+    await ctx.hub.publish(auth.workspaceId, { type: 'task.updated', taskId: ids[0], projectId: project.id }, { kind: 'task', taskId: ids[0] });
+    res.status(201).json({ created: ids.length, errors });
   });
 
   /** Convert a message into a task (§5.1). */

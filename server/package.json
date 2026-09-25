@@ -21,6 +21,7 @@
     "nodemailer": "^10.0.10",
     "pg": "^8.23.0",
     "unpdf": "^1.8.1",
+    "web-push": "^3.6.7",
     "ws": "^8.21.3",
     "zod": "^4.6.5"
   },
@@ -32,6 +33,7 @@
     "@types/nodemailer": "^8.0.2",
     "@types/pg": "^8.23.1",
     "@types/supertest": "^7.2.1",
+    "@types/web-push": "^3.6.4",
     "@types/ws": "^8.18.1",
     "supertest": "^7.3.0",
     "tsx": "^4.23.15",

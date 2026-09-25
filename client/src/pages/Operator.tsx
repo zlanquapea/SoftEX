@@ -48,7 +48,7 @@ interface OpWorkspace {
   pending_payments: number;
 }
 
-type Tab = 'payments' | 'workspaces' | 'events';
+type Tab = 'payments' | 'workspaces' | 'events' | 'backups';
 
 /** Service operator console: approve payments, manage plans, suspend abuse. Metadata only — never workspace content. */
 export function Operator() {
@@ -96,11 +96,13 @@ export function Operator() {
           { id: 'payments', label: 'Payments to confirm', count: s.pending_payments },
           { id: 'workspaces', label: 'Workspaces' },
           { id: 'events', label: 'Activity log' },
+          { id: 'backups', label: 'Backups' },
         ]}
       />
       {tab === 'payments' && <PendingPayments onChange={summary.reload} />}
       {tab === 'workspaces' && <Workspaces onChange={summary.reload} />}
       {tab === 'events' && <Events />}
+      {tab === 'backups' && <Backups />}
     </div>
   );
 }
@@ -469,5 +471,101 @@ function Events() {
         </tbody>
       </table>
     </div>
+  );
+}
+
+interface BackupStatus {
+  supported: boolean;
+  enabled: boolean;
+  location: 's3' | 'local';
+  every_hours: number;
+  keep: number;
+  last: { at: string; ok: boolean; name?: string; error?: string; last_success_at?: string } | null;
+  backups: { name: string; size: number; created_at: string }[];
+}
+
+function Backups() {
+  const act = useAction();
+  const { data, error, reload } = useApi<BackupStatus>('/operator/backups');
+  const [busy, setBusy] = useState(false);
+  if (error) return <ErrorState error={error} />;
+  if (!data) return <Loading />;
+  if (!data.supported) {
+    return (
+      <div className="card">
+        <h2>Backups</h2>
+        <p className="muted">
+          This server stores its data in PostgreSQL. Back it up with your database provider (on Railway: open the Postgres service → <em>Backups</em>), and test a
+          restore into a new database from time to time.
+        </p>
+      </div>
+    );
+  }
+  const stale = !data.last?.last_success_at || Date.now() - new Date(data.last.last_success_at).getTime() > (data.every_hours + 2) * 3600_000;
+  return (
+    <>
+      <div className="card form">
+        <h2>Backups</h2>
+        <p className="muted">
+          {data.enabled ? `A checked, compressed copy of the whole database is saved every ${data.every_hours} hours` : 'Automatic backups are off (SOFTEX_BACKUPS=off)'}, and the
+          newest {data.keep} are kept {data.location === 's3' ? 'in your S3 bucket under backups/' : 'in the backups folder on the server’s volume'}.
+          {data.location === 'local' && ' Download one regularly and keep it somewhere else, or set up S3 storage, so a lost volume doesn’t take the backups with it.'}
+        </p>
+        {data.last && !data.last.ok && <p className="form-error">The last backup failed {timeAgo(data.last.at)}: {data.last.error}</p>}
+        {data.enabled && stale && <p className="form-error">No successful backup in the last {data.every_hours + 2} hours.</p>}
+        <div className="form-actions">
+          <button
+            className="btn primary"
+            disabled={busy}
+            onClick={async () => {
+              setBusy(true);
+              await act(() => api.post('/operator/backups'), 'Backup saved');
+              setBusy(false);
+              reload();
+            }}
+          >
+            {busy ? 'Backing up…' : 'Back up now'}
+          </button>
+        </div>
+        <p className="muted small">
+          To restore, set the service variable <code>SOFTEX_RESTORE_BACKUP</code> to a backup’s file name and redeploy; the current database is kept beside it.
+          Remove the variable afterwards.
+        </p>
+      </div>
+      {!data.backups.length ? (
+        <Empty icon="download" title="No backups yet">
+          The first one is made within a few minutes of the server starting.
+        </Empty>
+      ) : (
+        <div className="table-scroll">
+          <table className="data-table">
+            <thead>
+              <tr>
+                <th>Backup</th>
+                <th>Size</th>
+                <th>Saved</th>
+                <th />
+              </tr>
+            </thead>
+            <tbody>
+              {data.backups.map((b) => (
+                <tr key={b.name}>
+                  <td>
+                    <code className="small">{b.name}</code>
+                  </td>
+                  <td>{bytes(b.size)}</td>
+                  <td>{dateTime(b.created_at)}</td>
+                  <td>
+                    <a className="btn sm" href={`/api/operator/backups/${encodeURIComponent(b.name)}/download`}>
+                      <Icon name="download" size={14} /> Download
+                    </a>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </>
   );
 }

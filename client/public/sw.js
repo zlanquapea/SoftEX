@@ -6,13 +6,23 @@
  *   tasks, channels and knowledge. Writes are never cached or replayed.
  * - Cached workspace data is deleted on sign-out and whenever the server says the session
  *   is gone, so the next person on a shared device cannot read it.
+ * - Push notifications are shown while SoftEX is closed; tapping one opens the item.
  */
 const VERSION = 'v1';
 const SHELL = `softex-shell-${VERSION}`;
 const DATA = `softex-api-${VERSION}`;
 const SHELL_URLS = ['/', '/manifest.webmanifest', '/favicon.svg'];
 // Never keep copies of these: credentials, downloads, exports and AI output.
-const NO_CACHE = [/^\/api\/auth\//, /^\/api\/export/, /^\/api\/files\/[^/]+\/download/, /^\/api\/ai\//, /^\/api\/admin\//, /^\/api\/me\/tokens/];
+const NO_CACHE = [
+  /^\/api\/auth\//,
+  /^\/api\/export/,
+  /^\/api\/files\/[^/]+\/download/,
+  /^\/api\/ai\//,
+  /^\/api\/admin\//,
+  /^\/api\/operator\//,
+  /^\/api\/calendar\//,
+  /^\/api\/me\/(tokens|sessions|calendar-feed|push)/,
+];
 
 self.addEventListener('install', (event) => {
   event.waitUntil(
@@ -102,4 +112,41 @@ self.addEventListener('fetch', (event) => {
         ),
     );
   }
+});
+
+self.addEventListener('push', (event) => {
+  let data = {};
+  try {
+    data = event.data ? event.data.json() : {};
+  } catch {
+    data = { title: event.data ? event.data.text() : 'SoftEX' };
+  }
+  event.waitUntil(
+    self.registration.showNotification(data.title || 'SoftEX', {
+      body: data.body || '',
+      tag: data.tag,
+      icon: '/favicon.svg',
+      badge: '/favicon.svg',
+      // Only paths inside SoftEX ("//host" would leave the site).
+      data: { url: typeof data.url === 'string' && /^\/(?![/\\])/.test(data.url) ? data.url : '/inbox' },
+    }),
+  );
+});
+
+self.addEventListener('notificationclick', (event) => {
+  event.notification.close();
+  let url = new URL(event.notification.data?.url || '/inbox', self.location.origin);
+  if (url.origin !== self.location.origin) url = new URL('/inbox', self.location.origin);
+  url = url.href;
+  event.waitUntil(
+    self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then((windows) => {
+      const open = windows.find((w) => new URL(w.url).origin === self.location.origin);
+      if (!open) return self.clients.openWindow(url);
+      // navigate() only works on windows this worker controls; otherwise open a new one.
+      return open
+        .focus()
+        .then((w) => w.navigate(url))
+        .catch(() => self.clients.openWindow(url));
+    }),
+  );
 });

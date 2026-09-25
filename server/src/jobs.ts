@@ -1,4 +1,5 @@
 import type { Ctx } from './context.js';
+import { backupIfDue } from './backup.js';
 import { processEmailQueue, queueDigests } from './mailer.js';
 import { processWebhookQueue } from './webhooks.js';
 import { processBillingNotices } from './routes/billing.js';
@@ -20,6 +21,10 @@ export async function runPeriodicJobs(ctx: Ctx) {
   await processBillingNotices(ctx);
   await ctx.db.run('DELETE FROM rate_limits WHERE reset_at < ?', new Date().toISOString());
   await ctx.db.run('DELETE FROM realtime_events WHERE created_at < ?', new Date(Date.now() - 60 * 60_000).toISOString());
+  // Push subscriptions whose browser session has ended (signed out, revoked or expired).
+  await ctx.db.run('DELETE FROM push_subscriptions WHERE NOT EXISTS (SELECT 1 FROM sessions s WHERE s.id = push_subscriptions.session_id AND s.expires_at > ?)', new Date().toISOString());
+  await ctx.db.run('DELETE FROM sessions WHERE expires_at < ?', new Date().toISOString());
+  await backupIfDue(ctx);
 }
 
 /**

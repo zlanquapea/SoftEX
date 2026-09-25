@@ -333,6 +333,65 @@ export function workspaceRouter(ctx: Ctx) {
     res.status(201).json({ id, token, url: `/invite/${token}`, emailed: true });
   });
 
+  /**
+   * Invite many people at once (§7 import tools): paste a list or a CSV exported from another
+   * tool; every email address in it is invited. People who are already members or already
+   * have a pending invitation are skipped.
+   */
+  r.post('/admin/invitations/bulk', async (req, res) => {
+    const auth = authOf(req);
+    const body = parse(z.object({ text: z.string().max(200_000), role: z.enum(['member', 'lead', 'admin']).default('member') }), req.body);
+    if (body.role === 'admin' || body.role === 'lead') requireRole(auth, 'admin');
+    else requireRole(auth, 'lead');
+    // Split on anything that can't be part of an address (spaces, commas, quotes, angle brackets…).
+    const words = body.text.split(/[\s,;"<>()[\]{}|]+/).filter((w) => w.includes('@') && w.length <= 200);
+    const emails = [...new Set(words.map((w) => w.replace(/^mailto:/i, '').toLowerCase()))].filter((e) => z.string().email().safeParse(e).success);
+    if (!emails.length) throw badRequest('No email addresses found. Paste one address per line, or a CSV with an email column.');
+    if (emails.length > 200) throw badRequest('You can invite up to 200 people at a time.');
+    await requireVerifiedEmail(ctx, auth);
+    const skipped: { email: string; reason: string }[] = [];
+    const toInvite: string[] = [];
+    for (const email of emails) {
+      const member = await db.get(
+        `SELECT 1 FROM memberships m JOIN users u ON u.id = m.user_id WHERE m.workspace_id = ? AND u.email = ? AND m.deactivated_at IS NULL`,
+        auth.workspaceId,
+        email,
+      );
+      const pending = await db.get(
+        'SELECT 1 FROM invitations WHERE workspace_id = ? AND email = ? AND accepted_at IS NULL AND revoked_at IS NULL AND expires_at > ?',
+        auth.workspaceId,
+        email,
+        now(),
+      );
+      if (member) skipped.push({ email, reason: 'Already a member' });
+      else if (pending) skipped.push({ email, reason: 'Already invited' });
+      else toInvite.push(email);
+    }
+    if (toInvite.length) await requireMemberCapacity(ctx, auth.workspaceId, toInvite.length, body.role);
+    await db.transaction(async () => {
+      for (const email of toInvite) {
+        const token = randomToken();
+        const id = newId();
+        await db.insert('invitations', {
+          id,
+          workspace_id: auth.workspaceId,
+          email,
+          role: body.role,
+          token_hash: sha256(token),
+          invited_by: auth.userId,
+          guest_days: null,
+          channel_ids: [],
+          project_ids: [],
+          expires_at: new Date(Date.now() + 14 * 86_400_000).toISOString(),
+          created_at: now(),
+        });
+        await audit(ctx, auth.workspaceId, auth.userId, 'invitation.created', 'invitation', id, { email, role: body.role, bulk: true });
+        await sendInvitationEmail(auth, email, body.role, token, null);
+      }
+    });
+    res.status(201).json({ invited: toInvite, skipped });
+  });
+
   const sendInvitationEmail = async (auth: Auth, email: string, role: string, token: string, guestDays: number | null) => {
     const inviter = (await db.get('SELECT name FROM users WHERE id = ?', auth.userId))!.name;
     const workspace = (await db.get('SELECT name FROM workspaces WHERE id = ?', auth.workspaceId))!.name;
@@ -435,7 +494,7 @@ export function workspaceRouter(ctx: Ctx) {
       auth.userId,
     );
     if (next) {
-      await startSession(ctx, res, auth.userId, next.workspace_id);
+      await startSession(ctx, res, auth.userId, next.workspace_id, auth.sessionId);
       return res.json({ deleted: true, me: await mePayload(ctx, { userId: auth.userId, workspaceId: next.workspace_id, role: next.role }) });
     }
     res.clearCookie('softex_session', { path: '/' });

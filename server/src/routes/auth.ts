@@ -16,6 +16,7 @@ import {
   parse,
   parseJson,
   pickColor,
+  describeDevice,
   randomToken,
   sha256,
   verifyPassword,
@@ -44,7 +45,7 @@ export async function authenticate(ctx: Ctx, req: IncomingMessage): Promise<Auth
   if (!token) return null;
   if (token.startsWith('sx_')) return authenticateApiToken(ctx, token);
   const row = await ctx.db.get(
-    `SELECT s.user_id, s.workspace_id, m.role FROM sessions s
+    `SELECT s.id, s.user_id, s.workspace_id, s.last_seen_at, m.role FROM sessions s
        JOIN memberships m ON m.workspace_id = s.workspace_id AND m.user_id = s.user_id
        JOIN workspaces w ON w.id = s.workspace_id
       WHERE s.token_hash = ? AND s.expires_at > ? AND m.deactivated_at IS NULL AND w.suspended_at IS NULL
@@ -54,7 +55,11 @@ export async function authenticate(ctx: Ctx, req: IncomingMessage): Promise<Auth
     now(),
   );
   if (!row) return null;
-  return { userId: row.user_id, workspaceId: row.workspace_id, role: row.role as Role };
+  // Note when the session was last used (at most every five minutes, to spare the database).
+  if (!row.last_seen_at || row.last_seen_at < new Date(Date.now() - 5 * 60_000).toISOString()) {
+    await ctx.db.run('UPDATE sessions SET last_seen_at = ? WHERE token_hash = ?', now(), sha256(token));
+  }
+  return { userId: row.user_id, workspaceId: row.workspace_id, role: row.role as Role, sessionId: row.id };
 }
 
 /** Personal API tokens (§5.7 public API): act as the user, limited by the token's scope. */
@@ -109,16 +114,38 @@ export function requireAuth(ctx: Ctx) {
   };
 }
 
-export async function startSession(ctx: Ctx, res: Response, userId: string, workspaceId: string) {
+/** End a person's sessions (all of them, or all but `keepTokenHash`) and close their live connections. */
+export async function endSessions(ctx: Ctx, userId: string, keepTokenHash?: string) {
+  const rows = await ctx.db.all<{ id: string }>(
+    'SELECT id FROM sessions WHERE user_id = ? AND token_hash != ?',
+    userId,
+    keepTokenHash ?? '',
+  );
+  await ctx.db.run('DELETE FROM sessions WHERE user_id = ? AND token_hash != ?', userId, keepTokenHash ?? '');
+  const ids = rows.map((r) => r.id).filter(Boolean);
+  await ctx.db.afterCommit(async () => ctx.hub.disconnectSessions(userId, ids));
+  return ids.length;
+}
+
+/** Sign in on this browser. `replaces` is the session this one takes over from (e.g. when switching workspace). */
+export async function startSession(ctx: Ctx, res: Response, userId: string, workspaceId: string, replaces?: string) {
   const token = randomToken();
   const expires = new Date(Date.now() + SESSION_DAYS * 86_400_000);
+  const req = res.req as Request | undefined;
+  const id = newId();
   await ctx.db.insert('sessions', {
     token_hash: sha256(token),
+    id,
     user_id: userId,
     workspace_id: workspaceId,
     created_at: now(),
+    last_seen_at: now(),
     expires_at: expires.toISOString(),
+    user_agent: req?.get('user-agent')?.slice(0, 400) ?? null,
+    ip: req?.ip ?? null,
   });
+  // The device keeps its push notifications when it moves to a new session.
+  if (replaces) await ctx.db.run('UPDATE push_subscriptions SET session_id = ? WHERE session_id = ? AND user_id = ?', id, replaces, userId);
   res.cookie(COOKIE, token, {
     httpOnly: true,
     sameSite: 'lax',
@@ -409,7 +436,7 @@ export function authRouter(ctx: Ctx) {
       await db.update('users', reset.user_id, { password_hash: hashPassword(body.password) });
       // The reset link reached this inbox, which proves the address.
       await db.run('UPDATE users SET email_verified_at = COALESCE(email_verified_at, ?) WHERE id = ?', now(), reset.user_id);
-      await db.run('DELETE FROM sessions WHERE user_id = ?', reset.user_id);
+      await endSessions(ctx, reset.user_id);
       for (const m of await db.all('SELECT workspace_id FROM memberships WHERE user_id = ?', reset.user_id)) {
         await audit(ctx, m.workspace_id, reset.user_id, 'user.password_reset', 'user', reset.user_id);
       }
@@ -595,10 +622,49 @@ export function meRouter(ctx: Ctx) {
     const user = (await db.get('SELECT password_hash FROM users WHERE id = ?', auth.userId))!;
     if (!verifyPassword(body.current, user.password_hash)) throw new HttpError(401, 'Current password is incorrect');
     await db.update('users', auth.userId, { password_hash: hashPassword(body.next) });
-    const keep = sha256(tokenFrom(req) ?? '');
-    await db.run('DELETE FROM sessions WHERE user_id = ? AND token_hash != ?', auth.userId, keep);
+    await endSessions(ctx, auth.userId, sha256(tokenFrom(req) ?? ''));
     await audit(ctx, auth.workspaceId, auth.userId, 'user.password_changed', 'user', auth.userId);
     res.json({ ok: true });
+  });
+
+  // "Where you're signed in": every unexpired browser session for this person, across workspaces.
+  r.get('/me/sessions', async (req, res) => {
+    const auth = authOf(req);
+    const rows = await db.all(
+      `SELECT s.id, s.user_agent, s.ip, s.created_at, s.last_seen_at, w.name AS workspace_name
+         FROM sessions s JOIN workspaces w ON w.id = s.workspace_id
+        WHERE s.user_id = ? AND s.expires_at > ? ORDER BY s.last_seen_at DESC`,
+      auth.userId,
+      now(),
+    );
+    res.json(
+      rows.map((s) => ({
+        id: s.id,
+        device: describeDevice(s.user_agent),
+        ip: s.ip,
+        workspace_name: s.workspace_name,
+        created_at: s.created_at,
+        last_seen_at: s.last_seen_at ?? s.created_at,
+        current: s.id === auth.sessionId,
+      })),
+    );
+  });
+
+  r.delete('/me/sessions/:id', async (req, res) => {
+    const auth = authOf(req);
+    const id = String(req.params.id);
+    const { changes } = await db.run('DELETE FROM sessions WHERE id = ? AND user_id = ?', id, auth.userId);
+    if (!changes) throw new HttpError(404, 'Session not found');
+    ctx.hub.disconnectSessions(auth.userId, [id]);
+    await audit(ctx, auth.workspaceId, auth.userId, 'user.session_revoked', 'user', auth.userId);
+    res.json({ ok: true });
+  });
+
+  r.post('/me/sessions/revoke-others', async (req, res) => {
+    const auth = authOf(req);
+    const ended = await endSessions(ctx, auth.userId, sha256(tokenFrom(req) ?? ''));
+    await audit(ctx, auth.workspaceId, auth.userId, 'user.sessions_revoked', 'user', auth.userId, { count: ended });
+    res.json({ ok: true, ended });
   });
 
   r.post('/me/mfa/setup', async (req, res) => {
@@ -656,7 +722,7 @@ export function meRouter(ctx: Ctx) {
     }
     const workspaces = await db.all('SELECT m.workspace_id, w.name FROM memberships m JOIN workspaces w ON w.id = m.workspace_id WHERE m.user_id = ?', auth.userId);
     await db.transaction(async () => {
-      for (const table of ['sessions', 'email_verifications', 'password_resets', 'saved_messages', 'notifications', 'reminders', 'channel_members']) {
+      for (const table of ['sessions', 'calendar_feeds', 'push_subscriptions', 'email_verifications', 'password_resets', 'saved_messages', 'notifications', 'reminders', 'channel_members']) {
         await db.run(`DELETE FROM ${table} WHERE user_id = ?`, auth.userId);
       }
       await db.run('DELETE FROM scheduled_messages WHERE user_id = ? AND sent_message_id IS NULL', auth.userId);
@@ -699,7 +765,7 @@ export function meRouter(ctx: Ctx) {
     if (!m) throw new HttpError(404, 'Workspace not found');
     const token = tokenFrom(req);
     if (token) await db.run('DELETE FROM sessions WHERE token_hash = ?', sha256(token));
-    await startSession(ctx, res, auth.userId, workspaceId);
+    await startSession(ctx, res, auth.userId, workspaceId, auth.sessionId);
     res.json(await mePayload(ctx, { userId: auth.userId, workspaceId, role: m.role }));
   });
 

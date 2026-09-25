@@ -46,6 +46,16 @@ Errors use standard HTTP status codes with a JSON body: `{"error": "message", "d
 | `GET /api/billing` · `POST /api/billing/payments` · `DELETE /api/billing/payments/:id` | Current plan, usage and payments; submit a mobile money or bank payment for confirmation (admins, SaaS mode) |
 | `DELETE /api/admin/workspace` | Permanently delete the workspace (owner; `password`, `confirmName`, and `code` when MFA is on) |
 | `DELETE /api/me` | Delete your own account (`password`, and `code` when MFA is on) |
+| `POST /api/projects/:id/import/tasks` | Import tasks from CSV text (`csv`; `dryRun: true` previews without saving). Recognises columns such as Title/Name, Description, Status/List, Priority, Due date, Start date, Assignee (email or name) and Estimate; up to 500 rows |
+| `POST /api/admin/invitations/bulk` | Invite every email address found in `text` (a list or CSV) with one `role`; up to 200. Returns `invited` and `skipped` |
+
+Browser-only (not available to API tokens):
+
+| Method & path | Purpose |
+| --- | --- |
+| `GET /api/me/sessions` · `DELETE /api/me/sessions/:id` · `POST /api/me/sessions/revoke-others` | Where you're signed in |
+| `GET/POST/DELETE /api/me/calendar-feed` | Your private calendar subscription link (the link is only returned by `POST`, which also replaces any earlier link). Calendar apps read it at `GET /api/calendar/<token>.ics` |
+| `GET /api/push/config` · `POST/DELETE /api/me/push` · `POST /api/me/push/test` | Push notifications for this device (Web Push subscription `endpoint` and `keys`) |
 
 Example: create a task in a project.
 

@@ -133,7 +133,14 @@ Railway redeploys automatically when `main` changes, because the service is conn
 
 ## Backups
 
-With SQLite, your data lives in the volume. If your Railway plan offers volume **Backups** (in the volume's settings), schedule them, and take a manual backup before big changes. People can also export what they can access from **Administration → Workspace → Export data**.
+**With SQLite (the default), SoftEX backs itself up.** Once a day it takes a consistent copy of the database, checks it with SQLite's integrity check, compresses it and keeps the newest 7. Change this with `SOFTEX_BACKUP_HOURS` and `SOFTEX_BACKUP_KEEP`, or turn it off with `SOFTEX_BACKUPS=off`.
+
+- **Where they go.** With object storage set up (`SOFTEX_S3_*`, see *Growing* below), backups go to the bucket under `backups/`, away from the server. Without it they stay in `/app/server/data/backups` on the volume, which protects against mistakes but not against losing the volume. In that case, download one every week or so.
+- **Check them.** **Operator console → Backups** shows the last backup, warns when one has failed or none has run for a day, and lets you **Back up now** (do this before big changes) or **Download** a copy. Every download is recorded in the activity log, because a backup holds every workspace.
+- **Restore.** Set the variable `SOFTEX_RESTORE_BACKUP` to the backup's file name (for example `softex-2026-09-25T02-00-00-000Z.db.gz`) and redeploy. SoftEX checks the backup, keeps the current database beside it as `softex.db.before-restore-…`, and starts from the backup. Then delete the variable; it won't restore the same backup twice either way.
+- **Also:** if your Railway plan offers volume **Backups**, turn them on as a second layer. People can export what they can access from **Settings → Security → Export my data**.
+
+**With PostgreSQL**, use the database's own backups: open the Postgres service → **Backups**. Test a restore into a new database from time to time.
 
 ## Running the service day to day
 
@@ -222,4 +229,6 @@ Railway deploys new versions without downtime once the service has no volume.
 | *Operator console* is missing from the menu | Your email address must be listed in `SOFTEX_OPERATOR_EMAILS`, and `SOFTEX_MODE` must be `saas`. Redeploy after changing variables. |
 | Logs: *SoftEX could not start: the database is not reachable* | Check `SOFTEX_DATABASE_URL`. With Railway's reference variable, the PostgreSQL service must be in the same project. |
 | Files uploaded before moving to S3 are missing | Local files aren't copied to the bucket automatically; copy the contents of `/app/server/data/uploads` into the bucket (same file names) before removing the volume. |
+| Phone notifications don't arrive | People turn them on per device in **Settings → Notifications & focus**. On iPhone and iPad, SoftEX must first be added to the Home Screen and opened from there. Alerts only go out while the person isn't using SoftEX, and not during their quiet hours or focus time unless the message is urgent. |
+| Operator console shows *The last backup failed* | Read the error shown there. The usual cause is a full volume: lower `SOFTEX_BACKUP_KEEP`, grow the volume, or move files and backups to S3 storage. |
 | Health check fails | Open the deploy logs. The server must print `SoftEX server listening on …` within 60 seconds. |
