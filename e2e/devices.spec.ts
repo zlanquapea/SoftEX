@@ -49,3 +49,27 @@ test('signed-in devices, calendar link, task import and bulk invites', async ({ 
   await expect(page.getByText('jordan@acme.test · Already a member')).toBeVisible();
   noErrors();
 });
+
+test('appearance: choose dark or light, and it stays after a reload', async ({ page }) => {
+  const noErrors = trackErrors(page);
+  await signIn(page, 'alex@acme.test');
+  const canvas = () => page.evaluate(() => getComputedStyle(document.body).backgroundColor);
+  await page.goto('/settings');
+  await page.getByRole('radio', { name: /Dark/ }).click();
+  await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark');
+  expect(await canvas()).toBe('rgb(25, 19, 15)');
+  await page.reload();
+  await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark');
+  await expect(page.getByRole('radio', { name: /Dark/ })).toHaveAttribute('aria-checked', 'true');
+
+  // Quick switch from the menu under your name.
+  await page.locator('.profile').click();
+  await page.getByRole('menuitem', { name: 'Light mode' }).click();
+  await expect(page.locator('html')).toHaveAttribute('data-theme', 'light');
+  expect(await canvas()).toBe('rgb(254, 246, 235)');
+
+  // Back to following the device.
+  await page.getByRole('radio', { name: /System/ }).click();
+  await expect(page.locator('html')).not.toHaveAttribute('data-theme', /./);
+  noErrors();
+});

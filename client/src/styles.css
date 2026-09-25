@@ -45,8 +45,29 @@
   color-scheme: light;
 }
 
+/* Dark mode: chosen in Settings → Appearance, or following the device when set to System. */
+:root[data-theme='dark'] {
+  --ink: #f5ebdf;
+  --ink-2: #dccbba;
+  --muted: #a9978a;
+  --line: #3a2d25;
+  --line-2: #30251e;
+  --surface: #221a15;
+  --surface-2: #2a201a;
+  --canvas: #19130f;
+  --nav: #120c09;
+  --nav-2: #221710;
+  --nav-line: #2f2017;
+  --accent-soft: #3d2217;
+  --accent-ink: #f2a67a;
+  --green-soft: #173427;
+  --amber-soft: #3a2e14;
+  --red-soft: #3d1b1f;
+  --shadow: 0 1px 2px rgba(0, 0, 0, 0.3), 0 8px 30px rgba(0, 0, 0, 0.25);
+  color-scheme: dark;
+}
 @media (prefers-color-scheme: dark) {
-  :root {
+  :root:not([data-theme='light']) {
     --ink: #f5ebdf;
     --ink-2: #dccbba;
     --muted: #a9978a;
@@ -3481,8 +3502,11 @@ table.workload {
   background: var(--red);
   color: #fff;
 }
+:root[data-theme='dark'] .load-1 {
+  background: #1f3d2e;
+}
 @media (prefers-color-scheme: dark) {
-  .load-1 {
+  :root:not([data-theme='light']) .load-1 {
     background: #1f3d2e;
   }
 }
@@ -4588,4 +4612,54 @@ button.tl-label:hover {
   margin: 0 0 12px;
   display: grid;
   gap: 4px;
+}
+
+/* ---------- Appearance ---------- */
+.theme-options {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+.theme-option {
+  display: grid;
+  gap: 4px;
+  justify-items: start;
+  text-align: left;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+}
+.theme-option strong {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.theme-option:hover {
+  border-color: var(--accent-2);
+}
+.theme-option.selected {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px var(--accent-soft);
+}
+.theme-swatch {
+  width: 100%;
+  height: 44px;
+  border-radius: 7px;
+  border: 1px solid var(--line);
+  margin-bottom: 4px;
+}
+.theme-swatch.light {
+  background: linear-gradient(90deg, #2e1a12 0 22%, #fef6eb 22%);
+}
+.theme-swatch.dark {
+  background: linear-gradient(90deg, #120c09 0 22%, #19130f 22%);
+}
+.theme-swatch.system {
+  background: linear-gradient(90deg, #2e1a12 0 22%, #fef6eb 22% 61%, #19130f 61%);
+}
+@media (max-width: 560px) {
+  .theme-options {
+    grid-template-columns: 1fr;
+  }
 }

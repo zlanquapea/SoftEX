@@ -8,6 +8,7 @@ import { useApi } from '../hooks';
 import { useSession } from '../session';
 import { MfaSetup } from './Auth';
 import { disablePush, enablePush, pushState, type PushState } from '../pwa';
+import { useTheme, type ThemeChoice } from '../theme';
 
 type Tab = 'profile' | 'notifications' | 'security' | 'api' | 'onboarding';
 
@@ -34,11 +35,43 @@ export function Settings() {
           { id: 'onboarding', label: 'Onboarding' },
         ]}
       />
-      {tab === 'profile' && <Profile />}
+      {tab === 'profile' && (
+        <>
+          <Appearance />
+          <Profile />
+        </>
+      )}
       {tab === 'notifications' && <Notifications />}
       {tab === 'security' && <Security />}
       {tab === 'api' && (has('api') ? <ApiTokens /> : <UpgradeNotice feature="api" />)}
       {tab === 'onboarding' && <Onboarding />}
+    </div>
+  );
+}
+
+/** Light, dark, or follow the device. Saved on this device. */
+function Appearance() {
+  const { choice, setTheme } = useTheme();
+  const options: { id: ThemeChoice; label: string; hint: string; icon: string }[] = [
+    { id: 'system', label: 'System', hint: 'Match this device', icon: 'monitor' },
+    { id: 'light', label: 'Light', hint: 'Cream and terracotta', icon: 'sun' },
+    { id: 'dark', label: 'Dark', hint: 'Easier on the eyes at night', icon: 'moon' },
+  ];
+  return (
+    <div className="card form">
+      <h2>Appearance</h2>
+      <div className="theme-options" role="radiogroup" aria-label="Appearance">
+        {options.map((o) => (
+          <button key={o.id} type="button" role="radio" aria-checked={choice === o.id} className={`theme-option ${choice === o.id ? 'selected' : ''}`} onClick={() => setTheme(o.id)}>
+            <span className={`theme-swatch ${o.id}`} aria-hidden="true" />
+            <strong>
+              <Icon name={o.icon} size={15} /> {o.label}
+            </strong>
+            <small className="muted">{o.hint}</small>
+          </button>
+        ))}
+      </div>
+      <p className="muted small">Saved on this device. You can also switch from the menu under your name.</p>
     </div>
   );
 }

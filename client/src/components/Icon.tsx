@@ -46,6 +46,7 @@ const PATHS: Record<string, string> = {
   board: 'M4 4h5v16H4zM10 4h5v10h-5zM16 4h4v7h-4z',
   list: 'M9 6h11M9 12h11M9 18h11M4 6h.01M4 12h.01M4 18h.01',
   inboxCheck: 'M4 4h16v16H4zM9 11l2 2 4-4',
+  monitor: 'M3 4h18v12H3zM8 20h8M12 16v4',
   moon: 'M20 14.5A8 8 0 0 1 9.5 4 8 8 0 1 0 20 14.5z',
   eye: 'M2 12s4-7 10-7 10 7 10 7-4 7-10 7S2 12 2 12zM12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6z',
   sun: 'M12 17a5 5 0 1 0 0-10 5 5 0 0 0 0 10zM12 1v2m0 18v2M4.2 4.2l1.4 1.4m12.8 12.8 1.4 1.4M1 12h2m18 0h2M4.2 19.8l1.4-1.4M18.4 5.6l1.4-1.4',
