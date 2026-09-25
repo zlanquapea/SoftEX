@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { api, type Me } from '../api';
 import { Icon } from '../components/Icon';
@@ -7,6 +7,7 @@ import { UpgradeNotice, usePlan } from '../components/Plan';
 import { useApi } from '../hooks';
 import { useSession } from '../session';
 import { MfaSetup } from './Auth';
+import { disablePush, enablePush, pushState, type PushState } from '../pwa';
 
 type Tab = 'profile' | 'notifications' | 'security' | 'api' | 'onboarding';
 
@@ -124,7 +125,6 @@ function Notifications() {
   const { me, setMe } = useSession();
   const act = useAction();
   const [quiet, setQuiet] = useState({ start: me!.user.quiet_start ?? '', end: me!.user.quiet_end ?? '' });
-  const [permission, setPermission] = useState(typeof Notification !== 'undefined' ? Notification.permission : 'unsupported');
   const focusActive = me!.user.focus_until && new Date(me!.user.focus_until) > new Date();
   const setFocus = async (minutes: number | null) => {
     const updated = await act(
@@ -214,20 +214,74 @@ function Notifications() {
         </label>
         <p className="muted small">Invitations, password resets and meeting invitations are always emailed.</p>
       </div>
-      <div className="card form">
-        <h2>Desktop notifications</h2>
-        <p className="muted">Show a system notification when SoftEX is in the background.</p>
-        {permission === 'granted' && <p>Enabled for this browser.</p>}
-        {permission === 'denied' && <p className="muted">Blocked in your browser settings.</p>}
-        {permission === 'default' && (
-          <button className="btn" onClick={async () => setPermission(await Notification.requestPermission())}>
-            Enable desktop notifications
-          </button>
-        )}
-        {permission === 'unsupported' && <p className="muted">Not supported in this browser.</p>}
-        <p className="muted small">Per-channel preferences (all, mentions only, muted) are in each channel’s header.</p>
-      </div>
+      <DeviceNotifications />
     </>
+  );
+}
+
+/** Push notifications for this phone or computer, including when SoftEX is closed. */
+function DeviceNotifications() {
+  const act = useAction();
+  const { data: config } = useApi<{ enabled: boolean; publicKey?: string }>('/push/config');
+  const [state, setState] = useState<PushState | null>(null);
+  const [busy, setBusy] = useState(false);
+  useEffect(() => {
+    if (config) void pushState(config.enabled).then(setState);
+  }, [config]);
+  const turnOn = async () => {
+    setBusy(true);
+    try {
+      const ok = await act(() => enablePush(config!.publicKey!, (sub) => api.post('/me/push', sub)), 'Notifications are on for this device');
+      if (ok === false && Notification.permission === 'denied') setState('denied');
+      else setState(await pushState(true));
+    } finally {
+      setBusy(false);
+    }
+  };
+  const turnOff = async () => {
+    setBusy(true);
+    try {
+      const endpoint = await disablePush();
+      if (endpoint) await act(() => api.del('/me/push', { endpoint }), 'Notifications are off for this device');
+      setState(await pushState(true));
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <div className="card form">
+      <h2>Notifications on this device</h2>
+      <p className="muted">
+        Get mentions, assignments and urgent messages on this phone or computer when SoftEX is closed. They follow your quiet hours and focus time, except urgent
+        messages.
+      </p>
+      {state === null && <Loading />}
+      {state === 'on' && (
+        <div className="row-gap">
+          <span>
+            <Icon name="check" size={16} /> On for this device.
+          </span>
+          <button className="btn sm" disabled={busy} onClick={() => act(() => api.post('/me/push/test'), 'Test notification sent')}>
+            Send a test
+          </button>
+          <button className="btn sm danger-text" disabled={busy} onClick={turnOff}>
+            Turn off
+          </button>
+        </div>
+      )}
+      {state === 'off' && (
+        <div>
+          <button className="btn primary" disabled={busy} onClick={turnOn}>
+            Turn on notifications
+          </button>
+          <small className="muted block">On iPhone and iPad, first add SoftEX to your Home Screen (Share → Add to Home Screen), then open it from there.</small>
+        </div>
+      )}
+      {state === 'denied' && <p className="muted">Notifications are blocked for this site. Allow them in your browser’s site settings, then reload.</p>}
+      {state === 'unavailable' && <p className="muted">Push notifications aren’t available here. Install SoftEX (or open the production site) to use them.</p>}
+      {state === 'unsupported' && <p className="muted">This browser doesn’t support notifications.</p>}
+      <p className="muted small">Per-channel preferences (all, mentions only, muted) are in each channel’s header.</p>
+    </div>
   );
 }
 
@@ -292,6 +346,7 @@ function Security() {
           <button className="btn primary">Change password</button>
         </div>
       </form>
+      <Sessions />
       <div className="card form">
         <h2>Your data</h2>
         <p className="muted">Download everything you can access — messages, tasks, pages, file metadata, meetings and decisions — as JSON.</p>
@@ -301,6 +356,65 @@ function Security() {
       </div>
       <DeleteAccount />
     </>
+  );
+}
+
+interface SessionRow {
+  id: string;
+  device: string;
+  ip: string | null;
+  workspace_name: string;
+  created_at: string;
+  last_seen_at: string;
+  current: boolean;
+}
+
+function Sessions() {
+  const act = useAction();
+  const { data, reload } = useApi<SessionRow[]>('/me/sessions');
+  const others = data?.filter((s) => !s.current).length ?? 0;
+  return (
+    <div className="card form">
+      <h2>Where you’re signed in</h2>
+      <p className="muted">If you don’t recognise a device, sign it out and change your password.</p>
+      {!data && <Loading />}
+      {data?.map((s) => (
+        <div key={s.id} className="list-row">
+          <span className="grow">
+            <strong>{s.device}</strong> {s.current && <span className="pill">This device</span>}
+            <small className="muted block">
+              {s.workspace_name}
+              {s.ip && ` · ${s.ip}`} · signed in {new Date(s.created_at).toLocaleDateString()} · last active {new Date(s.last_seen_at).toLocaleString()}
+            </small>
+          </span>
+          {!s.current && (
+            <button
+              className="btn sm danger-text"
+              onClick={async () => {
+                await act(() => api.del(`/me/sessions/${s.id}`), 'Signed out');
+                reload();
+              }}
+            >
+              Sign out
+            </button>
+          )}
+        </div>
+      ))}
+      {others > 0 && (
+        <div className="form-actions">
+          <button
+            className="btn"
+            onClick={async () => {
+              if (!confirm('Sign out everywhere except this device?')) return;
+              await act(() => api.post('/me/sessions/revoke-others'), 'Signed out of all other devices');
+              reload();
+            }}
+          >
+            Sign out all other devices
+          </button>
+        </div>
+      )}
+    </div>
   );
 }
 

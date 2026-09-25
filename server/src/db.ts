@@ -63,6 +63,7 @@ CREATE TABLE IF NOT EXISTS sessions (
   created_at TEXT NOT NULL,
   expires_at TEXT NOT NULL
 );
+CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id);
 
 CREATE TABLE IF NOT EXISTS invitations (
   id TEXT PRIMARY KEY,
@@ -633,6 +634,37 @@ CREATE TABLE IF NOT EXISTS platform_events (
   created_at TEXT NOT NULL
 );
 
+-- Server-wide values shared by every SoftEX server, such as the Web Push key pair.
+CREATE TABLE IF NOT EXISTS server_settings (
+  key TEXT PRIMARY KEY,
+  value TEXT NOT NULL,
+  created_at TEXT NOT NULL
+);
+
+-- Devices that receive push notifications; each belongs to a browser session.
+CREATE TABLE IF NOT EXISTS push_subscriptions (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  session_id TEXT NOT NULL,
+  endpoint TEXT NOT NULL UNIQUE,
+  p256dh TEXT NOT NULL,
+  auth TEXT NOT NULL,
+  user_agent TEXT,
+  created_at TEXT NOT NULL,
+  last_success_at TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_push_user ON push_subscriptions(user_id);
+
+-- Private calendar subscription links ("add SoftEX meetings to Google Calendar / Outlook").
+CREATE TABLE IF NOT EXISTS calendar_feeds (
+  token_hash TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+  created_at TEXT NOT NULL,
+  last_used_at TEXT,
+  UNIQUE (user_id, workspace_id)
+);
+
 CREATE TABLE IF NOT EXISTS deadline_reminders (
   task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
   due_date TEXT NOT NULL,
@@ -687,6 +719,11 @@ const ADDED_COLUMNS: [table: string, column: string, definition: string, backfil
   ['workspaces', 'suspended_reason', 'TEXT'],
   ['users', 'terms_accepted_at', 'TEXT'],
   ['users', 'terms_version', 'TEXT'],
+  // Sessions get a public id (never the token hash itself) and device details for "Where you're signed in".
+  ['sessions', 'id', 'TEXT', "UPDATE sessions SET id = substr(token_hash, 1, 24)"],
+  ['sessions', 'user_agent', 'TEXT'],
+  ['sessions', 'ip', 'TEXT'],
+  ['sessions', 'last_seen_at', 'TEXT', 'UPDATE sessions SET last_seen_at = created_at'],
 ];
 
 export type Row = Record<string, any>;

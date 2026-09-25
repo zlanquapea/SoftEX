@@ -17,19 +17,16 @@ import {
 import { minutesAfter, type Row } from '../db.js';
 import { authOf, notify, publishToChannel, recordActivity, userSummary, type Ctx } from '../context.js';
 import { emitEvent } from '../webhooks.js';
-import { forbidden, newId, notFound, now, parse, filterAsync } from '../util.js';
+import { forbidden, newId, notFound, now, parse, filterAsync, randomToken, sha256 } from '../util.js';
 import { queueEmail } from '../mailer.js';
 import { serializeTasks } from './tasks.js';
 import { serializeMessages } from './channels.js';
 
-/** iCalendar invite used for both the download endpoint and email attachments. */
-export function buildIcs(m: { id: string; title: string; agenda: string; starts_at: string; duration_min: number; video_url: string; location: string }, publicUrl: string, method: 'PUBLISH' | 'REQUEST' | 'CANCEL' = 'PUBLISH') {
+type IcsMeeting = { id: string; title: string; agenda: string; starts_at: string; duration_min: number; video_url: string; location: string };
+
+function vevent(m: IcsMeeting, publicUrl: string, cancelled = false) {
   const end = new Date(new Date(m.starts_at).getTime() + m.duration_min * 60_000).toISOString();
   return [
-    'BEGIN:VCALENDAR',
-    'VERSION:2.0',
-    'PRODID:-//SoftEX//Meetings//EN',
-    `METHOD:${method}`,
     'BEGIN:VEVENT',
     `UID:${m.id}@softex`,
     `DTSTAMP:${icsDate(new Date().toISOString())}`,
@@ -39,10 +36,89 @@ export function buildIcs(m: { id: string; title: string; agenda: string; starts_
     `DESCRIPTION:${icsEscape(`${m.agenda}\n\n${publicUrl}/meetings/${m.id}`)}`,
     `LOCATION:${icsEscape(m.video_url || m.location)}`,
     `URL:${publicUrl}/meetings/${m.id}`,
-    method === 'CANCEL' ? 'STATUS:CANCELLED' : 'STATUS:CONFIRMED',
+    cancelled ? 'STATUS:CANCELLED' : 'STATUS:CONFIRMED',
     'END:VEVENT',
-    'END:VCALENDAR',
-  ].join('\r\n');
+  ];
+}
+
+/** Lines longer than 75 octets are folded, as RFC 5545 requires. */
+function icsLines(lines: string[]) {
+  const out: string[] = [];
+  for (const line of lines) {
+    let rest = Buffer.from(line, 'utf8');
+    let first = true;
+    while (rest.length > (first ? 75 : 74)) {
+      let cut = first ? 75 : 74;
+      while (cut > 0 && (rest[cut] & 0xc0) === 0x80) cut--; // don't split a UTF-8 character
+      out.push((first ? '' : ' ') + rest.subarray(0, cut).toString('utf8'));
+      rest = rest.subarray(cut);
+      first = false;
+    }
+    out.push((first ? '' : ' ') + rest.toString('utf8'));
+  }
+  return out.join('\r\n') + '\r\n';
+}
+
+/** iCalendar invite used for both the download endpoint and email attachments. */
+export function buildIcs(m: IcsMeeting, publicUrl: string, method: 'PUBLISH' | 'REQUEST' | 'CANCEL' = 'PUBLISH') {
+  return icsLines(['BEGIN:VCALENDAR', 'VERSION:2.0', 'PRODID:-//SoftEX//Meetings//EN', `METHOD:${method}`, ...vevent(m, publicUrl, method === 'CANCEL'), 'END:VCALENDAR']);
+}
+
+/**
+ * Calendar subscription (§5.4 calendar integration): a private link that Google Calendar,
+ * Outlook or Apple Calendar poll for the person's meetings. The link is the credential,
+ * so only its hash is stored; it stops working when the person resets or turns it off,
+ * leaves the workspace, or the workspace is suspended.
+ */
+export function calendarFeedRouter(ctx: Ctx) {
+  const r = Router();
+  const { db } = ctx;
+  r.get('/calendar/:token', async (req, res) => {
+    const token = String(req.params.token).replace(/\.ics$/, '');
+    const feed = await db.get(
+      `SELECT f.token_hash, f.user_id, f.workspace_id, m.role, w.name AS workspace_name FROM calendar_feeds f
+         JOIN memberships m ON m.workspace_id = f.workspace_id AND m.user_id = f.user_id
+         JOIN workspaces w ON w.id = f.workspace_id
+        WHERE f.token_hash = ? AND m.deactivated_at IS NULL AND w.suspended_at IS NULL
+          AND (m.guest_expires_at IS NULL OR m.guest_expires_at > ?)`,
+      sha256(token),
+      now(),
+    );
+    if (!feed) throw notFound('Calendar');
+    const auth: Auth = { userId: feed.user_id, workspaceId: feed.workspace_id, role: feed.role };
+    const from = new Date(Date.now() - 60 * 86_400_000).toISOString();
+    const to = new Date(Date.now() + 366 * 86_400_000).toISOString();
+    const rows = await db.all(
+      `SELECT DISTINCT m.* FROM meetings m LEFT JOIN meeting_participants p ON p.meeting_id = m.id AND p.user_id = ?
+        WHERE m.workspace_id = ? AND m.starts_at >= ? AND m.starts_at <= ?
+          AND (m.organizer_id = ? OR (p.user_id IS NOT NULL AND p.response != 'declined'))
+        ORDER BY m.starts_at LIMIT 1000`,
+      feed.user_id,
+      feed.workspace_id,
+      from,
+      to,
+      feed.user_id,
+    );
+    const visible = await filterAsync(rows, (m) => canViewMeeting(db, auth, m));
+    await db.run('UPDATE calendar_feeds SET last_used_at = ? WHERE token_hash = ?', now(), feed.token_hash);
+    res.setHeader('Content-Type', 'text/calendar; charset=utf-8');
+    res.setHeader('Cache-Control', 'private, no-store');
+    res.send(
+      icsLines([
+        'BEGIN:VCALENDAR',
+        'VERSION:2.0',
+        'PRODID:-//SoftEX//Meetings//EN',
+        'METHOD:PUBLISH',
+        'CALSCALE:GREGORIAN',
+        `X-WR-CALNAME:${icsEscape(`SoftEX · ${feed.workspace_name}`)}`,
+        'REFRESH-INTERVAL;VALUE=DURATION:PT1H',
+        'X-PUBLISHED-TTL:PT1H',
+        ...visible.flatMap((m) => vevent(m as IcsMeeting, ctx.config.publicUrl)),
+        'END:VCALENDAR',
+      ]),
+    );
+  });
+  return r;
 }
 
 const icsDate = (iso: string) => iso.replace(/[-:]/g, '').replace(/\.\d{3}/, '');
@@ -353,6 +429,31 @@ export function meetingsRouter(ctx: Ctx) {
     for (const p of people) {
       await notify(ctx, auth.workspaceId, { userId: p.id, kind: 'meeting', title: `“${m.title}” was cancelled`, link: '/meetings', actorId: auth.userId });
     }
+    res.json({ ok: true });
+  });
+
+  // The person's private calendar subscription link for this workspace.
+  r.get('/me/calendar-feed', async (req, res) => {
+    const auth = authOf(req);
+    const feed = await db.get('SELECT created_at, last_used_at FROM calendar_feeds WHERE user_id = ? AND workspace_id = ?', auth.userId, auth.workspaceId);
+    res.json({ enabled: !!feed, created_at: feed?.created_at ?? null, last_used_at: feed?.last_used_at ?? null });
+  });
+
+  /** Create the link, or replace it (the old one stops working). The link is only shown now. */
+  r.post('/me/calendar-feed', async (req, res) => {
+    const auth = authOf(req);
+    const token = randomToken();
+    await db.transaction(async () => {
+      await db.run('DELETE FROM calendar_feeds WHERE user_id = ? AND workspace_id = ?', auth.userId, auth.workspaceId);
+      await db.insert('calendar_feeds', { token_hash: sha256(token), user_id: auth.userId, workspace_id: auth.workspaceId, created_at: now() });
+    });
+    const url = `${ctx.config.publicUrl}/api/calendar/${token}.ics`;
+    res.status(201).json({ url, webcal: url.replace(/^https?:/, 'webcal:') });
+  });
+
+  r.delete('/me/calendar-feed', async (req, res) => {
+    const auth = authOf(req);
+    await db.run('DELETE FROM calendar_feeds WHERE user_id = ? AND workspace_id = ?', auth.userId, auth.workspaceId);
     res.json({ ok: true });
   });
 

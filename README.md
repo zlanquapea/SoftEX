@@ -24,6 +24,9 @@ SoftEX is a unified workplace app for team communication, projects, documents, m
 | **Insights** (2) | A dashboard for leads and admins that tracks the spec's success measures: weekly active people, task ownership, decisions and status updates per project, meeting follow-through, overdue share, cycle time and notification load. Aggregates only, no individual ranking |
 | **Governance** (5.7, 9) | **SCIM 2.0** user provisioning and deprovisioning (Okta, Entra ID and others), **message retention** policies, and a **legal hold** that pauses all automatic deletion |
 | **Hosted service (SaaS)** | With `SOFTEX_MODE=saas`: self-service sign-up with email confirmation, a 30-day Business trial, a permanent **Free** plan (10 members, core features) and paid **Standard** and **Business** plans priced per member. Usage limits on members, storage and AI; payment by Orange Money, MTN Mobile Money or bank transfer, confirmed by the operator; renewal and trial reminders; a public pricing page with Liberian-dollar amounts; an **operator console** to confirm payments, adjust plans and suspend abuse; and self-service workspace and account deletion. See [docs/DEPLOY_RAILWAY.md](docs/DEPLOY_RAILWAY.md) |
+| **Devices & calendars** (5.4, 5.5, 9) | **Push notifications** on phones and computers when SoftEX is closed (mentions, assignments, urgent messages; they follow quiet hours and focus time, except urgent messages). **Where you're signed in**: see every device, sign one out or sign out everywhere else. A private **calendar subscription link** that puts your meetings in Google Calendar, Outlook or Apple Calendar |
+| **Import** (7) | **Bulk invitations** from a pasted list or a CSV, and **task import** into a project from a Trello, Asana, Jira, Monday or spreadsheet CSV, with a preview first. Assignees get one summary notification |
+| **Backups** (7, 9) | Automatic daily SQLite backups: a consistent snapshot, checked with an integrity check, compressed and kept in S3 storage (or the backup folder); the newest 7 are kept. Operators can back up now, download a backup, and restore one by setting `SOFTEX_RESTORE_BACKUP` |
 | **Clients** (8, 11) | Responsive React web app: sidebar navigation on desktop, bottom navigation on mobile, ⌘K global search, dark mode, keyboard and screen-reader-friendly controls, and an installable web app that works offline: the app shell and recently viewed data stay available read-only on poor connections, and cached data is wiped on sign-out |
 
 ## Architecture
@@ -99,6 +102,12 @@ Every push to `main` publishes an image to `ghcr.io/zlanquapea/softex` (see *CI/
 | `SOFTEX_PAYMENT_INSTRUCTIONS` | *(unset)* | Markdown shown to customers when they pay (mobile money numbers, bank details); `\n` for new lines |
 | `SOFTEX_SUPPORT_EMAIL` | *(unset)* | Billing contact shown to customers |
 | `SOFTEX_ALLOW_PRIVATE_WEBHOOKS` | `false` | Development only: allow webhooks to local addresses |
+| `SOFTEX_BACKUPS` | `on` | `off` turns off automatic SQLite backups |
+| `SOFTEX_BACKUP_HOURS` / `SOFTEX_BACKUP_KEEP` | `24` / `7` | How often to back up, and how many backups to keep |
+| `SOFTEX_BACKUP_DIR` | `SOFTEX_DATA_DIR/backups` | Where backups go when files aren't in S3 (with S3 they go to the bucket under `backups/`) |
+| `SOFTEX_RESTORE_BACKUP` | *(unset)* | A backup file name to restore on start-up (the current database is kept beside it). Remove it after the restore |
+| `SOFTEX_PUSH` | `on` | `off` turns off push notifications |
+| `SOFTEX_VAPID_PUBLIC_KEY` / `SOFTEX_VAPID_PRIVATE_KEY` / `SOFTEX_VAPID_SUBJECT` | *(generated)* | Web Push keys. Without them, a key pair is generated once and stored in the database (encrypted with `SOFTEX_SECRET_KEY` when set) |
 
 ### Checks
 

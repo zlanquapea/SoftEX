@@ -2,6 +2,8 @@ import { accessSync, constants, mkdirSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createApp } from './app.js';
+import { restoreOnStartup } from './backup.js';
+import { LocalFileStore, S3FileStore, type S3Settings } from './storage.js';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const root = resolve(here, '..');
@@ -56,21 +58,52 @@ const billing = Object.fromEntries(
   }).filter(([, v]) => v !== undefined),
 );
 
+const s3: S3Settings | undefined = process.env.SOFTEX_S3_BUCKET
+  ? {
+      bucket: process.env.SOFTEX_S3_BUCKET,
+      region: process.env.SOFTEX_S3_REGION || undefined,
+      endpoint: process.env.SOFTEX_S3_ENDPOINT || undefined,
+      accessKeyId: process.env.SOFTEX_S3_ACCESS_KEY_ID || undefined,
+      secretAccessKey: process.env.SOFTEX_S3_SECRET_ACCESS_KEY || undefined,
+      forcePathStyle: process.env.SOFTEX_S3_FORCE_PATH_STYLE === 'true',
+      prefix: process.env.SOFTEX_S3_PREFIX || undefined,
+    }
+  : undefined;
+const dbPath = process.env.SOFTEX_DB ?? join(dataDir, 'softex.db');
+const databaseUrl = process.env.SOFTEX_DATABASE_URL || undefined;
+const backupDir = process.env.SOFTEX_BACKUP_DIR || join(dataDir, 'backups');
+
+// Restoring a backup (SOFTEX_RESTORE_BACKUP=<file name>) happens before the database is opened.
+if (process.env.SOFTEX_RESTORE_BACKUP) {
+  if (databaseUrl) {
+    console.error('SOFTEX_RESTORE_BACKUP only restores SQLite backups. Restore PostgreSQL with your database provider.');
+    process.exit(1);
+  }
+  try {
+    await restoreOnStartup({ dbPath, backupName: process.env.SOFTEX_RESTORE_BACKUP, files: s3 ? new S3FileStore(s3) : new LocalFileStore(join(dataDir, 'uploads')), backupDir });
+  } catch (error) {
+    console.error(`SoftEX could not restore the backup: ${(error as Error).message}`);
+    process.exit(1);
+  }
+}
+
 const { server, ready } = createApp({
-  dbPath: process.env.SOFTEX_DB ?? join(dataDir, 'softex.db'),
-  databaseUrl: process.env.SOFTEX_DATABASE_URL || undefined,
-  s3: process.env.SOFTEX_S3_BUCKET
-    ? {
-        bucket: process.env.SOFTEX_S3_BUCKET,
-        region: process.env.SOFTEX_S3_REGION || undefined,
-        endpoint: process.env.SOFTEX_S3_ENDPOINT || undefined,
-        accessKeyId: process.env.SOFTEX_S3_ACCESS_KEY_ID || undefined,
-        secretAccessKey: process.env.SOFTEX_S3_SECRET_ACCESS_KEY || undefined,
-        forcePathStyle: process.env.SOFTEX_S3_FORCE_PATH_STYLE === 'true',
-        prefix: process.env.SOFTEX_S3_PREFIX || undefined,
-      }
-    : undefined,
+  dbPath,
+  databaseUrl,
+  s3,
   uploadDir: join(dataDir, 'uploads'),
+  backups: {
+    enabled: process.env.SOFTEX_BACKUPS !== 'off',
+    dir: backupDir,
+    keep: num('SOFTEX_BACKUP_KEEP'),
+    everyHours: num('SOFTEX_BACKUP_HOURS'),
+  },
+  push: process.env.SOFTEX_PUSH === 'off' ? false : undefined,
+  vapid: {
+    publicKey: process.env.SOFTEX_VAPID_PUBLIC_KEY || undefined,
+    privateKey: process.env.SOFTEX_VAPID_PRIVATE_KEY || undefined,
+    subject: process.env.SOFTEX_VAPID_SUBJECT || undefined,
+  },
   meetingBaseUrl: process.env.SOFTEX_MEETING_BASE_URL,
   maxUploadBytes: process.env.SOFTEX_MAX_UPLOAD_MB ? Number(process.env.SOFTEX_MAX_UPLOAD_MB) * 1024 * 1024 : undefined,
   secureCookies: process.env.SOFTEX_SECURE_COOKIES === 'true',

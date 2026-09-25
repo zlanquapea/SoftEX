@@ -14,6 +14,8 @@ export interface Auth {
   role: Role;
   /** Set when the request is authenticated with a personal API token rather than a browser session. */
   tokenScope?: 'read' | 'write';
+  /** The browser session behind the request (absent for API tokens). */
+  sessionId?: string;
 }
 
 const RANK: Record<Role, number> = { guest: 0, member: 1, lead: 2, admin: 3, owner: 4 };

@@ -171,6 +171,93 @@ function Members() {
   );
 }
 
+/** Paste a list of addresses, or upload a CSV exported from another tool. */
+function BulkInvite({ open, onClose, onDone }: { open: boolean; onClose: () => void; onDone: () => void }) {
+  const { can } = useSession();
+  const act = useAction();
+  const [text, setText] = useState('');
+  const [role, setRole] = useState('member');
+  const [result, setResult] = useState<{ invited: string[]; skipped: { email: string; reason: string }[] } | null>(null);
+  const close = () => {
+    setText('');
+    setResult(null);
+    onClose();
+  };
+  return (
+    <Modal open={open} onClose={close} title="Invite many people">
+      {result ? (
+        <>
+          <p>
+            <strong>{result.invited.length}</strong> invitation{result.invited.length === 1 ? '' : 's'} sent.
+          </p>
+          {result.skipped.length > 0 && (
+            <>
+              <p className="muted">Skipped:</p>
+              <ul className="plain-list">
+                {result.skipped.map((s) => (
+                  <li key={s.email}>
+                    {s.email} <span className="muted">· {s.reason}</span>
+                  </li>
+                ))}
+              </ul>
+            </>
+          )}
+          <div className="form-actions">
+            <button className="btn primary" onClick={close}>
+              Done
+            </button>
+          </div>
+        </>
+      ) : (
+        <form
+          className="form"
+          onSubmit={async (e) => {
+            e.preventDefault();
+            const res = await act(() => api.post<{ invited: string[]; skipped: { email: string; reason: string }[] }>('/admin/invitations/bulk', { text, role }));
+            if (res) {
+              setResult(res);
+              onDone();
+            }
+          }}
+        >
+          <p className="muted">
+            Paste email addresses (one per line, or separated by commas), or upload a CSV from another tool. Every address found is invited; people who are already
+            members or invited are skipped. Up to 200 at a time.
+          </p>
+          <Field label="Email addresses">
+            <textarea rows={8} required value={text} onChange={(e) => setText(e.target.value)} placeholder={'amara@company.com\njoseph@company.com'} />
+          </Field>
+          <div className="form-row">
+            <Field label="Or upload a CSV file">
+              <input
+                type="file"
+                accept=".csv,text/csv,text/plain"
+                onChange={async (e) => {
+                  const file = e.target.files?.[0];
+                  if (file) setText(await file.text());
+                }}
+              />
+            </Field>
+            <Field label="Role">
+              <select value={role} onChange={(e) => setRole(e.target.value)}>
+                <option value="member">Member</option>
+                {can('admin') && <option value="lead">Team lead</option>}
+                {can('admin') && <option value="admin">Admin</option>}
+              </select>
+            </Field>
+          </div>
+          <div className="form-actions">
+            <button type="button" className="btn" onClick={close}>
+              Cancel
+            </button>
+            <button className="btn primary">Send invitations</button>
+          </div>
+        </form>
+      )}
+    </Modal>
+  );
+}
+
 function Invitations() {
   const { can } = useSession();
   const act = useAction();
@@ -181,6 +268,7 @@ function Invitations() {
   const { data: projects } = useApi<Project[]>('/projects');
   const [form, setForm] = useState({ email: '', role: 'member', guestDays: 30, channelIds: [] as string[], projectIds: [] as string[] });
   const [link, setLink] = useState<{ url: string; email: string } | null>(null);
+  const [bulk, setBulk] = useState(false);
   const toggle = (key: 'channelIds' | 'projectIds', id: string) =>
     setForm({ ...form, [key]: form[key].includes(id) ? form[key].filter((x) => x !== id) : [...form[key], id] });
   return (
@@ -243,7 +331,12 @@ function Invitations() {
             ))}
           </div>
         </Field>
-        <button className="btn primary">Create invitation</button>
+        <div className="row-gap">
+          <button className="btn primary">Create invitation</button>
+          <button type="button" className="btn" onClick={() => setBulk(true)}>
+            Invite many people at once
+          </button>
+        </div>
         {link && (
           <div className="hint-box">
             <p>
@@ -256,6 +349,7 @@ function Invitations() {
           </div>
         )}
       </form>
+      <BulkInvite open={bulk} onClose={() => setBulk(false)} onDone={reload} />
       <div className="card">
         <h2>Invitations</h2>
         {!data && <Loading />}

@@ -13,9 +13,79 @@ import { dateTime, localTimeIn, timeOf } from '../format';
 import { useApi, useRealtime } from '../hooks';
 import { useSession } from '../session';
 
+/** Private calendar subscription link for Google Calendar, Outlook or Apple Calendar. */
+function CalendarSubscribe({ open, onClose }: { open: boolean; onClose: () => void }) {
+  const act = useAction();
+  const { data, reload } = useApi<{ enabled: boolean; created_at: string | null; last_used_at: string | null }>(open ? '/me/calendar-feed' : null);
+  const [link, setLink] = useState<{ url: string; webcal: string } | null>(null);
+  const create = async () => {
+    const res = await act(() => api.post<{ url: string; webcal: string }>('/me/calendar-feed'));
+    if (res) {
+      setLink(res);
+      reload();
+    }
+  };
+  return (
+    <Modal open={open} onClose={onClose} title="Add SoftEX meetings to your calendar">
+      <p className="muted">
+        Subscribe once and your SoftEX meetings (the ones you organise or were invited to) show up in Google Calendar, Outlook or Apple Calendar. Calendar apps
+        refresh subscriptions every few hours, so a change can take a while to appear.
+      </p>
+      {link ? (
+        <div className="hint-box token-reveal">
+          <strong>Copy this private link now. It won’t be shown again.</strong>
+          <code className="secret">{link.url}</code>
+          <div className="row-gap">
+            <button type="button" className="btn sm" onClick={() => navigator.clipboard?.writeText(link.url)}>
+              Copy link
+            </button>
+            <a className="btn sm" href={link.webcal}>
+              Open in calendar app
+            </a>
+          </div>
+          <small className="muted block">
+            Google Calendar: <em>Other calendars → + → From URL</em>. Outlook: <em>Add calendar → Subscribe from web</em>. Anyone with the link can see your
+            meeting titles and times, so keep it private.
+          </small>
+        </div>
+      ) : data?.enabled ? (
+        <>
+          <p>
+            You have a calendar link{data.last_used_at ? `, last read by your calendar ${new Date(data.last_used_at).toLocaleString()}` : ''}. Links are only
+            shown when created; make a new one if you’ve lost it (the old link stops working).
+          </p>
+          <div className="form-actions">
+            <button
+              className="btn danger-text"
+              onClick={async () => {
+                await act(() => api.del('/me/calendar-feed'), 'Calendar link turned off');
+                reload();
+              }}
+            >
+              Turn off
+            </button>
+            <button className="btn primary" onClick={create}>
+              Make a new link
+            </button>
+          </div>
+        </>
+      ) : (
+        data && (
+          <div className="form-actions">
+            <button className="btn primary" onClick={create}>
+              Create my calendar link
+            </button>
+          </div>
+        )
+      )}
+    </Modal>
+  );
+}
+
 export function Meetings() {
   const { openCreate } = useShell();
   const [range, setRange] = useState<'upcoming' | 'past'>('upcoming');
+  const [subscribe, setSubscribe] = useState(false);
   const { data, error, reload } = useApi<Meeting[]>(`/meetings${qs({ range })}`);
   useRealtime((e) => e.type === 'meeting.updated' && reload());
   const groups = new Map<string, Meeting[]>();
@@ -30,10 +100,16 @@ export function Meetings() {
           <h1>Meetings</h1>
           <p className="muted">Agendas, notes, decisions and follow-ups — connected to the work they concern.</p>
         </div>
-        <button className="btn primary" onClick={() => openCreate('meeting')}>
-          <Icon name="plus" size={16} /> Schedule
-        </button>
+        <div className="row-gap">
+          <button className="btn" onClick={() => setSubscribe(true)}>
+            <Icon name="calendar" size={16} /> Add to my calendar
+          </button>
+          <button className="btn primary" onClick={() => openCreate('meeting')}>
+            <Icon name="plus" size={16} /> Schedule
+          </button>
+        </div>
       </div>
+      <CalendarSubscribe open={subscribe} onClose={() => setSubscribe(false)} />
       <Tabs value={range} onChange={setRange} tabs={[{ id: 'upcoming', label: 'Upcoming' }, { id: 'past', label: 'Past' }]} />
       {error && <ErrorState error={error} retry={reload} />}
       {!data && !error && <Loading />}

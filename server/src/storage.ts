@@ -1,4 +1,4 @@
-import { createReadStream, existsSync, mkdirSync, renameSync, statSync, unlinkSync } from 'node:fs';
+import { createReadStream, existsSync, mkdirSync, readdirSync, renameSync, statSync, unlinkSync } from 'node:fs';
 import { join } from 'node:path';
 import type { Readable } from 'node:stream';
 
@@ -14,6 +14,8 @@ export interface FileStore {
   /** Open a stored file for reading, or null if it's gone. */
   open(key: string): Promise<Readable | null>;
   remove(key: string): Promise<void>;
+  /** Stored files whose keys start with `prefix` (used for backups). */
+  list(prefix: string): Promise<{ key: string; size: number; modified: string }[]>;
 }
 
 export class LocalFileStore implements FileStore {
@@ -37,6 +39,14 @@ export class LocalFileStore implements FileStore {
     } catch {
       /* already gone */
     }
+  }
+
+  async list(prefix: string) {
+    return readdirSync(this.dir)
+      .filter((name) => name.startsWith(prefix))
+      .map((name) => ({ name, stat: statSync(join(this.dir, name)) }))
+      .filter((f) => f.stat.isFile())
+      .map((f) => ({ key: f.name, size: f.stat.size, modified: f.stat.mtime.toISOString() }));
   }
 }
 
@@ -114,5 +124,20 @@ export class S3FileStore implements FileStore {
   async remove(key: string) {
     const { sdk, client } = await this.s3();
     await client.send(new sdk.DeleteObjectCommand({ Bucket: this.settings.bucket, Key: this.key(key) }));
+  }
+
+  async list(prefix: string) {
+    const { sdk, client } = await this.s3();
+    const out: { key: string; size: number; modified: string }[] = [];
+    const base = this.key('');
+    let token: string | undefined;
+    do {
+      const res = await client.send(new sdk.ListObjectsV2Command({ Bucket: this.settings.bucket, Prefix: this.key(prefix), ContinuationToken: token }));
+      for (const o of res.Contents ?? []) {
+        if (o.Key) out.push({ key: o.Key.slice(base.length), size: o.Size ?? 0, modified: (o.LastModified ?? new Date()).toISOString() });
+      }
+      token = res.IsTruncated ? res.NextContinuationToken : undefined;
+    } while (token);
+    return out;
   }
 }

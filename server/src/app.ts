@@ -18,18 +18,22 @@ import { productivityRouter } from './routes/productivity.js';
 import { scimAdminRouter, scimRouter } from './routes/scim.js';
 import { billingRouter, operatorRouter, publicBillingRouter } from './routes/billing.js';
 import { RealtimeHub } from './realtime.js';
+import { webPushTransport, type PushTransport } from './push.js';
+import type { BackupConfig } from './backup.js';
+import { pushRouter } from './routes/push.js';
 import { authRouter, authenticate, meRouter, requireAuth } from './routes/auth.js';
 import { channelsRouter } from './routes/channels.js';
 import { homeRouter } from './routes/home.js';
 import { knowledgeRouter } from './routes/knowledge.js';
-import { meetingsRouter } from './routes/meetings.js';
+import { calendarFeedRouter, meetingsRouter } from './routes/meetings.js';
 import { projectsRouter } from './routes/projects.js';
 import { tasksRouter } from './routes/tasks.js';
 import { workspaceRouter } from './routes/workspace.js';
 import { HttpError, errorHandler } from './util.js';
 
-export interface AppOptions extends Partial<Omit<Config, 'billing'>> {
+export interface AppOptions extends Partial<Omit<Config, 'billing' | 'backups'>> {
   billing?: Partial<BillingConfig>;
+  backups?: Partial<BackupConfig>;
   /** Express "trust proxy" setting: a hop count, true/false, or an address list. */
   trustProxy?: boolean | number | string;
   dbPath?: string;
@@ -46,6 +50,8 @@ export interface AppOptions extends Partial<Omit<Config, 'billing'>> {
   anthropicApiKey?: string;
   mail?: MailTransport;
   ai?: AiClient;
+  /** Web Push sender (default: the real push services); false turns push off. */
+  push?: PushTransport | false;
 }
 
 export interface SoftexApp {
@@ -74,6 +80,14 @@ export function createApp(options: AppOptions = {}): SoftexApp {
     mode: options.mode ?? 'self_hosted',
     operatorEmails: (options.operatorEmails ?? []).map((e) => e.trim().toLowerCase()).filter(Boolean),
     company: options.company ?? {},
+    vapid: options.vapid,
+    backups: {
+      enabled: false,
+      dir: join(process.cwd(), 'data', 'backups'),
+      keep: 7,
+      everyHours: 24,
+      ...Object.fromEntries(Object.entries(options.backups ?? {}).filter(([, v]) => v !== undefined)),
+    },
     billing: {
       priceStandard: 1.5,
       priceBusiness: 3,
@@ -93,6 +107,7 @@ export function createApp(options: AppOptions = {}): SoftexApp {
     hub,
     config,
     mail: options.mail,
+    push: options.push === false ? undefined : (options.push ?? webPushTransport),
     ai: options.ai ?? (options.anthropicApiKey ? createClaudeClient(options.anthropicApiKey, config.aiModel) : undefined),
   };
   const stopJobs = options.startJobs === false ? () => {} : startBackgroundJobs(ctx);
@@ -136,10 +151,12 @@ export function createApp(options: AppOptions = {}): SoftexApp {
   app.use('/api', authRouter(ctx));
   app.use('/api', ssoPublicRouter(ctx));
   app.use('/api', publicBillingRouter(ctx));
+  app.use('/api', calendarFeedRouter(ctx));
   app.use('/scim/v2', express.json({ type: ['application/json', 'application/scim+json'], limit: '1mb' }), scimRouter(ctx));
   const api = express.Router();
   api.use(requireAuth(ctx));
   api.use(meRouter(ctx));
+  api.use(pushRouter(ctx));
   api.use(homeRouter(ctx));
   api.use(channelsRouter(ctx));
   api.use(projectsRouter(ctx));

@@ -2,6 +2,7 @@ import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { afterEach, describe, expect, it } from 'vitest';
 import { S3FileStore } from '../src/storage.js';
+import { createBackup, listBackups } from '../src/backup.js';
 import { registerOwner, setup, type TestEnv } from './helpers.js';
 
 /** Just enough of the S3 API (path-style PUT/GET/DELETE) to exercise SoftEX's storage adapter. */
@@ -9,6 +10,18 @@ function fakeS3() {
   const objects = new Map<string, { body: Buffer; type: string }>();
   const server = createServer((req, res) => {
     const key = decodeURIComponent(req.url!.split('?')[0]);
+    const query = new URLSearchParams(req.url!.split('?')[1] ?? '');
+    if (req.method === 'GET' && query.get('list-type') === '2') {
+      const prefix = `${key.replace(/\/$/, '')}/${query.get('prefix') ?? ''}`;
+      const items = [...objects].filter(([k]) => k.startsWith(prefix));
+      const bucket = key.replace(/^\//, '').replace(/\/$/, '');
+      const xml = items
+        .map(([k, o]) => `<Contents><Key>${k.slice(bucket.length + 2)}</Key><Size>${o.body.length}</Size><LastModified>2026-09-25T00:00:00.000Z</LastModified></Contents>`)
+        .join('');
+      return res
+        .writeHead(200, { 'Content-Type': 'application/xml' })
+        .end(`<?xml version="1.0"?><ListBucketResult><Name>${bucket}</Name><IsTruncated>false</IsTruncated>${xml}</ListBucketResult>`);
+    }
     if (req.method === 'PUT') {
       const chunks: Buffer[] = [];
       req.on('data', (c) => chunks.push(c));
@@ -73,5 +86,22 @@ describe('S3-compatible file storage', () => {
     expect(fake.objects.size).toBe(1);
     await owner.agent.delete('/api/admin/workspace').send({ password: 'password123', confirmName: "Ada's Co" });
     expect(fake.objects.size).toBe(0);
+  });
+
+  it.skipIf(!!process.env.SOFTEX_TEST_DATABASE_URL)('keeps database backups in the bucket, off the server', async () => {
+    const fake = fakeS3();
+    s3 = fake.server;
+    await new Promise<void>((r) => fake.server.listen(0, '127.0.0.1', r));
+    const endpoint = `http://127.0.0.1:${(fake.server.address() as AddressInfo).port}`;
+    env = setup({
+      files: new S3FileStore({ bucket: 'softex', endpoint, region: 'us-east-1', forcePathStyle: true, accessKeyId: 'test', secretAccessKey: 'test', prefix: 'app/' }),
+      backups: { enabled: true, keep: 2 },
+    });
+    await registerOwner(env, 'Ada');
+    for (let i = 0; i < 3; i++) await createBackup(env.softex.ctx);
+    const keys = [...fake.objects.keys()].filter((k) => k.includes('/backups/'));
+    expect(keys).toHaveLength(2);
+    expect(keys.every((k) => k.startsWith('/softex/app/backups/softex-'))).toBe(true);
+    expect((await listBackups(env.softex.ctx)).map((b) => b.name)).toEqual(keys.map((k) => k.split('/').pop()).sort().reverse());
   });
 });
