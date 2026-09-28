@@ -21,6 +21,7 @@ const NO_CACHE = [
   /^\/api\/admin\//,
   /^\/api\/operator\//,
   /^\/api\/calendar\//,
+  /^\/api\/public\//,
   /^\/api\/me\/(tokens|sessions|calendar-feed|push)/,
 ];
 

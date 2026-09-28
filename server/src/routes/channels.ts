@@ -49,6 +49,17 @@ export async function serializeMessages(db: Database, auth: Auth, rows: Row[]) {
   );
   const tasks = await db.all(`SELECT id, title, status, source_message_id FROM tasks WHERE source_message_id IN (${marks})`, ...ids);
   const decisions = await db.all(`SELECT id, title, message_id FROM decisions WHERE message_id IN (${marks})`, ...ids);
+  const polls = await pollsFor(db, auth, ids);
+  const forwardIds = [...new Set(rows.map((r) => r.forwarded_from).filter(Boolean))];
+  const forwards = new Map(
+    forwardIds.length
+      ? (await db.all(
+          `SELECT m.id, m.body, m.created_at, m.deleted_at, m.channel_id, c.name AS channel_name, c.kind AS channel_kind, u.name AS user_name, u.color AS user_color
+             FROM messages m JOIN channels c ON c.id = m.channel_id JOIN users u ON u.id = m.user_id WHERE m.id IN (${forwardIds.map(() => '?').join(',')})`,
+          ...forwardIds,
+        )).map((f) => [f.id, f])
+      : [],
+  );
   const users = new Map(
     (await db
       .all(
@@ -88,8 +99,62 @@ export async function serializeMessages(db: Database, auth: Auth, rows: Row[]) {
       files: deleted ? [] : files.filter((f) => f.message_id === m.id),
       tasks: tasks.filter((t) => t.source_message_id === m.id),
       decisions: decisions.filter((d) => d.message_id === m.id),
+      poll: deleted ? null : polls.get(m.id) ?? null,
+      forwarded: deleted || !m.forwarded_from ? null : forwardView(forwards.get(m.forwarded_from)),
     };
   });
+}
+
+/** The forwarded message as shown in its new place: the forwarder chose to share its text, not its files. */
+function forwardView(f: Row | undefined) {
+  if (!f) return { deleted: true };
+  if (f.deleted_at) return { id: f.id, deleted: true };
+  return {
+    id: f.id,
+    deleted: false,
+    body: f.body,
+    created_at: f.created_at,
+    channel_id: f.channel_id,
+    channel_name: f.channel_kind === 'dm' ? null : f.channel_name,
+    user: { name: f.user_name, color: f.user_color },
+  };
+}
+
+async function pollsFor(db: Database, auth: Auth, messageIds: string[]) {
+  const out = new Map<string, unknown>();
+  if (!messageIds.length) return out;
+  const polls = await db.all(`SELECT * FROM polls WHERE message_id IN (${messageIds.map(() => '?').join(',')})`, ...messageIds);
+  if (!polls.length) return out;
+  const votes = await db.all(
+    `SELECT v.poll_id, v.option_index, v.user_id, u.name FROM poll_votes v JOIN users u ON u.id = v.user_id
+      WHERE v.poll_id IN (${polls.map(() => '?').join(',')}) ORDER BY v.created_at`,
+    ...polls.map((p) => p.id),
+  );
+  for (const p of polls) {
+    const mine = votes.filter((v) => v.poll_id === p.id);
+    const labels = JSON.parse(p.options) as string[];
+    out.set(p.message_id, {
+      id: p.id,
+      question: p.question,
+      multiple: !!p.multiple,
+      anonymous: !!p.anonymous,
+      closed: !!p.closed_at,
+      voters: new Set(mine.map((v) => v.user_id)).size,
+      options: labels.map((label, index) => {
+        const picked = mine.filter((v) => v.option_index === index);
+        return { label, votes: picked.length, voters: p.anonymous ? [] : picked.map((v) => v.name) };
+      }),
+      my_votes: mine.filter((v) => v.user_id === auth.userId).map((v) => v.option_index),
+    });
+  }
+  return out;
+}
+
+/** "@channel", "@here" and "@everyone" in a message (not inside a word or an e-mail address). */
+export function broadcastMention(body: string): 'channel' | 'here' | null {
+  const m = /(?:^|[\s(])@(channel|here|everyone)\b/i.exec(body);
+  if (!m) return null;
+  return m[1].toLowerCase() === 'here' ? 'here' : 'channel';
 }
 
 async function channelList(db: Database, auth: Auth) {
@@ -157,6 +222,8 @@ export interface NewMessage {
   parentId?: string | null;
   urgent?: boolean;
   fileIds?: string[];
+  poll?: { question: string; options: string[]; multiple?: boolean; anonymous?: boolean } | null;
+  forwardedFrom?: string | null;
 }
 
 /**
@@ -166,7 +233,7 @@ export interface NewMessage {
 export async function postMessage(ctx: Ctx, auth: Auth, channel: Row, input: NewMessage) {
   const { db } = ctx;
   const body = { body: input.body, parentId: input.parentId ?? null, urgent: !!input.urgent, fileIds: input.fileIds ?? [] };
-  if (!body.body && !body.fileIds.length) throw badRequest('Write a message or attach a file');
+  if (!body.body && !body.fileIds.length && !input.poll && !input.forwardedFrom) throw badRequest('Write a message or attach a file');
   if (!await canPostChannel(db, auth, channel)) {
     // Anyone who can read an announcement may reply in its thread.
     if (!(channel.kind === 'announcement' && body.parentId && await canViewChannel(db, auth, channel))) {
@@ -192,7 +259,18 @@ export async function postMessage(ctx: Ctx, auth: Auth, channel: Row, input: New
       body: body.body,
       urgent: body.urgent,
       created_at: createdAt,
+      forwarded_from: input.forwardedFrom ?? null,
     });
+    if (input.poll) {
+      await db.insert('polls', {
+        id: newId(),
+        message_id: id,
+        question: input.poll.question,
+        options: JSON.stringify(input.poll.options),
+        multiple: !!input.poll.multiple,
+        anonymous: !!input.poll.anonymous,
+      });
+    }
     for (const fileId of body.fileIds) {
       await db.run('UPDATE files SET message_id = ?, channel_id = ? WHERE id = ? AND owner_id = ? AND message_id IS NULL', id, channel.id, fileId, auth.userId);
     }
@@ -233,6 +311,18 @@ export async function postMessage(ctx: Ctx, auth: Auth, channel: Row, input: New
     }
   };
   const memberIds = [...prefs.keys()];
+  // @channel / @everyone reach every member; @here only those online right now. Guests can't broadcast.
+  const broadcast = channel.kind === 'dm' || isGuest(auth) ? null : broadcastMention(body.body);
+  if (broadcast) {
+    const online = broadcast === 'here' ? new Set(ctx.hub.onlineUsers(auth.workspaceId)) : null;
+    for (const userId of memberIds) {
+      if (notified.has(userId) || (online && !online.has(userId))) continue;
+      if (prefs.get(userId) === 'none' && !body.urgent) continue;
+      if (!await isActiveMember(db, auth.workspaceId, userId)) continue;
+      notified.add(userId);
+      await notify(ctx, auth.workspaceId, { userId, kind: 'mention', title: `${actor.name} notified @${broadcast} in ${where}`, body: preview, link, actorId: auth.userId, urgent: body.urgent });
+    }
+  }
   if (channel.kind === 'dm') await recipients(memberIds, 'dm', `New message from ${actor.name}`);
   if (parent) {
     const threadPeople = (await db.all('SELECT DISTINCT user_id FROM messages WHERE parent_id = ? OR id = ?', parent.id, parent.id)).map((m) => m.user_id);
@@ -525,6 +615,74 @@ export function channelsRouter(ctx: Ctx) {
     );
     const message = await postMessage(ctx, auth, channel, body);
     res.status(201).json(message);
+  });
+
+  r.post('/channels/:id/polls', async (req, res) => {
+    const auth = authOf(req);
+    const channel = await loadChannel(db, auth, req.params.id);
+    const body = parse(
+      z.object({
+        question: z.string().trim().min(1).max(300),
+        options: z.array(z.string().trim().min(1).max(120)).min(2).max(10),
+        multiple: z.boolean().default(false),
+        anonymous: z.boolean().default(false),
+        parentId: z.string().nullish(),
+      }),
+      req.body,
+    );
+    if (new Set(body.options.map((o) => o.toLowerCase())).size !== body.options.length) throw badRequest('Poll options must be different');
+    const message = await postMessage(ctx, auth, channel, {
+      body: `📊 ${body.question}`,
+      parentId: body.parentId,
+      poll: { question: body.question, options: body.options, multiple: body.multiple, anonymous: body.anonymous },
+    });
+    res.status(201).json(message);
+  });
+
+  const loadPoll = async (auth: Auth, id: string) => {
+    const poll = await db.get('SELECT * FROM polls WHERE id = ?', id);
+    if (!poll) throw notFound('Poll');
+    const { message, channel } = await loadMessage(auth, poll.message_id);
+    if (message.deleted_at) throw notFound('Poll');
+    return { poll, message, channel };
+  };
+
+  r.post('/polls/:id/vote', async (req, res) => {
+    const auth = authOf(req);
+    const { poll, message, channel } = await loadPoll(auth, req.params.id);
+    if (poll.closed_at) throw badRequest('This poll is closed');
+    const { options } = parse(z.object({ options: z.array(z.number().int().min(0)).max(10) }), req.body);
+    const count = (JSON.parse(poll.options) as string[]).length;
+    const picked = [...new Set(options)];
+    if (picked.some((i) => i >= count)) throw badRequest('Unknown option');
+    if (!poll.multiple && picked.length > 1) throw badRequest('Pick one option');
+    await db.transaction(async () => {
+      await db.run('DELETE FROM poll_votes WHERE poll_id = ? AND user_id = ?', poll.id, auth.userId);
+      for (const i of picked) await db.insert('poll_votes', { poll_id: poll.id, user_id: auth.userId, option_index: i, created_at: now() });
+    });
+    await publishToChannel(ctx, channel, { type: 'message.updated', messageId: message.id, channelId: channel.id, parentId: message.parent_id });
+    const [updated] = await serializeMessages(db, auth, [message]);
+    res.json(updated.poll);
+  });
+
+  r.post('/polls/:id/close', async (req, res) => {
+    const auth = authOf(req);
+    const { poll, message, channel } = await loadPoll(auth, req.params.id);
+    if (message.user_id !== auth.userId && !isAdmin(auth)) throw forbidden('Only the author or an admin can close this poll');
+    await db.run('UPDATE polls SET closed_at = ? WHERE id = ?', poll.closed_at ? null : now(), poll.id);
+    await publishToChannel(ctx, channel, { type: 'message.updated', messageId: message.id, channelId: channel.id, parentId: message.parent_id });
+    res.json({ closed: !poll.closed_at });
+  });
+
+  r.post('/messages/:id/forward', async (req, res) => {
+    const auth = authOf(req);
+    const { message } = await loadMessage(auth, req.params.id);
+    if (message.deleted_at) throw badRequest('This message was deleted');
+    const body = parse(z.object({ channelId: z.string(), comment: z.string().trim().max(10_000).default('') }), req.body);
+    const target = await loadChannel(db, auth, body.channelId);
+    // Forward the original, not a forward of a forward.
+    const forwardedMessage = await postMessage(ctx, auth, target, { body: body.comment, forwardedFrom: message.forwarded_from ?? message.id });
+    res.status(201).json(forwardedMessage);
   });
 
   const editPolicy = async (auth: Auth, message: Row) => {

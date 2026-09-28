@@ -22,6 +22,10 @@ import { Landing } from './pages/Landing';
 import { Privacy, Terms } from './pages/Legal';
 import { Operator } from './pages/Operator';
 import { Settings } from './pages/Settings';
+import { GoalDetail, Goals } from './pages/Goals';
+import { FormFill, PublicForm } from './pages/Forms';
+import { PublishedPage } from './pages/Published';
+import { Timesheet } from './pages/Timesheet';
 import { useSession } from './session';
 
 function TaskPage() {
@@ -40,6 +44,9 @@ const TITLES: [RegExp, string][] = [
   [/^\/channels/, 'Channels'],
   [/^\/my-work/, 'My work'],
   [/^\/projects/, 'Projects'],
+  [/^\/goals/, 'Goals'],
+  [/^\/forms|^\/f\//, 'Form'],
+  [/^\/timesheet/, 'Timesheet'],
   [/^\/tasks/, 'Task'],
   [/^\/knowledge|^\/files/, 'Knowledge'],
   [/^\/meetings/, 'Meetings'],
@@ -71,6 +78,16 @@ export function App() {
     const title = TITLES.find(([re]) => re.test(location.pathname))?.[1];
     document.title = title ? `${title} · Küü` : 'Küü';
   }, [location.pathname]);
+
+  // Published pages and public forms look the same whether or not the visitor is signed in.
+  if (/^\/(f|p)\/[^/]+$/.test(location.pathname)) {
+    return (
+      <Routes>
+        <Route path="/f/:token" element={<PublicForm />} />
+        <Route path="/p/:token" element={<PublishedPage />} />
+      </Routes>
+    );
+  }
 
   if (loading) return <Loading label="Starting Küü" />;
 
@@ -116,6 +133,10 @@ export function App() {
         <Route path="/projects" element={<Projects />} />
         <Route path="/projects/:id" element={<ProjectDetail />} />
         <Route path="/tasks/:id" element={<TaskPage />} />
+        <Route path="/goals" element={<Goals />} />
+        <Route path="/goals/:id" element={<GoalDetail />} />
+        <Route path="/forms/:id" element={<FormFill />} />
+        <Route path="/timesheet" element={<Timesheet />} />
         <Route path="/knowledge" element={<Knowledge />} />
         <Route path="/knowledge/:id" element={<PageView />} />
         <Route path="/files/:id" element={<FileView />} />

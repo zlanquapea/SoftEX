@@ -10,6 +10,8 @@ import { bytes, dateTime, plainMentions, timeAgo } from '../format';
 import { useApi } from '../hooks';
 import { useSession } from '../session';
 import { MediaAttachment, isPlayable } from '../components/Media';
+import { FavoriteButton } from '../components/Favorites';
+import { IconPicker, PageComments, PublishPanel } from '../components/PageExtras';
 
 interface PageSummary {
   id: string;
@@ -24,6 +26,9 @@ interface PageSummary {
   updated_at: string;
   updated_by: { id: string; name: string } | null;
   excerpt: string;
+  parent_id: string | null;
+  icon: string | null;
+  public: boolean;
 }
 
 interface FileSummary {
@@ -57,8 +62,12 @@ export function Knowledge() {
   const [linking, setLinking] = useState(false);
   const [link, setLink] = useState({ name: '', url: '' });
 
+  const pageIds = new Set((pages.data ?? []).map((p) => p.id));
+  const childCount = (id: string) => (pages.data ?? []).filter((p) => p.parent_id === id).length;
+  const narrowed = !!filter || status !== 'all';
   const pageList = (pages.data ?? []).filter(
     (p) =>
+      (narrowed || !p.parent_id || !pageIds.has(p.parent_id)) &&
       (!filter || `${p.title} ${p.excerpt}`.toLowerCase().includes(filter.toLowerCase())) &&
       (status === 'all' || (status === 'review' ? p.needs_review : p.status === status)),
   );
@@ -133,7 +142,8 @@ export function Knowledge() {
             {pageList.map((p) => (
               <Link key={p.id} to={`/knowledge/${p.id}`} className="page-card">
                 <div className="row-gap">
-                  <Icon name="book" />
+                  {p.icon ? <span className="page-emoji sm">{p.icon}</span> : <Icon name="book" />}
+                  {p.public && <Icon name="globe" size={14} />}
                   {p.status === 'approved' ? <span className="pill status-done">Approved</span> : <span className="pill">Draft</span>}
                   {p.needs_review && <span className="pill status-blocked">Review due</span>}
                 </div>
@@ -142,6 +152,7 @@ export function Knowledge() {
                 <small className="muted">
                   {p.project_name ? `${p.project_name} · ` : ''}
                   {p.owner?.name} · updated {timeAgo(p.updated_at)}
+                  {!narrowed && childCount(p.id) > 0 && ` · ${childCount(p.id)} sub-page${childCount(p.id) === 1 ? '' : 's'}`}
                 </small>
               </Link>
             ))}
@@ -218,6 +229,10 @@ interface PageFull extends PageSummary {
   discussions: { id: string; body: string; created_at: string; channel_id: string; channel_name: string; user_name: string }[];
   can_edit: boolean;
   archived_at: string | null;
+  breadcrumbs: { id: string; title: string; icon: string | null }[];
+  children: { id: string; title: string; icon: string | null }[];
+  comment_count: number;
+  public_url: string | null;
 }
 
 export function PageView() {
@@ -232,9 +247,26 @@ export function PageView() {
   const [preview, setPreview] = useState(false);
   const [version, setVersion] = useState<{ version: number; title: string; body: string } | null>(null);
   const [showVersions, setShowVersions] = useState(false);
+  const [sharing, setSharing] = useState(false);
+  const { data: allPages } = useApi<PageSummary[]>(page?.can_edit ? '/pages' : null);
 
   if (error) return <ErrorState error={error} retry={reload} />;
   if (!page) return <Loading />;
+  const addSubPage = async () => {
+    const child = await act(() => api.post<{ id: string }>('/pages', { title: 'Untitled', parentId: page.id }));
+    if (child) navigate(`/knowledge/${child.id}?edit=1`);
+  };
+  // Pages this one may move under: not itself, and not one of its own descendants.
+  const descendants = new Set<string>([page.id]);
+  for (let grew = true; grew; ) {
+    grew = false;
+    for (const p of allPages ?? []) {
+      if (p.parent_id && descendants.has(p.parent_id) && !descendants.has(p.id)) {
+        descendants.add(p.id);
+        grew = true;
+      }
+    }
+  }
   const current = draft ?? { title: page.title, body: page.body };
 
   const save = async () => {
@@ -268,6 +300,15 @@ export function PageView() {
             <Link to={`/projects/${page.project.id}?tab=resources`}>{page.project.name}</Link>
           </>
         )}
+        {page.breadcrumbs.map((b) => (
+          <span key={b.id}>
+            {' / '}
+            <Link to={`/knowledge/${b.id}`}>
+              {b.icon && `${b.icon} `}
+              {b.title}
+            </Link>
+          </span>
+        ))}
       </div>
       {editing ? (
         <div className="editor card">
@@ -315,7 +356,20 @@ export function PageView() {
               {page.needs_review && <span className="pill status-blocked">Review due</span>}
               {page.archived_at && <span className="pill">Archived</span>}
             </div>
-            <h1>{page.title}</h1>
+            <h1 className="doc-title">
+              {page.can_edit ? (
+                <IconPicker
+                  value={page.icon}
+                  onChange={async (icon) => {
+                    await act(() => api.patch(`/pages/${page.id}`, { icon }));
+                    reload();
+                  }}
+                />
+              ) : (
+                page.icon && <span className="page-emoji">{page.icon}</span>
+              )}
+              {page.title} <FavoriteButton kind="page" id={page.id} />
+            </h1>
             <p className="muted small">
               Owner <strong>{page.owner?.name}</strong> · version {page.version} · updated {timeAgo(page.updated_at)} by {page.updated_by?.name}
               {page.review_date && ` · review by ${new Date(`${page.review_date}T00:00`).toLocaleDateString()}`}
@@ -329,6 +383,19 @@ export function PageView() {
               <button className="btn sm" onClick={() => setShowVersions((v) => !v)}>
                 <Icon name="clock" size={14} /> History ({page.versions.length})
               </button>
+              <a className="btn sm" href="#comments">
+                <Icon name="chat" size={14} /> Comments{page.comment_count ? ` (${page.comment_count})` : ''}
+              </a>
+              {page.can_edit && (
+                <button className="btn sm" onClick={addSubPage}>
+                  <Icon name="plus" size={14} /> Sub-page
+                </button>
+              )}
+              {page.can_edit && me!.role !== 'guest' && (
+                <button className={`btn sm ${page.public ? 'on' : ''}`} onClick={() => setSharing(true)}>
+                  <Icon name="globe" size={14} /> {page.public ? 'Published' : 'Publish'}
+                </button>
+              )}
               {page.owner && page.owner.id !== me!.user.id && (
                 <button className="btn sm" onClick={askOwner}>
                   <Icon name="chat" size={14} /> Ask the owner
@@ -337,8 +404,20 @@ export function PageView() {
             </div>
           </div>
           {page.body ? <Markdown text={page.body} /> : <p className="muted">This page is empty.</p>}
+          {page.children.length > 0 && (
+            <nav className="sub-pages" aria-label="Sub-pages">
+              <h3>Sub-pages</h3>
+              {page.children.map((c) => (
+                <Link key={c.id} to={`/knowledge/${c.id}`} className="list-row">
+                  {c.icon ? <span className="page-emoji sm">{c.icon}</span> : <Icon name="file" size={16} />} {c.title}
+                </Link>
+              ))}
+            </nav>
+          )}
         </article>
       )}
+      {!editing && <PageComments pageId={page.id} canModerate={page.can_edit} onChange={reload} />}
+      <PublishPanel open={sharing} onClose={() => setSharing(false)} pageId={page.id} isPublic={page.public} url={page.public_url} onChange={reload} />
 
       {showVersions && (
         <div className="card">
@@ -381,6 +460,24 @@ export function PageView() {
                   reload();
                 }}
               />
+            </Field>
+            <Field label="Inside" hint="Nest this page under another.">
+              <select
+                value={page.parent_id ?? ''}
+                onChange={async (e) => {
+                  await act(() => api.patch(`/pages/${page.id}`, { parentId: e.target.value || null }), 'Page moved');
+                  reload();
+                }}
+              >
+                <option value="">Top level</option>
+                {(allPages ?? [])
+                  .filter((p) => !descendants.has(p.id))
+                  .map((p) => (
+                    <option key={p.id} value={p.id}>
+                      {p.title}
+                    </option>
+                  ))}
+              </select>
             </Field>
             <Field label="Owner">
               <select

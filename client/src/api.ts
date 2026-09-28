@@ -101,7 +101,7 @@ export interface Me {
   workspaces: { id: string; name: string; role: Role }[];
 }
 
-export type Feature = 'ai' | 'automations' | 'planning' | 'insights' | 'guests' | 'api' | 'sso' | 'scim' | 'retention';
+export type Feature = 'ai' | 'automations' | 'planning' | 'insights' | 'guests' | 'api' | 'sso' | 'scim' | 'retention' | 'fields' | 'goals';
 
 export interface PlanInfo {
   id: 'free' | 'standard' | 'business' | 'unlimited';
@@ -159,6 +159,29 @@ export interface Message {
   files: { id: string; name: string; mime: string; size: number }[];
   tasks: { id: string; title: string; status: TaskStatus }[];
   decisions: { id: string; title: string }[];
+  poll?: MessagePoll | null;
+  forwarded?: ForwardedMessage | null;
+}
+
+export interface MessagePoll {
+  id: string;
+  question: string;
+  multiple: boolean;
+  anonymous: boolean;
+  closed: boolean;
+  voters: number;
+  options: { label: string; votes: number; voters: string[] }[];
+  my_votes: number[];
+}
+
+export interface ForwardedMessage {
+  id?: string;
+  deleted: boolean;
+  body?: string;
+  created_at?: string;
+  channel_id?: string;
+  channel_name?: string | null;
+  user?: { name: string; color: string };
 }
 
 export type TaskStatus = 'todo' | 'in_progress' | 'blocked' | 'review' | 'done';
@@ -192,6 +215,42 @@ export interface Task {
   subtasks: { total: number; done: number };
   comment_count: number;
   waiting_on: number;
+  labels?: Label[];
+  fields?: Record<string, unknown>;
+  time_minutes?: number;
+}
+
+export type LabelColor = 'purple' | 'blue' | 'green' | 'coral' | 'gold' | 'sky' | 'mint' | 'lilac' | 'orange';
+export const LABEL_COLORS: LabelColor[] = ['purple', 'blue', 'green', 'coral', 'gold', 'sky', 'mint', 'lilac', 'orange'];
+
+export interface Label {
+  id: string;
+  name: string;
+  color: LabelColor;
+  task_count?: number;
+}
+
+export type FieldType = 'text' | 'number' | 'date' | 'select' | 'person' | 'checkbox' | 'url';
+
+export interface CustomField {
+  id: string;
+  project_id: string;
+  name: string;
+  type: FieldType;
+  options: { label: string; color: LabelColor }[];
+  position: number;
+}
+
+export interface TimeEntry {
+  id: string;
+  task_id: string;
+  user: UserRef | null;
+  started_at: string;
+  ended_at: string | null;
+  minutes: number;
+  running: boolean;
+  note: string;
+  task_title?: string;
 }
 
 export type Health = 'on_track' | 'at_risk' | 'off_track';

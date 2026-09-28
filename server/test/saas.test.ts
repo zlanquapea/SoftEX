@@ -125,6 +125,9 @@ describe('plan limits', () => {
       ['ai', () => owner.agent.patch('/api/admin/workspace').send({ aiEnabled: true })],
       ['retention', () => owner.agent.patch('/api/admin/workspace').send({ retentionDays: 90 })],
       ['scim', () => owner.agent.post('/api/admin/scim/token')],
+      ['fields', () => owner.agent.post(`/api/projects/${project.id}/fields`).send({ name: 'Cost', type: 'number' })],
+      ['goals', () => owner.agent.get('/api/goals')],
+      ['goals', () => owner.agent.post(`/api/projects/${project.id}/forms`).send({ title: 'Requests', questions: [{ id: 'q1', label: 'What?', type: 'short' }] })],
     ];
     for (const [feature, request] of checks) {
       const res = await request();

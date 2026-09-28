@@ -16,7 +16,7 @@ import {
 import { ActionConfig, ACTIONS, runAutomations, TriggerConfig, TRIGGERS } from '../automations.js';
 import { daysBetween, type Row } from '../db.js';
 import { audit, authOf, notify, type Ctx } from '../context.js';
-import { badRequest, forbidden, HttpError, newId, notFound, now, parse, parseJson, today, filterAsync } from '../util.js';
+import { badRequest, forbidden, HttpError, newId, notFound, now, parse, parsePatch, parseJson, today, filterAsync } from '../util.js';
 import { hasFeature, requireFeature } from '../plans.js';
 import { postMessage } from './channels.js';
 
@@ -119,7 +119,7 @@ export function productivityRouter(ctx: Ctx) {
     await requireFeature(ctx, auth.workspaceId, 'automations');
     const { rule, project } = await loadRule(auth, req.params.id);
     if (!await canManageProject(db, auth, project)) throw forbidden();
-    const body = parse(RuleBody.partial(), req.body);
+    const body = parsePatch(RuleBody.partial(), req.body);
     if (body.actionType || body.actionConfig) {
       await validateAction(auth, project.id, body.actionType ?? rule.action_type, body.actionConfig ?? parseJson(rule.action_config, {}));
     }
