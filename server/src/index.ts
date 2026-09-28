@@ -25,6 +25,17 @@ try {
 const registration = process.env.SOFTEX_REGISTRATION ?? 'open';
 if (!['open', 'first', 'closed'].includes(registration)) throw new Error('SOFTEX_REGISTRATION must be open, first or closed');
 
+// GitHub Codespaces forwards ports to addresses like https://<name>-5173.app.github.dev while the
+// server itself sees localhost. Trust those addresses automatically inside a codespace.
+const codespace = process.env.CODESPACE_NAME;
+const forwardingDomain = process.env.GITHUB_CODESPACES_PORT_FORWARDING_DOMAIN;
+const codespaceOrigins = codespace && forwardingDomain ? `https://${codespace}-*.${forwardingDomain}` : undefined;
+// Links in emails point at the dev client in development (Vite on 5173) and at the server itself in production.
+const codespaceUrl =
+  codespace && forwardingDomain
+    ? `https://${codespace}-${process.env.NODE_ENV === 'production' ? (process.env.PORT ?? 4000) : 5173}.${forwardingDomain}`
+    : undefined;
+
 const trustProxyEnv = process.env.SOFTEX_TRUST_PROXY;
 const trustProxy =
   trustProxyEnv === undefined || trustProxyEnv === ''
@@ -108,7 +119,8 @@ const { server, ready } = createApp({
   maxUploadBytes: process.env.SOFTEX_MAX_UPLOAD_MB ? Number(process.env.SOFTEX_MAX_UPLOAD_MB) * 1024 * 1024 : undefined,
   secureCookies: process.env.SOFTEX_SECURE_COOKIES === 'true',
   staticDir: process.env.SOFTEX_STATIC_DIR ?? resolve(root, '..', 'client', 'dist'),
-  publicUrl: process.env.SOFTEX_PUBLIC_URL ?? `http://localhost:${process.env.PORT ?? 4000}`,
+  publicUrl: process.env.SOFTEX_PUBLIC_URL ?? codespaceUrl ?? `http://localhost:${process.env.PORT ?? 4000}`,
+  allowedOrigins: [...(process.env.SOFTEX_ALLOWED_ORIGINS ?? '').split(','), ...(codespaceOrigins ? [codespaceOrigins] : [])].filter(Boolean),
   smtpUrl: process.env.SOFTEX_SMTP_URL || undefined,
   mailFrom: process.env.SOFTEX_MAIL_FROM || undefined,
   secretKey: process.env.SOFTEX_SECRET_KEY || undefined,

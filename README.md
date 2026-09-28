@@ -63,6 +63,8 @@ npm run seed            # creates a demo "Acme Studio" workspace (add -- --reset
 npm run dev             # API on :4000, web app on http://localhost:5173
 ```
 
+**GitHub Codespaces:** open the repository in a codespace and it installs, seeds the demo and runs `npm run dev` for you; the app opens on the forwarded port 5173. Küü recognises the codespace's `*.app.github.dev` addresses automatically. Behind any other proxy or tunnel (Gitpod, ngrok, a reverse proxy), set `SOFTEX_PUBLIC_URL` to the address people use, or list extra addresses in `SOFTEX_ALLOWED_ORIGINS`; otherwise changes are refused with *Cross-origin request rejected*.
+
 Demo accounts (password `softex-demo`): `alex@acme.test` (owner), `leo@acme.test` (admin), `maya@acme.test` (lead), `jordan@acme.test`, `nina@acme.test`, and `casey@northwind.test` (a guest who can only see one shared channel). You can also register a new workspace from the sign-in page.
 
 ### Production
@@ -103,6 +105,7 @@ Every push to `main` publishes an image to `ghcr.io/zlanquapea/softex` (see *CI/
 | `SOFTEX_STT_URL` | *(unset)* | An OpenAI-compatible transcription endpoint for meeting recordings, e.g. `https://api.openai.com/v1/audio/transcriptions`, or a self-hosted Whisper server so audio never leaves your machines. Workspaces must also turn on AI features |
 | `SOFTEX_STT_API_KEY`, `SOFTEX_STT_MODEL`, `SOFTEX_STT_LANGUAGE` | *(unset)*, `whisper-1`, *(auto)* | Key, model and default language for that service |
 | `SOFTEX_REGISTRATION` | `open` | Who may create a workspace from the sign-up page: `open` (anyone), `first` (only the first person on a new server) or `closed` |
+| `SOFTEX_ALLOWED_ORIGINS` | *(unset)* | Extra browser addresses allowed to make changes, comma-separated, e.g. `https://my-tunnel.example.com`. A `*` matches one name part (`https://*.gitpod.io`). The public URL and GitHub Codespaces addresses are always allowed |
 | `SOFTEX_TRUST_PROXY` | `loopback` | Express *trust proxy* setting. Behind a hosting proxy (Railway, Render, a load balancer) set a hop count such as `1` so rate limits and the audit log see real client addresses |
 | `SOFTEX_MODE` | `self_hosted` | `saas` turns on plans, trials, usage limits, email confirmation, billing and the operator console |
 | `SOFTEX_OPERATOR_EMAILS` | *(unset)* | Comma-separated emails of the people who run the service (SaaS mode). They must use MFA |

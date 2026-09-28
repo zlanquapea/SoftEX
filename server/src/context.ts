@@ -18,6 +18,8 @@ export interface Config {
   secureCookies: boolean;
   /** Public origin used in links inside emails and SSO redirects, e.g. https://softex.example.com */
   publicUrl: string;
+  /** Extra browser origins allowed to make changes (e.g. a Codespaces or Gitpod address). `*` matches one name part. */
+  allowedOrigins: string[];
   /** SMTP connection URL (smtp[s]://user:pass@host:port). Without it, emails are recorded in the outbox and logged. */
   smtpUrl?: string;
   mailFrom: string;

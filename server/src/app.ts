@@ -39,11 +39,13 @@ import { calendarFeedRouter, meetingsRouter } from './routes/meetings.js';
 import { projectsRouter } from './routes/projects.js';
 import { tasksRouter } from './routes/tasks.js';
 import { workspaceRouter } from './routes/workspace.js';
-import { HttpError, errorHandler } from './util.js';
+import { HttpError, errorHandler, originAllowed } from './util.js';
 
 export interface AppOptions extends Partial<Omit<Config, 'billing' | 'backups'>> {
   billing?: Partial<BillingConfig>;
   backups?: Partial<BackupConfig>;
+  /** Extra browser origins allowed to make changes; `*` matches one name part. */
+  allowedOrigins?: string[];
   /** Express "trust proxy" setting: a hop count, true/false, or an address list. */
   trustProxy?: boolean | number | string;
   dbPath?: string;
@@ -87,6 +89,7 @@ export function createApp(options: AppOptions = {}): SoftexApp {
     maxUploadBytes: options.maxUploadBytes ?? 100 * 1024 * 1024,
     secureCookies: options.secureCookies ?? false,
     publicUrl: (options.publicUrl ?? 'http://localhost:4000').replace(/\/$/, ''),
+    allowedOrigins: options.allowedOrigins ?? [],
     smtpUrl: options.smtpUrl,
     mailFrom: options.mailFrom ?? 'Küü <no-reply@kuu.local>',
     secretKey: options.secretKey,
@@ -141,9 +144,22 @@ export function createApp(options: AppOptions = {}): SoftexApp {
     // Küü itself may use the microphone and screen sharing (voice notes, meeting recordings); nothing embedded may.
     res.setHeader('Permissions-Policy', 'camera=(), microphone=(self), display-capture=(self), geolocation=()');
     // Cookie sessions + mutating requests: reject cross-origin browser requests (CSRF defence in depth).
+    // Allowed: the address the request came in on (directly or via a proxy's X-Forwarded-Host),
+    // the configured public address, and any extra origins (dev tunnels such as Codespaces).
     if (!['GET', 'HEAD', 'OPTIONS'].includes(req.method) && req.headers.origin) {
-      const host = req.headers['x-forwarded-host'] ?? req.headers.host;
-      if (new URL(req.headers.origin).host !== host) return next(new HttpError(403, 'Cross-origin request rejected'));
+      const origin = req.headers.origin;
+      let originHost: string | null = null;
+      try {
+        originHost = new URL(origin).host;
+      } catch {
+        /* not a URL: rejected below */
+      }
+      const forwarded = String(req.headers['x-forwarded-host'] ?? '').split(',')[0].trim();
+      const hosts = [req.headers.host, forwarded].filter(Boolean);
+      const sameHost = !!originHost && hosts.includes(originHost);
+      if (!sameHost && !originAllowed(origin, [new URL(config.publicUrl).origin, ...config.allowedOrigins])) {
+        return next(new HttpError(403, 'Cross-origin request rejected'));
+      }
     }
     next();
   });
