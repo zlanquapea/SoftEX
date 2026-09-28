@@ -771,6 +771,20 @@ CREATE TABLE IF NOT EXISTS favorites (
   PRIMARY KEY (user_id, kind, object_id)
 );
 
+-- ---------- Dashboards (chart widgets over tasks, time and goals) ----------
+CREATE TABLE IF NOT EXISTS dashboards (
+  id TEXT PRIMARY KEY,
+  workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+  name TEXT NOT NULL,
+  description TEXT NOT NULL DEFAULT '',
+  owner_id TEXT NOT NULL REFERENCES users(id),
+  visibility TEXT NOT NULL DEFAULT 'workspace',     -- private | workspace
+  widgets TEXT NOT NULL DEFAULT '[]',
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_dashboards_ws ON dashboards(workspace_id);
+
 -- ---------- Chat: polls ----------
 CREATE TABLE IF NOT EXISTS polls (
   id TEXT PRIMARY KEY,

@@ -26,6 +26,7 @@ import { GoalDetail, Goals } from './pages/Goals';
 import { FormFill, PublicForm } from './pages/Forms';
 import { PublishedPage } from './pages/Published';
 import { Timesheet } from './pages/Timesheet';
+import { DashboardView, Dashboards } from './pages/Dashboards';
 import { useSession } from './session';
 
 function TaskPage() {
@@ -45,6 +46,7 @@ const TITLES: [RegExp, string][] = [
   [/^\/my-work/, 'My work'],
   [/^\/projects/, 'Projects'],
   [/^\/goals/, 'Goals'],
+  [/^\/dashboards/, 'Dashboards'],
   [/^\/forms|^\/f\//, 'Form'],
   [/^\/timesheet/, 'Timesheet'],
   [/^\/tasks/, 'Task'],
@@ -137,6 +139,8 @@ export function App() {
         <Route path="/goals/:id" element={<GoalDetail />} />
         <Route path="/forms/:id" element={<FormFill />} />
         <Route path="/timesheet" element={<Timesheet />} />
+        <Route path="/dashboards" element={<Dashboards />} />
+        <Route path="/dashboards/:id" element={<DashboardView />} />
         <Route path="/knowledge" element={<Knowledge />} />
         <Route path="/knowledge/:id" element={<PageView />} />
         <Route path="/files/:id" element={<FileView />} />

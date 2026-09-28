@@ -59,6 +59,8 @@ Errors use standard HTTP status codes with a JSON body: `{"error": "message", "d
 | `GET /api/favorites` · `PUT /api/favorites` | Your starred pages, projects, channels and goals (`kind`, `id`, `on`) |
 | `POST /api/channels/:id/polls` · `POST /api/polls/:id/vote` · `POST /api/polls/:id/close` | Polls in chat (`question`, 2–10 `options`, `multiple`, `anonymous`); a vote replaces your earlier one |
 | `POST /api/messages/:id/forward` | Forward a message to another conversation (`channelId`, optional `comment`). `@channel`, `@everyone` and `@here` in a message notify the whole conversation (or those online) |
+| `GET/POST /api/dashboards` · `GET/PATCH/DELETE /api/dashboards/:id` | Dashboards (`name`, `description`, `visibility`: `workspace` or `private`, `widgets`). A new dashboard without `widgets` starts with a standard layout. Owners and admins can edit |
+| `GET /api/dashboards/:id/data` | Each widget's numbers, computed for the caller from the projects they can open. Widget `type`: `number` (with `metric`), `status`, `priority`, `owner`, `label`, `field` (dropdown `fieldId`), `trend` (`weeks`), `time`, `goals`, `projects`, `due`, `note` (`text`); optional `projectIds`, `chart` (`bar`/`donut`), `size` (`half`/`full`) |
 | `POST /api/admin/invitations/bulk` | Invite every email address found in `text` (a list or CSV) with one `role`; up to 200. Returns `invited` and `skipped` |
 
 Browser-only (not available to API tokens):

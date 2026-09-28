@@ -26,6 +26,7 @@ import { workRouter } from './routes/work.js';
 import { goalsRouter } from './routes/goals.js';
 import { formsRouter, publicFormsRouter } from './routes/forms.js';
 import { pagesRouter, publicPagesRouter } from './routes/pages.js';
+import { dashboardsRouter } from './routes/dashboards.js';
 import { authRouter, authenticate, meRouter, requireAuth } from './routes/auth.js';
 import { channelsRouter } from './routes/channels.js';
 import { homeRouter } from './routes/home.js';
@@ -169,6 +170,7 @@ export function createApp(options: AppOptions = {}): SoftexApp {
   api.use(goalsRouter(ctx));
   api.use(formsRouter(ctx));
   api.use(pagesRouter(ctx));
+  api.use(dashboardsRouter(ctx));
   api.use(homeRouter(ctx));
   api.use(channelsRouter(ctx));
   api.use(projectsRouter(ctx));

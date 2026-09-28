@@ -28,7 +28,7 @@ export const FEATURE_LABEL: Record<Feature, string> = {
   planning: 'Timeline and workload',
   fields: 'Custom fields and time tracking',
   goals: 'Goals and intake forms',
-  insights: 'Insights',
+  insights: 'Insights and dashboards',
   guests: 'Guest access',
   api: 'API tokens and webhooks',
   sso: 'Single sign-on',

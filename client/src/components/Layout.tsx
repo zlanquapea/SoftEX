@@ -111,7 +111,7 @@ export function Layout({ children }: { children: ReactNode }) {
     { to: '/channels', icon: 'hash', label: 'Channels', badge: channelUnread },
     { to: '/my-work', icon: 'check', label: 'My work', badge: workDue, soft: true },
     { to: '/projects', icon: 'folder', label: 'Projects' },
-    ...(me.role === 'guest' ? [] : [{ to: '/goals', icon: 'target', label: 'Goals' }]),
+    ...(me.role === 'guest' ? [] : [{ to: '/goals', icon: 'target', label: 'Goals' }, { to: '/dashboards', icon: 'chart', label: 'Dashboards' }]),
   ];
   const explore = [
     { to: '/knowledge', icon: 'book', label: 'Knowledge' },

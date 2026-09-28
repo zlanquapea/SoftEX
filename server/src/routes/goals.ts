@@ -2,7 +2,7 @@ import { Router } from 'express';
 import { z } from 'zod';
 import { accessibleProjectIds, isAdmin, isActiveMember, isGuest, type Auth } from '../access.js';
 import { authOf, notify, recordActivity, type Ctx } from '../context.js';
-import type { Row } from '../db.js';
+import type { Database, Row } from '../db.js';
 import { requireFeature } from '../plans.js';
 import { badRequest, forbidden, newId, notFound, now, parse, parsePatch } from '../util.js';
 
@@ -15,21 +15,8 @@ import { badRequest, forbidden, newId, notFound, now, parse, parsePatch } from '
 const DateStr = z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
 const GoalStatus = z.enum(['on_track', 'at_risk', 'off_track', 'done']);
 
-export function goalsRouter(ctx: Ctx) {
-  const r = Router();
-  const { db } = ctx;
-
-  const guard = async (auth: Auth) => {
-    if (isGuest(auth)) throw forbidden('Guests cannot see goals');
-    await requireFeature(ctx, auth.workspaceId, 'goals');
-  };
-
-  const loadGoal = async (auth: Auth, id: string) => {
-    const goal = await db.get('SELECT * FROM goals WHERE id = ? AND workspace_id = ?', id, auth.workspaceId);
-    if (!goal) throw notFound('Goal');
-    return goal;
-  };
-
+/** Goal progress and serialization, shared by the goals API and dashboards. */
+function goalTools(db: Database) {
   const canEditGoal = (auth: Auth, goal: Row) => goal.owner_id === auth.userId || goal.created_by === auth.userId || isAdmin(auth);
 
   /** Progress of one key result, 0–1. */
@@ -93,6 +80,33 @@ export function goalsRouter(ctx: Ctx) {
       archived_at: goal.archived_at,
     };
   };
+  return { canEditGoal, krProgress, serialize };
+}
+
+/** Active goals as the viewer sees them (for dashboards). */
+export async function listGoals(db: Database, auth: Auth) {
+  const { serialize } = goalTools(db);
+  const visible = new Set(await accessibleProjectIds(db, auth));
+  const rows = await db.all('SELECT * FROM goals WHERE workspace_id = ? AND archived_at IS NULL ORDER BY due_date IS NULL, due_date, created_at', auth.workspaceId);
+  return Promise.all(rows.map((g) => serialize(auth, g, visible)));
+}
+
+export function goalsRouter(ctx: Ctx) {
+  const r = Router();
+  const { db } = ctx;
+
+  const guard = async (auth: Auth) => {
+    if (isGuest(auth)) throw forbidden('Guests cannot see goals');
+    await requireFeature(ctx, auth.workspaceId, 'goals');
+  };
+
+  const loadGoal = async (auth: Auth, id: string) => {
+    const goal = await db.get('SELECT * FROM goals WHERE id = ? AND workspace_id = ?', id, auth.workspaceId);
+    if (!goal) throw notFound('Goal');
+    return goal;
+  };
+
+  const { canEditGoal, serialize } = goalTools(db);
 
   r.get('/goals', async (req, res) => {
     const auth = authOf(req);

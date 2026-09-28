@@ -118,6 +118,11 @@ export function pagesRouter(ctx: Ctx) {
         const g = await db.get('SELECT * FROM goals WHERE id = ? AND workspace_id = ?', id, auth.workspaceId);
         return g && !g.archived_at ? { id, title: g.title as string, icon: null, link: `/goals/${id}` } : null;
       }
+      case 'dashboard': {
+        if (isGuest(auth)) return null;
+        const d = await db.get('SELECT * FROM dashboards WHERE id = ? AND workspace_id = ?', id, auth.workspaceId);
+        return d && (d.visibility === 'workspace' || d.owner_id === auth.userId) ? { id, title: d.name as string, icon: null, link: `/dashboards/${id}` } : null;
+      }
       default:
         return null;
     }
@@ -136,7 +141,7 @@ export function pagesRouter(ctx: Ctx) {
 
   r.put('/favorites', async (req, res) => {
     const auth = authOf(req);
-    const body = parse(z.object({ kind: z.enum(['page', 'project', 'channel', 'goal']), id: z.string().max(64), on: z.boolean() }), req.body);
+    const body = parse(z.object({ kind: z.enum(['page', 'project', 'channel', 'goal', 'dashboard']), id: z.string().max(64), on: z.boolean() }), req.body);
     if (body.on) {
       if (!await favoriteTarget(auth, body.kind, body.id)) throw notFound('Item');
       const count = (await db.get<{ n: number }>('SELECT COUNT(*) AS n FROM favorites WHERE user_id = ? AND workspace_id = ?', auth.userId, auth.workspaceId))!.n;

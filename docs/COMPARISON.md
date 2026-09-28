@@ -42,7 +42,7 @@ Küü puts team chat, projects, documents, meetings and company knowledge in one
 | Native iOS / Android / desktop apps | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | 🟡 installable web app |
 | Databases with relations and formulas | ✅ | ✅ | 🟡 | ✅ | — | — | 🟡 | ❌ |
 | Whiteboards | 🟡 | ✅ | — | ✅ | — | 🟡 | ✅ | ❌ |
-| Dashboards with chart widgets | 🟡 | ✅ | ✅ | ✅ | 🟡 | — | 🟡 | 🟡 (Insights) |
+| Dashboards with chart widgets | 🟡 | ✅ | ✅ | ✅ | 🟡 | — | 🟡 | ✅ *new* |
 | Real-time co-editing of documents | ✅ | ✅ | — | ✅ | — | ✅ | ✅ | ❌ (versioned) |
 | Huddles and screen sharing | — | — | — | ✅ | — | ✅ | ✅ | 🟡 via Jitsi |
 | App marketplace | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ❌ (API and webhooks) |
@@ -51,7 +51,7 @@ Küü puts team chat, projects, documents, meetings and company knowledge in one
 
 **Notion.** Pages that nest inside each other, databases with many views, templates, publishing pages to the web, and AI. *Küü now has* nested pages with breadcrumbs and icons, comments, publishing and favorites, plus table and calendar views for tasks. *Still missing:* free-form databases (any fields, relations, formulas) and live co-editing. Küü pages are Markdown with version history instead.
 
-**Monday.com.** Colourful boards with custom columns, many views, dashboards, forms, time tracking and automations. *Küü now has* custom fields, table and calendar views, labels, forms that create tasks, and time tracking. Automations and a workload view were already there. *Still missing:* dashboards you build from chart widgets. The Insights page covers the main measures.
+**Monday.com.** Colourful boards with custom columns, many views, dashboards, forms, time tracking and automations. *Küü now has* custom fields, table and calendar views, labels, forms that create tasks, and time tracking. Automations and a workload view were already there. *Now also has* dashboards built from chart widgets (numbers, bars, donuts, weekly trends, goal and project progress), where each viewer sees only the work they can open.
 
 **Asana.** Goals linked to projects, portfolios, forms, rules and workload. *Küü now has* goals with key results and sub-goals, linked to projects, and intake forms. *Still missing:* portfolios as their own object. Goals that link several projects, plus project health updates, cover most of what portfolios are used for.
 
@@ -83,11 +83,11 @@ Küü puts team chat, projects, documents, meetings and company knowledge in one
 | Nested pages, page icons, comments, publish to web | Knowledge page → Sub-page / Comments / Publish | All plans |
 | Favorites | ☆ on pages, projects, channels and goals; sidebar | All plans |
 | Polls, @channel/@here, forwarding, voice notes | Chat composer and message menu | All plans |
+| Dashboards | **Dashboards** in the sidebar | Standard, Business |
 
 ## Recommended next steps
 
-1. **Dashboards** built from chart widgets (tasks by status, time by person, goal progress) on top of the Insights data.
-2. **Real-time co-editing** of knowledge pages.
-3. **Whiteboards** for workshops and planning.
-4. **Native mobile apps** that wrap the web app, for better push and file handling on Android.
-5. **Meeting recording and transcripts**, once a managed video provider is chosen.
+1. **Real-time co-editing** of knowledge pages.
+2. **Whiteboards** for workshops and planning.
+3. **Native mobile apps** that wrap the web app, for better push and file handling on Android.
+4. **Meeting recording and transcripts**, once a managed video provider is chosen.
