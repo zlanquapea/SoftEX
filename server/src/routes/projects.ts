@@ -18,7 +18,7 @@ import {
 import type { Database, Row } from '../db.js';
 import { audit, authOf, notify, recordActivity, userSummary, type Ctx } from '../context.js';
 import { emitEvent } from '../webhooks.js';
-import { badRequest, forbidden, newId, notFound, now, parse, today, filterAsync } from '../util.js';
+import { badRequest, forbidden, newId, notFound, now, parse, parsePatch, today, filterAsync } from '../util.js';
 
 const DateStr = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'use YYYY-MM-DD');
 const Color = z.enum(['purple', 'blue', 'green', 'coral', 'gold', 'sky', 'mint', 'lilac', 'orange']);
@@ -461,7 +461,7 @@ export function projectsRouter(ctx: Ctx) {
     if (!risk) throw notFound('Risk');
     const project = await loadProject(db, auth, risk.project_id);
     if (!await canContributeProject(db, auth, project)) throw forbidden();
-    const body = parse(RiskBody.partial(), req.body);
+    const body = parsePatch(RiskBody.partial(), req.body);
     await db.update('risks', risk.id, { title: body.title, impact: body.impact, mitigation: body.mitigation, owner_id: body.ownerId, status: body.status });
     res.json(await db.get('SELECT * FROM risks WHERE id = ?', risk.id));
   });

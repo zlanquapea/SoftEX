@@ -25,6 +25,16 @@ export function parse<T>(schema: ZodType<T>, value: unknown): T {
   return result.data;
 }
 
+/**
+ * Parse a partial update. Zod 4 fills in `.default()` values even for keys that were left out,
+ * which would reset fields nobody asked to change, so only keys present in the request are kept.
+ */
+export function parsePatch<T extends object>(schema: ZodType<T>, value: unknown): Partial<T> {
+  const parsed = parse(schema, value);
+  const sent = value && typeof value === 'object' ? new Set(Object.keys(value)) : new Set<string>();
+  return Object.fromEntries(Object.entries(parsed).filter(([key]) => sent.has(key))) as Partial<T>;
+}
+
 export function hashPassword(password: string): string {
   const salt = randomBytes(16);
   const hash = scryptSync(password, salt, 64);

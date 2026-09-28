@@ -5,7 +5,7 @@ import { authOf, notify, recordActivity, type Ctx } from '../context.js';
 import type { Row } from '../db.js';
 import { hasFeature, requireFeature } from '../plans.js';
 import { emitEvent } from '../webhooks.js';
-import { HttpError, badRequest, forbidden, newId, notFound, now, parse, parseJson, randomToken } from '../util.js';
+import { HttpError, badRequest, forbidden, newId, notFound, now, parse, parsePatch, parseJson, randomToken } from '../util.js';
 import { rateLimit } from './auth.js';
 import { validateFieldValue } from './work.js';
 
@@ -221,7 +221,7 @@ export function formsRouter(ctx: Ctx) {
     const auth = authOf(req);
     const { form, project } = await loadForm(auth, req.params.id);
     if (!await canManageProject(db, auth, project)) throw forbidden('Only project leads can change forms');
-    const body = parse(FormInput.partial().extend({ closed: z.boolean().optional(), newLink: z.boolean().optional() }), req.body);
+    const body = parsePatch(FormInput.partial().extend({ closed: z.boolean().optional(), newLink: z.boolean().optional() }), req.body);
     if (body.questions) await checkMappings(project.id, body.questions);
     if (body.ownerId && !await isActiveMember(db, auth.workspaceId, body.ownerId)) throw badRequest('The assignee must be in this workspace');
     let token: string | null | undefined;

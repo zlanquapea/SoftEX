@@ -3,7 +3,7 @@ import { z } from 'zod';
 import { requireRole } from '../access.js';
 import { audit, authOf, type Ctx } from '../context.js';
 import { assertSafeWebhookUrl, WEBHOOK_EVENTS } from '../webhooks.js';
-import { badRequest, newId, notFound, now, parse, parseJson, randomToken, sha256 } from '../util.js';
+import { badRequest, newId, notFound, now, parse, parsePatch, parseJson, randomToken, sha256 } from '../util.js';
 import { requireFeature, requireVerifiedEmail } from '../plans.js';
 
 /** Personal API tokens, webhooks and the email outbox. Browser sessions only (see requireAuth). */
@@ -121,7 +121,7 @@ export function integrationsRouter(ctx: Ctx) {
     const auth = authOf(req);
     requireRole(auth, 'admin');
     const hook = await loadHook(auth.workspaceId, req.params.id);
-    const body = parse(WebhookBody.partial(), req.body);
+    const body = parsePatch(WebhookBody.partial(), req.body);
     if (body.url) await checkUrl(body.url);
     await db.update('webhooks', hook.id, { url: body.url, events: body.events, description: body.description, active: body.active });
     await audit(ctx, auth.workspaceId, auth.userId, 'webhook.updated', 'webhook', hook.id, body);

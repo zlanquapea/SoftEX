@@ -429,10 +429,10 @@ export function TimeTracker({ taskId, estimateHours, canLog }: { taskId: string;
             changed();
           }}
         >
-          <input type="number" min={0.05} max={24} step={0.25} className="narrow-input" value={hours} onChange={(e) => setHours(e.target.value)} placeholder="hours" aria-label="Hours" required />
+          <input type="number" min={0} max={24} step={0.25} className="narrow-input" value={hours} onChange={(e) => setHours(e.target.value)} placeholder="hours" aria-label="Hours" required />
           <input type="date" value={date} max={localToday()} onChange={(e) => setDate(e.target.value)} aria-label="Date" />
           <input value={note} onChange={(e) => setNote(e.target.value)} placeholder="Note (optional)" aria-label="Note" maxLength={500} className="grow" />
-          <button className="btn primary sm">Add</button>
+          <button className="btn primary sm">Save time</button>
         </form>
       )}
       {data.entries.slice(0, 8).map((e) => (

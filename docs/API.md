@@ -47,6 +47,18 @@ Errors use standard HTTP status codes with a JSON body: `{"error": "message", "d
 | `DELETE /api/admin/workspace` | Permanently delete the workspace (owner; `password`, `confirmName`, and `code` when MFA is on) |
 | `DELETE /api/me` | Delete your own account (`password`, and `code` when MFA is on) |
 | `POST /api/projects/:id/import/tasks` | Import tasks from CSV text (`csv`; `dryRun: true` previews without saving). Recognises columns such as Title/Name, Description, Status/List, Priority, Due date, Start date, Assignee (email or name) and Estimate; up to 500 rows |
+| `GET/POST /api/labels` · `PATCH/DELETE /api/labels/:id` · `PUT /api/tasks/:id/labels` | Workspace labels (`name`, `color`) and a task's labels (`labelIds`). Filter tasks with `GET /api/tasks?labelId=…` |
+| `GET/POST /api/projects/:id/fields` · `PATCH/DELETE /api/fields/:id` · `PUT /api/tasks/:id/fields/:fieldId` | Custom fields per project (`text`, `number`, `date`, `select` with `options`, `person`, `checkbox`, `url`) and a task's value (`value`; `null` clears it). Tasks include `labels`, `fields` and `time_minutes` |
+| `GET /api/tasks/:id/time` · `POST /api/tasks/:id/time/start` · `POST /api/time/stop` · `POST /api/tasks/:id/time` · `DELETE /api/time/:id` | Time tracking: one running timer per person, or manual entries (`minutes`, optional `date` and `note`) |
+| `GET /api/time/me?week=YYYY-MM-DD` · `GET /api/projects/:id/time` | Your weekly timesheet; a project's time by person and by task |
+| `GET/POST /api/goals` · `GET/PATCH/DELETE /api/goals/:id` · `POST /api/goals/:id/key-results` · `PATCH/DELETE /api/key-results/:id` | Goals (`title`, `ownerId`, `dueDate`, `parentId`, `projectIds`, `status`) and key results measured by a number (`startValue`, `targetValue`, `currentValue`, `unit`) or by tasks done in a project (`kind: "tasks"`, `projectId`). Not available to guests |
+| `GET/POST /api/projects/:id/forms` · `GET/PATCH/DELETE /api/forms/:id` · `POST /api/forms/:id/responses` | Intake forms: `questions` (`id`, `label`, `type`, `required`, `options`, and `maps` to `title`, `description`, `due_date`, `priority` or a custom field id). Each response becomes a task |
+| `GET/POST /api/public/forms/:token` | Public form (no sign-in): `answers`, optional `name` and `email`. Rate limited |
+| `GET/POST /api/pages/:id/comments` · `PATCH/DELETE /api/page-comments/:id` | Page comments with @mentions; `resolved: true/false` |
+| `POST /api/pages/:id/publish` · `GET /api/public/pages/:token` | Publish a page as a read-only web link (`public`, `newLink`); read it without signing in. Pages also take `parentId` (nesting) and `icon` |
+| `GET /api/favorites` · `PUT /api/favorites` | Your starred pages, projects, channels and goals (`kind`, `id`, `on`) |
+| `POST /api/channels/:id/polls` · `POST /api/polls/:id/vote` · `POST /api/polls/:id/close` | Polls in chat (`question`, 2–10 `options`, `multiple`, `anonymous`); a vote replaces your earlier one |
+| `POST /api/messages/:id/forward` | Forward a message to another conversation (`channelId`, optional `comment`). `@channel`, `@everyone` and `@here` in a message notify the whole conversation (or those online) |
 | `POST /api/admin/invitations/bulk` | Invite every email address found in `text` (a list or CSV) with one `role`; up to 200. Returns `invited` and `skipped` |
 
 Browser-only (not available to API tokens):

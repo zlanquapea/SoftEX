@@ -4,7 +4,7 @@ import { accessibleProjectIds, isAdmin, isActiveMember, isGuest, type Auth } fro
 import { authOf, notify, recordActivity, type Ctx } from '../context.js';
 import type { Row } from '../db.js';
 import { requireFeature } from '../plans.js';
-import { badRequest, forbidden, newId, notFound, now, parse } from '../util.js';
+import { badRequest, forbidden, newId, notFound, now, parse, parsePatch } from '../util.js';
 
 /**
  * Goals and key results (OKRs), as in Asana Goals, Monday and ClickUp: what the team is
@@ -164,7 +164,7 @@ export function goalsRouter(ctx: Ctx) {
     await guard(auth);
     const goal = await loadGoal(auth, req.params.id);
     if (!canEditGoal(auth, goal)) throw forbidden('Only the goal’s owner or an admin can change it');
-    const body = parse(GoalInput.partial().extend({ status: GoalStatus.optional(), archived: z.boolean().optional() }), req.body);
+    const body = parsePatch(GoalInput.partial().extend({ status: GoalStatus.optional(), archived: z.boolean().optional() }), req.body);
     if (body.ownerId && !await isActiveMember(db, auth.workspaceId, body.ownerId)) throw badRequest('The owner must be in this workspace');
     if (body.parentId) {
       if (body.parentId === goal.id) throw badRequest('A goal can’t be its own parent');
@@ -253,7 +253,7 @@ export function goalsRouter(ctx: Ctx) {
     await guard(auth);
     const { kr, goal } = await loadKr(auth, req.params.id);
     // Anyone on the team may record progress; changing the definition is for the owner.
-    const body = parse(KrInput.omit({ kind: true, projectId: true }).partial(), req.body);
+    const body = parsePatch(KrInput.omit({ kind: true, projectId: true }).partial(), req.body);
     const definitionChange = body.title !== undefined || body.startValue !== undefined || body.targetValue !== undefined || body.unit !== undefined;
     if (definitionChange && !canEditGoal(auth, goal)) throw forbidden('Only the goal’s owner or an admin can change key results');
     await db.update('key_results', kr.id, {

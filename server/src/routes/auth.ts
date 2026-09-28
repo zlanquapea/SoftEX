@@ -726,6 +726,7 @@ export function meRouter(ctx: Ctx) {
         await db.run(`DELETE FROM ${table} WHERE user_id = ?`, auth.userId);
       }
       await db.run('DELETE FROM scheduled_messages WHERE user_id = ? AND sent_message_id IS NULL', auth.userId);
+      await db.run('DELETE FROM time_entries WHERE user_id = ? AND ended_at IS NULL', auth.userId);
       await db.run('UPDATE api_tokens SET revoked_at = COALESCE(revoked_at, ?) WHERE user_id = ?', now(), auth.userId);
       await db.run('UPDATE memberships SET deactivated_at = COALESCE(deactivated_at, ?) WHERE user_id = ?', now(), auth.userId);
       await db.update('users', auth.userId, {

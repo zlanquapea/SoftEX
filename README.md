@@ -27,6 +27,9 @@ Küü is a unified workplace app for team communication, projects, documents, me
 | **Governance** (5.7, 9) | **SCIM 2.0** user provisioning and deprovisioning (Okta, Entra ID and others), **message retention** policies, and a **legal hold** that pauses all automatic deletion |
 | **Hosted service (SaaS)** | With `SOFTEX_MODE=saas`: self-service sign-up with email confirmation, a 30-day Business trial, a permanent **Free** plan (10 members, core features) and paid **Standard** and **Business** plans priced per member. Usage limits on members, storage and AI; payment by Orange Money, MTN Mobile Money or bank transfer, confirmed by the operator; renewal and trial reminders; a public pricing page with Liberian-dollar amounts; an **operator console** to confirm payments, adjust plans and suspend abuse; and self-service workspace and account deletion. See [docs/DEPLOY_RAILWAY.md](docs/DEPLOY_RAILWAY.md) |
 | **Devices & calendars** (5.4, 5.5, 9) | **Push notifications** on phones and computers when Küü is closed (mentions, assignments, urgent messages; they follow quiet hours and focus time, except urgent messages). **Where you're signed in**: see every device, sign one out or sign out everywhere else. A private **calendar subscription link** that puts your meetings in Google Calendar, Outlook or Apple Calendar |
+| **Work management** | Workspace **labels**; per-project **custom fields** (text, number, date, dropdown, person, checkbox, link); **table** (spreadsheet-style, inline editing, sortable, custom-field columns) and **calendar** (drag to reschedule) views next to list and board; **time tracking** with a one-click timer, manual entries, a weekly **timesheet** and per-project time reports against estimates |
+| **Goals & intake** | **Goals** with sub-goals, owners, status and **key results** measured by a number or by tasks done in a project, linked to the projects that move them. **Intake forms** per project whose responses become tasks — for members, or public through a link with spam protection |
+| **Docs & chat extras** | **Nested pages** with breadcrumbs and page icons, **page comments** with @mentions and resolve, **publish to the web** as a read-only link, and **favorites** in the sidebar. In chat: **polls**, **@channel / @here**, **message forwarding** and **voice notes** |
 | **Import** (7) | **Bulk invitations** from a pasted list or a CSV, and **task import** into a project from a Trello, Asana, Jira, Monday or spreadsheet CSV, with a preview first. Assignees get one summary notification |
 | **Backups** (7, 9) | Automatic daily SQLite backups: a consistent snapshot, checked with an integrity check, compressed and kept in S3 storage (or the backup folder); the newest 7 are kept. Operators can back up now, download a backup, and restore one by setting `SOFTEX_RESTORE_BACKUP` |
 | **Clients** (8, 11) | Responsive React web app: sidebar navigation on desktop, bottom navigation on mobile, ⌘K global search, dark mode, keyboard and screen-reader-friendly controls, and an installable web app that works offline: the app shell and recently viewed data stay available read-only on poor connections, and cached data is wiped on sign-out |
@@ -140,6 +143,9 @@ GitHub Actions run on every pull request and on `main`:
 See [SECURITY.md](SECURITY.md) for how to report vulnerabilities.
 
 ## Next steps
+
+See [docs/COMPARISON.md](docs/COMPARISON.md) for how Küü compares with Notion, Monday, Asana, ClickUp, Trello, Slack and Teams, and what is still left.
+
 
 - **Automatic payment confirmation** through the MTN MoMo or Orange Money merchant APIs, or card payments through a processor available to your company. Today the operator confirms each mobile money or bank payment by hand.
 - **A managed video provider**, following the spec's cost and privacy review. Meeting links use Jitsi by default and can be changed with `SOFTEX_MEETING_BASE_URL`.

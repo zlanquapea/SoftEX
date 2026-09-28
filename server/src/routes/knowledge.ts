@@ -23,7 +23,7 @@ import { extractText } from '../extract.js';
 import { scanUpload } from '../scanner.js';
 import { audit, authOf, notify, recordActivity, userSummary, type Ctx } from '../context.js';
 import { emitEvent } from '../webhooks.js';
-import { HttpError, badRequest, forbidden, newId, notFound, now, parse, today, filterAsync } from '../util.js';
+import { HttpError, badRequest, forbidden, newId, notFound, now, parse, parsePatch, today, filterAsync } from '../util.js';
 import { requireStorage } from '../plans.js';
 
 const DateStr = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'use YYYY-MM-DD');
@@ -264,7 +264,7 @@ export function knowledgeRouter(ctx: Ctx) {
     const auth = authOf(req);
     const page = await loadPage(auth, req.params.id);
     if (!await canEditPage(auth, page)) throw forbidden('You cannot edit this page');
-    const body = parse(
+    const body = parsePatch(
       PageBody.partial().extend({ reviewDate: DateStr.nullable().optional(), projectId: z.string().nullable().optional(), parentId: z.string().nullable().optional() }),
       req.body,
     );

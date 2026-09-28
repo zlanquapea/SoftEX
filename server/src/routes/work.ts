@@ -4,7 +4,7 @@ import { canEditTask, canManageProject, canViewTask, isActiveMember, isAdmin, is
 import { authOf, type Ctx } from '../context.js';
 import type { Database, Row } from '../db.js';
 import { requireFeature } from '../plans.js';
-import { badRequest, filterAsync, forbidden, newId, notFound, now, parse, parseJson } from '../util.js';
+import { badRequest, filterAsync, forbidden, newId, notFound, now, parse, parsePatch, parseJson } from '../util.js';
 
 /**
  * Work management on top of tasks, as in Monday, Asana and ClickUp:
@@ -201,7 +201,7 @@ export function workRouter(ctx: Ctx) {
     const auth = authOf(req);
     const { field, project } = await loadField(auth, req.params.id);
     if (!await canManageProject(db, auth, project)) throw forbidden('Only project leads can change fields');
-    const body = parse(FieldInput.pick({ name: true, options: true }).partial().extend({ position: z.number().int().min(0).max(100).optional() }), req.body);
+    const body = parsePatch(FieldInput.pick({ name: true, options: true }).partial().extend({ position: z.number().int().min(0).max(100).optional() }), req.body);
     await db.update('custom_fields', field.id, {
       name: body.name,
       options: field.type === 'select' && body.options ? body.options : undefined,
