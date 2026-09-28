@@ -9,7 +9,7 @@ export const FEATURE_LABEL: Record<Feature, string> = {
   ai: 'AI assistance',
   automations: 'Automations',
   planning: 'Timeline and workload',
-  insights: 'Insights',
+  insights: 'Insights and dashboards',
   guests: 'Guest access',
   api: 'API tokens and webhooks',
   sso: 'Single sign-on',

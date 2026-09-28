@@ -127,6 +127,7 @@ describe('plan limits', () => {
       ['scim', () => owner.agent.post('/api/admin/scim/token')],
       ['fields', () => owner.agent.post(`/api/projects/${project.id}/fields`).send({ name: 'Cost', type: 'number' })],
       ['goals', () => owner.agent.get('/api/goals')],
+      ['insights', () => owner.agent.post('/api/dashboards').send({ name: 'Ops' })],
       ['goals', () => owner.agent.post(`/api/projects/${project.id}/forms`).send({ title: 'Requests', questions: [{ id: 'q1', label: 'What?', type: 'short' }] })],
     ];
     for (const [feature, request] of checks) {

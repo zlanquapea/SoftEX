@@ -4,7 +4,7 @@ import { api } from '../api';
 import { Icon } from './Icon';
 import { useAction } from './ui';
 
-export type FavoriteKind = 'page' | 'project' | 'channel' | 'goal';
+export type FavoriteKind = 'page' | 'project' | 'channel' | 'goal' | 'dashboard';
 export interface Favorite {
   kind: FavoriteKind;
   id: string;
@@ -59,7 +59,7 @@ export function FavoriteButton({ kind, id }: { kind: FavoriteKind; id: string })
   );
 }
 
-const KIND_ICON: Record<FavoriteKind, string> = { page: 'book', project: 'folder', channel: 'hash', goal: 'target' };
+const KIND_ICON: Record<FavoriteKind, string> = { page: 'book', project: 'folder', channel: 'hash', goal: 'target', dashboard: 'chart' };
 
 /** Sidebar section listing the person's favorites. */
 export function FavoritesNav({ onNavigate }: { onNavigate?: () => void } = {}) {

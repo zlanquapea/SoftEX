@@ -47,6 +47,7 @@ const PATHS: Record<string, string> = {
   board: 'M4 4h5v16H4zM10 4h5v10h-5zM16 4h4v7h-4z',
   list: 'M9 6h11M9 12h11M9 18h11M4 6h.01M4 12h.01M4 18h.01',
   table: 'M3 5h18v14H3zM3 10h18M3 15h18M9 5v14',
+  chart: 'M4 20V4M4 20h16M8 16v-5M12 16V8M16 16v-3M20 16V6',
   star: 'm12 3 2.8 5.7 6.2.9-4.5 4.4 1 6.2L12 17.3 6.5 20.2l1-6.2L3 9.6l6.2-.9z',
   form: 'M5 3h14v18H5zM8 8h8M8 12h8M8 16h5',
   mic: 'M12 3a3 3 0 0 0-3 3v6a3 3 0 0 0 6 0V6a3 3 0 0 0-3-3zM5 11a7 7 0 0 0 14 0M12 18v3',
