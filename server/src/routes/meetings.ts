@@ -2,7 +2,9 @@ import { Router } from 'express';
 import { z } from 'zod';
 import {
   canContributeProject,
+  canManageMeeting,
   canManageProject,
+  canTakeMeetingNotes,
   canPostChannel,
   canViewDecision,
   canViewMeeting,
@@ -184,24 +186,8 @@ export function meetingsRouter(ctx: Ctx) {
     participants: await participants(m.id),
   });
 
-  const isOrganizerOrManager = async (auth: Auth, m: Row) => {
-    if (m.organizer_id === auth.userId || isAdmin(auth)) return true;
-    if (m.project_id) {
-      const project = await db.get('SELECT * FROM projects WHERE id = ?', m.project_id);
-      return !!project && await canManageProject(db, auth, project);
-    }
-    return false;
-  };
-
-  const canTakeNotes = async (auth: Auth, m: Row) => {
-    if (await isOrganizerOrManager(auth, m)) return true;
-    if (await db.get('SELECT 1 FROM meeting_participants WHERE meeting_id = ? AND user_id = ?', m.id, auth.userId)) return true;
-    if (m.project_id) {
-      const project = await db.get('SELECT * FROM projects WHERE id = ?', m.project_id);
-      return !!project && await canContributeProject(db, auth, project);
-    }
-    return false;
-  };
+  const isOrganizerOrManager = (auth: Auth, m: Row) => canManageMeeting(db, auth, m);
+  const canTakeNotes = (auth: Auth, m: Row) => canTakeMeetingNotes(db, auth, m);
 
   r.get('/meetings', async (req, res) => {
     const auth = authOf(req);
@@ -425,7 +411,9 @@ export function meetingsRouter(ctx: Ctx) {
     if (!await isOrganizerOrManager(auth, m)) throw forbidden('Only the organizer can cancel this meeting');
     const people = await participants(m.id);
     await emailInvites(m, people.map((p) => p.id).filter((u) => u !== auth.userId), 'CANCEL');
+    const recordings = (await db.all('SELECT storage_key FROM meeting_recordings WHERE meeting_id = ? AND storage_key IS NOT NULL', m.id)).map((x) => x.storage_key as string);
     await db.run('DELETE FROM meetings WHERE id = ?', m.id);
+    for (const key of recordings) await ctx.files.remove(key).catch(() => {});
     for (const p of people) {
       await notify(ctx, auth.workspaceId, { userId: p.id, kind: 'meeting', title: `“${m.title}” was cancelled`, link: '/meetings', actorId: auth.userId });
     }

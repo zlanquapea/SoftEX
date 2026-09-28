@@ -128,6 +128,7 @@ describe('plan limits', () => {
       ['fields', () => owner.agent.post(`/api/projects/${project.id}/fields`).send({ name: 'Cost', type: 'number' })],
       ['goals', () => owner.agent.get('/api/goals')],
       ['insights', () => owner.agent.post('/api/dashboards').send({ name: 'Ops' })],
+      ['recordings', async () => owner.agent.post(`/api/meetings/${(await owner.agent.post('/api/meetings').send({ title: 'Sync', startsAt: new Date(Date.now() + 3_600_000).toISOString() })).body.id}/recordings`).send({ consent: true })],
       ['goals', () => owner.agent.post(`/api/projects/${project.id}/forms`).send({ title: 'Requests', questions: [{ id: 'q1', label: 'What?', type: 'short' }] })],
     ];
     for (const [feature, request] of checks) {

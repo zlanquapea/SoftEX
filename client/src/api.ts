@@ -101,7 +101,7 @@ export interface Me {
   workspaces: { id: string; name: string; role: Role }[];
 }
 
-export type Feature = 'ai' | 'automations' | 'planning' | 'insights' | 'guests' | 'api' | 'sso' | 'scim' | 'retention' | 'fields' | 'goals';
+export type Feature = 'ai' | 'automations' | 'planning' | 'insights' | 'guests' | 'api' | 'sso' | 'scim' | 'retention' | 'fields' | 'goals' | 'recordings';
 
 export interface PlanInfo {
   id: 'free' | 'standard' | 'business' | 'unlimited';

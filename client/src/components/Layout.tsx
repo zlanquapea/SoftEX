@@ -115,6 +115,7 @@ export function Layout({ children }: { children: ReactNode }) {
   ];
   const explore = [
     { to: '/knowledge', icon: 'book', label: 'Knowledge' },
+    { to: '/boards', icon: 'whiteboard', label: 'Whiteboards' },
     { to: '/meetings', icon: 'video', label: 'Meetings' },
     { to: '/directory', icon: 'users', label: 'Directory' },
     { to: '/decisions', icon: 'gavel', label: 'Decisions' },

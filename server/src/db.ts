@@ -785,6 +785,62 @@ CREATE TABLE IF NOT EXISTS dashboards (
 );
 CREATE INDEX IF NOT EXISTS idx_dashboards_ws ON dashboards(workspace_id);
 
+-- ---------- Live collaboration (Yjs updates, append-only; merged on read and compacted) ----------
+CREATE TABLE IF NOT EXISTS collab_updates (
+  id TEXT PRIMARY KEY,
+  doc_key TEXT NOT NULL,                             -- page:<id> | board:<id>
+  data TEXT NOT NULL,                                -- base64 Yjs update
+  user_id TEXT,
+  created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_collab_doc ON collab_updates(doc_key, created_at);
+
+-- ---------- Whiteboards ----------
+CREATE TABLE IF NOT EXISTS boards (
+  id TEXT PRIMARY KEY,
+  workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+  project_id TEXT REFERENCES projects(id) ON DELETE CASCADE,
+  title TEXT NOT NULL,
+  owner_id TEXT NOT NULL REFERENCES users(id),
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  archived_at TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_boards_ws ON boards(workspace_id);
+
+-- ---------- Meeting recordings and transcripts ----------
+CREATE TABLE IF NOT EXISTS meeting_recordings (
+  id TEXT PRIMARY KEY,
+  workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+  meeting_id TEXT NOT NULL REFERENCES meetings(id) ON DELETE CASCADE,
+  started_by TEXT NOT NULL REFERENCES users(id),
+  kind TEXT NOT NULL DEFAULT 'audio',                -- audio | screen
+  status TEXT NOT NULL DEFAULT 'recording',          -- recording | ready | stopped
+  storage_key TEXT,
+  mime TEXT,
+  size INTEGER NOT NULL DEFAULT 0,
+  duration_sec INTEGER NOT NULL DEFAULT 0,
+  language TEXT,
+  transcript_status TEXT NOT NULL DEFAULT 'none',    -- none | live | queued | processing | done | failed
+  transcript_error TEXT,
+  started_at TEXT NOT NULL,
+  ended_at TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_recordings_meeting ON meeting_recordings(meeting_id);
+CREATE TABLE IF NOT EXISTS transcript_segments (
+  id TEXT PRIMARY KEY,
+  recording_id TEXT NOT NULL REFERENCES meeting_recordings(id) ON DELETE CASCADE,
+  meeting_id TEXT NOT NULL REFERENCES meetings(id) ON DELETE CASCADE,
+  start_ms INTEGER NOT NULL,
+  end_ms INTEGER NOT NULL,
+  speaker_id TEXT REFERENCES users(id) ON DELETE SET NULL,
+  text TEXT NOT NULL,
+  source TEXT NOT NULL DEFAULT 'live',               -- live | server
+  created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_segments_recording ON transcript_segments(recording_id, start_ms);
+CREATE INDEX IF NOT EXISTS idx_segments_meeting ON transcript_segments(meeting_id);
+
 -- ---------- Chat: polls ----------
 CREATE TABLE IF NOT EXISTS polls (
   id TEXT PRIMARY KEY,

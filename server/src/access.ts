@@ -171,6 +171,50 @@ export async function canViewPage(db: Database, auth: Auth, page: Row) {
   return !isGuest(auth);
 }
 
+/** The organizer, an admin, or a lead of the meeting's project. */
+export async function canManageMeeting(db: Database, auth: Auth, m: Row) {
+  if (m.organizer_id === auth.userId || isAdmin(auth)) return true;
+  if (m.project_id) {
+    const project = await db.get('SELECT * FROM projects WHERE id = ?', m.project_id);
+    return !!project && await canManageProject(db, auth, project);
+  }
+  return false;
+}
+
+/** Take notes, record and transcribe: managers, invitees and contributors of the meeting's project. */
+export async function canTakeMeetingNotes(db: Database, auth: Auth, m: Row) {
+  if (await canManageMeeting(db, auth, m)) return true;
+  if (await db.get('SELECT 1 FROM meeting_participants WHERE meeting_id = ? AND user_id = ?', m.id, auth.userId)) return true;
+  if (m.project_id) {
+    const project = await db.get('SELECT * FROM projects WHERE id = ?', m.project_id);
+    return !!project && await canContributeProject(db, auth, project);
+  }
+  return false;
+}
+
+/** Edit a knowledge page: contributors of its project, or any non-guest for workspace pages. */
+export async function canEditPage(db: Database, auth: Auth, page: Row) {
+  if (!await canViewPage(db, auth, page)) return false;
+  if (page.project_id) return canContributeProject(db, auth, (await db.get('SELECT * FROM projects WHERE id = ?', page.project_id))!);
+  return !isGuest(auth);
+}
+
+/** Whiteboards follow their project, or are open to every member when they have none. */
+export async function canViewBoard(db: Database, auth: Auth, board: Row) {
+  if (board.workspace_id !== auth.workspaceId) return false;
+  if (board.project_id) {
+    const project = await db.get('SELECT * FROM projects WHERE id = ?', board.project_id);
+    return !!project && await canViewProject(db, auth, project);
+  }
+  return !isGuest(auth);
+}
+
+export async function canEditBoard(db: Database, auth: Auth, board: Row) {
+  if (!await canViewBoard(db, auth, board)) return false;
+  if (board.project_id) return canContributeProject(db, auth, (await db.get('SELECT * FROM projects WHERE id = ?', board.project_id))!);
+  return !isGuest(auth);
+}
+
 export async function canViewFile(db: Database, auth: Auth, file: Row) {
   if (file.workspace_id !== auth.workspaceId) return false;
   if (file.project_id) {

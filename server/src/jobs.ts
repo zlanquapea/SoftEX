@@ -1,3 +1,4 @@
+import { processTranscriptions } from './routes/recordings.js';
 import type { Ctx } from './context.js';
 import { backupIfDue } from './backup.js';
 import { processEmailQueue, queueDigests } from './mailer.js';
@@ -11,6 +12,7 @@ export async function runJobsOnce(ctx: Ctx) {
   await processReminders(ctx);
   await processEmailQueue(ctx);
   await processWebhookQueue(ctx);
+  await processTranscriptions(ctx);
 }
 
 /** Slower jobs: deadline reminders, retention and digests. */

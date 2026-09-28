@@ -20,7 +20,7 @@ import { HttpError } from './util.js';
 export const TERMS_VERSION = '2026-09-25';
 
 export type PlanId = 'free' | 'standard' | 'business';
-export type Feature = 'ai' | 'automations' | 'planning' | 'fields' | 'goals' | 'insights' | 'guests' | 'api' | 'sso' | 'scim' | 'retention';
+export type Feature = 'ai' | 'automations' | 'planning' | 'fields' | 'goals' | 'recordings' | 'insights' | 'guests' | 'api' | 'sso' | 'scim' | 'retention';
 
 export const FEATURE_LABEL: Record<Feature, string> = {
   ai: 'AI assistance',
@@ -29,6 +29,7 @@ export const FEATURE_LABEL: Record<Feature, string> = {
   fields: 'Custom fields and time tracking',
   goals: 'Goals and intake forms',
   insights: 'Insights and dashboards',
+  recordings: 'Meeting recordings and transcripts',
   guests: 'Guest access',
   api: 'API tokens and webhooks',
   sso: 'Single sign-on',
@@ -88,7 +89,7 @@ export function planCatalog(billing: BillingConfig): Record<PlanId, PlanDefiniti
       storageBase: 10 * GB,
       storagePerMember: 5 * GB,
       aiPerMember: 0,
-      features: ['automations', 'planning', 'fields', 'goals', 'insights', 'guests', 'api'],
+      features: ['automations', 'planning', 'fields', 'goals', 'recordings', 'insights', 'guests', 'api'],
       tagline: 'For growing teams that plan and track work together.',
     },
     business: {
@@ -99,7 +100,7 @@ export function planCatalog(billing: BillingConfig): Record<PlanId, PlanDefiniti
       storageBase: 20 * GB,
       storagePerMember: 10 * GB,
       aiPerMember: 50,
-      features: ['automations', 'planning', 'fields', 'goals', 'insights', 'guests', 'api', 'ai', 'sso', 'scim', 'retention'],
+      features: ['automations', 'planning', 'fields', 'goals', 'recordings', 'insights', 'guests', 'api', 'ai', 'sso', 'scim', 'retention'],
       tagline: 'For organisations that need AI, single sign-on and compliance controls.',
     },
   };
@@ -149,8 +150,9 @@ export async function billableSeats(db: Database, workspaceId: string) {
 }
 
 export async function storageUsed(db: Database, workspaceId: string) {
-  return ((await db.get(`SELECT COALESCE(SUM(v.size), 0) AS n FROM file_versions v JOIN files f ON f.id = v.file_id WHERE f.workspace_id = ?`, workspaceId))!.n ??
-    0) as number;
+  const files = Number((await db.get(`SELECT COALESCE(SUM(v.size), 0) AS n FROM file_versions v JOIN files f ON f.id = v.file_id WHERE f.workspace_id = ?`, workspaceId))!.n) || 0;
+  const recordings = Number((await db.get('SELECT COALESCE(SUM(size), 0) AS n FROM meeting_recordings WHERE workspace_id = ?', workspaceId))!.n) || 0;
+  return files + recordings;
 }
 
 export const monthStart = (at = new Date()) => new Date(Date.UTC(at.getUTCFullYear(), at.getUTCMonth(), 1)).toISOString();

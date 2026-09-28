@@ -85,6 +85,7 @@ What each one does:
 | `RAILWAY_RUN_UID` | Railway mounts volumes as root, and Küü's image runs as an unprivileged user. `0` lets the app write to the volume. If it is missing, the logs say *Küü cannot write to its data directory*. |
 | `SOFTEX_SMTP_URL`, `SOFTEX_MAIL_FROM` | Without them, emails are kept in **Administration → Email** but not sent, so customers can't confirm their address. URL-encode special characters in the password (for example `@` → `%40`). Use port 465 with `smtps://`, or port 587 with `smtp://`. |
 | `ANTHROPIC_API_KEY` | Makes Ask Küü, summaries and task suggestions available on the Business plan and during trials. Every workspace's AI use is billed to this key, so it is capped: 50 requests per member per month on Business, and 100 requests in total per trial (`SOFTEX_TRIAL_AI_REQUESTS`). |
+| `SOFTEX_STT_URL`, `SOFTEX_STT_API_KEY`, `SOFTEX_STT_MODEL` | Optional. Transcribes meeting recordings with any OpenAI-compatible speech-to-text service (for example `https://api.openai.com/v1/audio/transcriptions` with model `whisper-1`, or a self-hosted Whisper server). Recordings are only sent when a workspace has turned on AI features. Without it, recordings still work, with live captions in browsers that support them. |
 
 To make a secret key, run this on your computer and paste the output:
 

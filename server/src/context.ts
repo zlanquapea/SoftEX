@@ -1,3 +1,4 @@
+import type { SpeechToText } from './stt.js';
 import type { Request } from 'express';
 import type { Auth } from './access.js';
 import { canViewChannel } from './access.js';
@@ -67,6 +68,8 @@ export interface Ctx {
   config: Config;
   mail?: MailTransport;
   ai?: AiClient;
+  /** Speech-to-text for meeting recordings; absent unless configured. */
+  stt?: SpeechToText;
   /** Web Push delivery; absent when push is turned off. */
   push?: PushTransport;
 }

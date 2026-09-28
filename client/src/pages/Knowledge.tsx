@@ -12,6 +12,7 @@ import { useSession } from '../session';
 import { MediaAttachment, isPlayable } from '../components/Media';
 import { FavoriteButton } from '../components/Favorites';
 import { IconPicker, PageComments, PublishPanel } from '../components/PageExtras';
+import { LiveEditor, PeerList, useEditingNow } from '../components/LiveEditor';
 
 interface PageSummary {
   id: string;
@@ -243,12 +244,11 @@ export function PageView() {
   const act = useAction();
   const { data: page, error, reload } = useApi<PageFull>(`/pages/${id}`);
   const editing = params.get('edit') === '1';
-  const [draft, setDraft] = useState<{ title: string; body: string } | null>(null);
-  const [preview, setPreview] = useState(false);
   const [version, setVersion] = useState<{ version: number; title: string; body: string } | null>(null);
   const [showVersions, setShowVersions] = useState(false);
   const [sharing, setSharing] = useState(false);
   const { data: allPages } = useApi<PageSummary[]>(page?.can_edit ? '/pages' : null);
+  const editingNow = useEditingNow(id!);
 
   if (error) return <ErrorState error={error} retry={reload} />;
   if (!page) return <Loading />;
@@ -267,16 +267,6 @@ export function PageView() {
       }
     }
   }
-  const current = draft ?? { title: page.title, body: page.body };
-
-  const save = async () => {
-    const ok = await act(() => api.patch(`/pages/${page.id}`, current), 'Page saved');
-    if (ok) {
-      setDraft(null);
-      setParams({});
-      reload();
-    }
-  };
   const askOwner = async () => {
     if (!page.owner || page.owner.id === me!.user.id) return;
     const dm = await act(() => api.post<{ id: string }>('/dms', { userIds: [page.owner!.id] }));
@@ -311,43 +301,17 @@ export function PageView() {
         ))}
       </div>
       {editing ? (
-        <div className="editor card">
-          <input className="title-input" value={current.title} onChange={(e) => setDraft({ ...current, title: e.target.value })} aria-label="Page title" />
-          <div className="segmented" role="group">
-            <button className={!preview ? 'active' : ''} onClick={() => setPreview(false)}>
-              Write
-            </button>
-            <button className={preview ? 'active' : ''} onClick={() => setPreview(true)}>
-              Preview
-            </button>
-          </div>
-          {preview ? (
-            <Markdown text={current.body} />
-          ) : (
-            <textarea
-              className="page-editor"
-              value={current.body}
-              onChange={(e) => setDraft({ ...current, body: e.target.value })}
-              rows={20}
-              aria-label="Page content"
-              placeholder={'# Heading\n\nWrite with **Markdown**. Link tasks and discussions by pasting their Küü links.\n\n- [ ] Checklists work too'}
-            />
-          )}
-          <div className="form-actions">
-            <button
-              className="btn"
-              onClick={() => {
-                setDraft(null);
-                setParams({});
-              }}
-            >
-              Cancel
-            </button>
-            <button className="btn primary" onClick={save}>
-              Save version {page.version + (draft ? 1 : 0)}
-            </button>
-          </div>
-        </div>
+        <LiveEditor
+          page={page}
+          onClose={() => {
+            setParams({});
+            reload();
+          }}
+          onSaved={() => {
+            setParams({});
+            reload();
+          }}
+        />
       ) : (
         <article className="card doc">
           <div className="doc-head">
@@ -374,6 +338,16 @@ export function PageView() {
               Owner <strong>{page.owner?.name}</strong> · version {page.version} · updated {timeAgo(page.updated_at)} by {page.updated_by?.name}
               {page.review_date && ` · review by ${new Date(`${page.review_date}T00:00`).toLocaleDateString()}`}
             </p>
+            {editingNow.length > 0 && (
+              <p className="row-gap">
+                <PeerList peers={editingNow} label="Editing now" />
+                {page.can_edit && (
+                  <button className="link-btn" onClick={() => setParams({ edit: '1' })}>
+                    Join them
+                  </button>
+                )}
+              </p>
+            )}
             <div className="row-gap wrap">
               {page.can_edit && (
                 <button className="btn sm" onClick={() => setParams({ edit: '1' })}>

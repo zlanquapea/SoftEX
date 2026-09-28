@@ -7,6 +7,7 @@ import {
   accessibleChannelIds,
   accessibleProjectIds,
   canContributeProject,
+  canEditPage as canEditPageFor,
   canEditTask,
   canPostChannel,
   canViewFile,
@@ -19,6 +20,7 @@ import {
   type Auth,
 } from '../access.js';
 import type { Row } from '../db.js';
+import { resetPageIfDiverged } from '../collab.js';
 import { extractText } from '../extract.js';
 import { scanUpload } from '../scanner.js';
 import { audit, authOf, notify, recordActivity, userSummary, type Ctx } from '../context.js';
@@ -100,10 +102,7 @@ export function knowledgeRouter(ctx: Ctx) {
     return page;
   };
 
-  const canEditPage = async (auth: Auth, page: Row) => {
-    if (page.project_id) return canContributeProject(db, auth, (await db.get('SELECT * FROM projects WHERE id = ?', page.project_id))!);
-    return !isGuest(auth);
-  };
+  const canEditPage = (auth: Auth, page: Row) => canEditPageFor(db, auth, page);
 
   const pageSummary = async (p: Row) => ({
     id: p.id,
@@ -313,6 +312,7 @@ export function knowledgeRouter(ctx: Ctx) {
         });
       }
     });
+    if (contentChanged) await resetPageIfDiverged(ctx, auth.workspaceId, (await db.get('SELECT * FROM pages WHERE id = ?', page.id))!);
     if (contentChanged || body.status) {
       await recordActivity(ctx, auth.workspaceId, {
         actorId: auth.userId,
@@ -348,6 +348,7 @@ export function knowledgeRouter(ctx: Ctx) {
     const next = page.version + 1;
     await db.update('pages', page.id, { title: v.title, body: v.body, version: next, updated_at: now(), updated_by: auth.userId });
     await db.insert('page_versions', { id: newId(), page_id: page.id, version: next, title: v.title, body: v.body, edited_by: auth.userId, created_at: now() });
+    await resetPageIfDiverged(ctx, auth.workspaceId, (await db.get('SELECT * FROM pages WHERE id = ?', page.id))!);
     res.json({ ok: true, version: next });
   });
 

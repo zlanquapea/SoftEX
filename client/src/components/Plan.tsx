@@ -17,6 +17,7 @@ export const FEATURE_LABEL: Record<Feature, string> = {
   retention: 'Retention and legal hold',
   fields: 'Custom fields and time tracking',
   goals: 'Goals and intake forms',
+  recordings: 'Meeting recordings and transcripts',
 };
 
 const BUSINESS_ONLY: Feature[] = ['ai', 'sso', 'scim', 'retention'];
@@ -132,4 +133,4 @@ export function PlanFeatures({ plan, all }: { plan: PublicPlan; all: Feature[] }
   );
 }
 
-export const FEATURE_ORDER: Feature[] = ['planning', 'fields', 'goals', 'automations', 'guests', 'insights', 'api', 'ai', 'sso', 'scim', 'retention'];
+export const FEATURE_ORDER: Feature[] = ['planning', 'fields', 'goals', 'recordings', 'automations', 'guests', 'insights', 'api', 'ai', 'sso', 'scim', 'retention'];

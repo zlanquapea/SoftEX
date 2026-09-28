@@ -12,7 +12,8 @@
   "dependencies": {
     "react": "^19.3.0",
     "react-dom": "^19.3.0",
-    "react-router-dom": "^7.18.4"
+    "react-router-dom": "^7.18.4",
+    "yjs": "^13.6.33"
   },
   "devDependencies": {
     "@types/react": "^19.3.0",

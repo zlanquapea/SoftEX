@@ -428,8 +428,10 @@ export function homeRouter(ctx: Ctx) {
       if (want('meetings')) {
         result.meetings = (await filterAsync((await db
           .all(
-            `SELECT * FROM meetings WHERE workspace_id = ? AND (title LIKE ? ESCAPE '\\' OR agenda LIKE ? ESCAPE '\\' OR notes LIKE ? ESCAPE '\\') ORDER BY starts_at DESC LIMIT 200`,
+            `SELECT * FROM meetings WHERE workspace_id = ? AND (title LIKE ? ESCAPE '\\' OR agenda LIKE ? ESCAPE '\\' OR notes LIKE ? ESCAPE '\\'
+               OR EXISTS (SELECT 1 FROM transcript_segments s WHERE s.meeting_id = meetings.id AND s.text LIKE ? ESCAPE '\\')) ORDER BY starts_at DESC LIMIT 200`,
             auth.workspaceId,
+            like,
             like,
             like,
             like,
