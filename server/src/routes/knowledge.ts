@@ -51,6 +51,8 @@ const INLINE_TYPES: Record<string, string> = {
   '.oga': 'audio/ogg',
   '.opus': 'audio/ogg',
   '.wav': 'audio/wav',
+  // Voice notes recorded in the browser (Chrome/Firefox record WebM/Opus audio).
+  '.weba': 'audio/webm',
 };
 
 /**
@@ -117,6 +119,9 @@ export function knowledgeRouter(ctx: Ctx) {
     updated_by: await userSummary(db, p.updated_by),
     excerpt: p.body.replace(/[#*_>`[\]()-]/g, '').replace(/\s+/g, ' ').trim().slice(0, 180),
     archived_at: p.archived_at,
+    parent_id: p.parent_id ?? null,
+    icon: p.icon ?? null,
+    public: !!p.public_token,
   });
 
   r.get('/pages', async (req, res) => {
@@ -140,11 +145,39 @@ export function knowledgeRouter(ctx: Ctx) {
     reviewDate: DateStr.nullish(),
     status: z.enum(['draft', 'approved']).default('draft'),
     ownerId: z.string().optional(),
+    parentId: z.string().nullish(),
+    icon: z.string().max(16).nullish(),
   });
+
+  /** A parent page must be visible; the child joins the parent's project (so it has the same audience). */
+  const checkParent = async (auth: Auth, parentId: string, pageId?: string) => {
+    const parent = await loadPage(auth, parentId);
+    if (parent.archived_at) throw badRequest('That page is archived');
+    // Refuse cycles: walk up from the new parent.
+    let cursor: string | null = parent.id;
+    for (let i = 0; cursor && i < 100; i++) {
+      if (cursor === pageId) throw badRequest('A page can’t be placed inside itself');
+      cursor = ((await db.get('SELECT parent_id FROM pages WHERE id = ?', cursor)) as Row | undefined)?.parent_id ?? null;
+    }
+    return parent;
+  };
+
+  /** All pages below a page (for moving a whole branch between projects). */
+  const descendants = async (pageId: string) => {
+    const out: string[] = [];
+    let frontier = [pageId];
+    for (let depth = 0; frontier.length && depth < 50; depth++) {
+      const rows = await db.all(`SELECT id FROM pages WHERE parent_id IN (${frontier.map(() => '?').join(',')})`, ...frontier);
+      frontier = rows.map((r) => r.id as string).filter((id) => !out.includes(id));
+      out.push(...frontier);
+    }
+    return out;
+  };
 
   r.post('/pages', async (req, res) => {
     const auth = authOf(req);
     const body = parse(PageBody, req.body);
+    if (body.parentId) body.projectId = (await checkParent(auth, body.parentId)).project_id;
     if (body.projectId) {
       const project = await loadProject(db, auth, body.projectId);
       if (!await canContributeProject(db, auth, project)) throw forbidden();
@@ -161,6 +194,8 @@ export function knowledgeRouter(ctx: Ctx) {
       status: body.status,
       owner_id: auth.userId,
       review_date: body.reviewDate ?? null,
+      parent_id: body.parentId ?? null,
+      icon: body.icon || null,
       created_at: now(),
       updated_at: now(),
       updated_by: auth.userId,
@@ -199,14 +234,46 @@ export function knowledgeRouter(ctx: Ctx) {
           ...channels,
         )
       : [];
-    res.json({ ...await pageSummary(page), body: page.body, project, versions, discussions, can_edit: await canEditPage(auth, page) });
+    // Where the page sits in the tree: its visible ancestors and children.
+    const breadcrumbs: { id: string; title: string; icon: string | null }[] = [];
+    let cursor: string | null = page.parent_id ?? null;
+    for (let i = 0; cursor && i < 20; i++) {
+      const parent = await db.get('SELECT * FROM pages WHERE id = ?', cursor);
+      if (!parent || !await canViewPage(db, auth, parent)) break;
+      breadcrumbs.unshift({ id: parent.id, title: parent.title, icon: parent.icon ?? null });
+      cursor = parent.parent_id ?? null;
+    }
+    const children = await filterAsync(await db.all('SELECT * FROM pages WHERE parent_id = ? AND archived_at IS NULL ORDER BY title', page.id), (c) => canViewPage(db, auth, c));
+    const commentCount = (await db.get<{ n: number }>('SELECT COUNT(*) AS n FROM page_comments WHERE page_id = ? AND resolved_at IS NULL', page.id))!.n;
+    const canEdit = await canEditPage(auth, page);
+    res.json({
+      ...await pageSummary(page),
+      body: page.body,
+      project,
+      versions,
+      discussions,
+      breadcrumbs,
+      children: children.map((c) => ({ id: c.id, title: c.title, icon: c.icon ?? null })),
+      comment_count: commentCount,
+      public_url: canEdit && page.public_token ? `${ctx.config.publicUrl}/p/${page.public_token}` : null,
+      can_edit: canEdit,
+    });
   });
 
   r.patch('/pages/:id', async (req, res) => {
     const auth = authOf(req);
     const page = await loadPage(auth, req.params.id);
     if (!await canEditPage(auth, page)) throw forbidden('You cannot edit this page');
-    const body = parse(PageBody.partial().extend({ reviewDate: DateStr.nullable().optional(), projectId: z.string().nullable().optional() }), req.body);
+    const body = parse(
+      PageBody.partial().extend({ reviewDate: DateStr.nullable().optional(), projectId: z.string().nullable().optional(), parentId: z.string().nullable().optional() }),
+      req.body,
+    );
+    if (body.parentId) body.projectId = (await checkParent(auth, body.parentId, page.id)).project_id;
+    else if (body.projectId !== undefined && body.parentId === undefined && page.parent_id) {
+      // Moving to another project without a new parent: leave the old parent behind.
+      const parent = await db.get('SELECT project_id FROM pages WHERE id = ?', page.parent_id);
+      if ((parent?.project_id ?? null) !== body.projectId) body.parentId = null;
+    }
     if (body.projectId) {
       const project = await loadProject(db, auth, body.projectId);
       if (!await canContributeProject(db, auth, project)) throw forbidden();
@@ -224,10 +291,16 @@ export function knowledgeRouter(ctx: Ctx) {
         review_date: body.reviewDate,
         project_id: body.projectId,
         owner_id: body.ownerId,
+        parent_id: body.parentId,
+        icon: body.icon === undefined ? undefined : body.icon || null,
         version,
         updated_at: now(),
         updated_by: auth.userId,
       });
+      // Pages below move with their parent, so the whole branch keeps one audience.
+      if (body.projectId !== undefined && body.projectId !== page.project_id) {
+        for (const id of await descendants(page.id)) await db.run('UPDATE pages SET project_id = ? WHERE id = ?', body.projectId, id);
+      }
       if (contentChanged) {
         await db.insert('page_versions', {
           id: newId(),

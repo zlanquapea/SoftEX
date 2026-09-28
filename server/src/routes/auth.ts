@@ -160,7 +160,7 @@ export async function startSession(ctx: Ctx, res: Response, userId: string, work
  * Limiter for credential endpoints (§9 "rate limit abuse"). Counts live in the database so the
  * limit holds across every Küü server; keys are hashed so no emails or IPs are stored.
  */
-async function rateLimit(ctx: Ctx, key: string, max = 10, windowMs = 15 * 60_000) {
+export async function rateLimit(ctx: Ctx, key: string, max = 10, windowMs = 15 * 60_000) {
   const t = now();
   const row = await ctx.db.get(
     `INSERT INTO rate_limits (key, count, reset_at) VALUES (?, 1, ?)
@@ -722,7 +722,7 @@ export function meRouter(ctx: Ctx) {
     }
     const workspaces = await db.all('SELECT m.workspace_id, w.name FROM memberships m JOIN workspaces w ON w.id = m.workspace_id WHERE m.user_id = ?', auth.userId);
     await db.transaction(async () => {
-      for (const table of ['sessions', 'calendar_feeds', 'push_subscriptions', 'email_verifications', 'password_resets', 'saved_messages', 'notifications', 'reminders', 'channel_members']) {
+      for (const table of ['sessions', 'calendar_feeds', 'push_subscriptions', 'favorites', 'email_verifications', 'password_resets', 'saved_messages', 'notifications', 'reminders', 'channel_members']) {
         await db.run(`DELETE FROM ${table} WHERE user_id = ?`, auth.userId);
       }
       await db.run('DELETE FROM scheduled_messages WHERE user_id = ? AND sent_message_id IS NULL', auth.userId);

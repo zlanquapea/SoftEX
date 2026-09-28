@@ -655,6 +655,140 @@ CREATE TABLE IF NOT EXISTS push_subscriptions (
 );
 CREATE INDEX IF NOT EXISTS idx_push_user ON push_subscriptions(user_id);
 
+-- ---------- Work management (labels, custom fields, time, goals, forms) ----------
+CREATE TABLE IF NOT EXISTS labels (
+  id TEXT PRIMARY KEY,
+  workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+  name TEXT NOT NULL,
+  color TEXT NOT NULL DEFAULT 'blue',
+  created_at TEXT NOT NULL,
+  UNIQUE (workspace_id, name)
+);
+CREATE TABLE IF NOT EXISTS task_labels (
+  task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+  label_id TEXT NOT NULL REFERENCES labels(id) ON DELETE CASCADE,
+  PRIMARY KEY (task_id, label_id)
+);
+CREATE INDEX IF NOT EXISTS idx_task_labels_label ON task_labels(label_id);
+
+-- Project-specific task fields (text, number, date, select, person, checkbox, url).
+CREATE TABLE IF NOT EXISTS custom_fields (
+  id TEXT PRIMARY KEY,
+  workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+  project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+  name TEXT NOT NULL,
+  type TEXT NOT NULL,
+  options TEXT NOT NULL DEFAULT '[]',
+  position INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_custom_fields_project ON custom_fields(project_id);
+CREATE TABLE IF NOT EXISTS task_field_values (
+  task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+  field_id TEXT NOT NULL REFERENCES custom_fields(id) ON DELETE CASCADE,
+  value TEXT NOT NULL,
+  PRIMARY KEY (task_id, field_id)
+);
+
+CREATE TABLE IF NOT EXISTS time_entries (
+  id TEXT PRIMARY KEY,
+  workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+  task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+  user_id TEXT NOT NULL REFERENCES users(id),
+  started_at TEXT NOT NULL,
+  ended_at TEXT,                                    -- null while the timer runs
+  minutes INTEGER NOT NULL DEFAULT 0,
+  note TEXT NOT NULL DEFAULT '',
+  created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_time_task ON time_entries(task_id);
+CREATE INDEX IF NOT EXISTS idx_time_user ON time_entries(user_id, started_at);
+
+CREATE TABLE IF NOT EXISTS goals (
+  id TEXT PRIMARY KEY,
+  workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+  parent_id TEXT REFERENCES goals(id) ON DELETE SET NULL,
+  title TEXT NOT NULL,
+  description TEXT NOT NULL DEFAULT '',
+  owner_id TEXT NOT NULL REFERENCES users(id),
+  due_date TEXT,
+  status TEXT NOT NULL DEFAULT 'on_track',          -- on_track | at_risk | off_track | done
+  created_by TEXT NOT NULL REFERENCES users(id),
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  archived_at TEXT
+);
+CREATE TABLE IF NOT EXISTS key_results (
+  id TEXT PRIMARY KEY,
+  goal_id TEXT NOT NULL REFERENCES goals(id) ON DELETE CASCADE,
+  title TEXT NOT NULL,
+  kind TEXT NOT NULL DEFAULT 'number',              -- number | tasks
+  start_value REAL NOT NULL DEFAULT 0,
+  target_value REAL NOT NULL DEFAULT 100,
+  current_value REAL NOT NULL DEFAULT 0,
+  unit TEXT NOT NULL DEFAULT '',
+  project_id TEXT REFERENCES projects(id) ON DELETE SET NULL,
+  position INTEGER NOT NULL DEFAULT 0
+);
+CREATE TABLE IF NOT EXISTS goal_projects (
+  goal_id TEXT NOT NULL REFERENCES goals(id) ON DELETE CASCADE,
+  project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+  PRIMARY KEY (goal_id, project_id)
+);
+
+-- Intake forms: each response becomes a task in the form's project.
+CREATE TABLE IF NOT EXISTS forms (
+  id TEXT PRIMARY KEY,
+  workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+  project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+  title TEXT NOT NULL,
+  description TEXT NOT NULL DEFAULT '',
+  fields TEXT NOT NULL DEFAULT '[]',
+  public_token TEXT UNIQUE,                         -- set when anyone with the link may answer
+  owner_id TEXT REFERENCES users(id),               -- who new tasks are assigned to
+  closed INTEGER NOT NULL DEFAULT 0,
+  created_by TEXT NOT NULL REFERENCES users(id),
+  created_at TEXT NOT NULL
+);
+
+-- ---------- Knowledge: page discussion, favourites ----------
+CREATE TABLE IF NOT EXISTS page_comments (
+  id TEXT PRIMARY KEY,
+  page_id TEXT NOT NULL REFERENCES pages(id) ON DELETE CASCADE,
+  user_id TEXT NOT NULL REFERENCES users(id),
+  body TEXT NOT NULL,
+  resolved_at TEXT,
+  created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_page_comments ON page_comments(page_id, created_at);
+
+CREATE TABLE IF NOT EXISTS favorites (
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+  kind TEXT NOT NULL,                               -- page | project | channel | goal
+  object_id TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  PRIMARY KEY (user_id, kind, object_id)
+);
+
+-- ---------- Chat: polls ----------
+CREATE TABLE IF NOT EXISTS polls (
+  id TEXT PRIMARY KEY,
+  message_id TEXT NOT NULL UNIQUE REFERENCES messages(id) ON DELETE CASCADE,
+  question TEXT NOT NULL,
+  options TEXT NOT NULL,
+  multiple INTEGER NOT NULL DEFAULT 0,
+  anonymous INTEGER NOT NULL DEFAULT 0,
+  closed_at TEXT
+);
+CREATE TABLE IF NOT EXISTS poll_votes (
+  poll_id TEXT NOT NULL REFERENCES polls(id) ON DELETE CASCADE,
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  option_index INTEGER NOT NULL,
+  created_at TEXT NOT NULL,
+  PRIMARY KEY (poll_id, user_id, option_index)
+);
+
 -- Private calendar subscription links ("add Küü meetings to Google Calendar / Outlook").
 CREATE TABLE IF NOT EXISTS calendar_feeds (
   token_hash TEXT PRIMARY KEY,
@@ -724,6 +858,12 @@ const ADDED_COLUMNS: [table: string, column: string, definition: string, backfil
   ['sessions', 'user_agent', 'TEXT'],
   ['sessions', 'ip', 'TEXT'],
   ['sessions', 'last_seen_at', 'TEXT', 'UPDATE sessions SET last_seen_at = created_at'],
+  // Notion-style page tree, icons and read-only public links.
+  ['pages', 'parent_id', 'TEXT'],
+  ['pages', 'icon', 'TEXT'],
+  ['pages', 'public_token', 'TEXT'],
+  ['tasks', 'form_id', 'TEXT'],
+  ['messages', 'forwarded_from', 'TEXT'],
 ];
 
 export type Row = Record<string, any>;

@@ -20,12 +20,14 @@ import { HttpError } from './util.js';
 export const TERMS_VERSION = '2026-09-25';
 
 export type PlanId = 'free' | 'standard' | 'business';
-export type Feature = 'ai' | 'automations' | 'planning' | 'insights' | 'guests' | 'api' | 'sso' | 'scim' | 'retention';
+export type Feature = 'ai' | 'automations' | 'planning' | 'fields' | 'goals' | 'insights' | 'guests' | 'api' | 'sso' | 'scim' | 'retention';
 
 export const FEATURE_LABEL: Record<Feature, string> = {
   ai: 'AI assistance',
   automations: 'Automations',
   planning: 'Timeline and workload',
+  fields: 'Custom fields and time tracking',
+  goals: 'Goals and intake forms',
   insights: 'Insights',
   guests: 'Guest access',
   api: 'API tokens and webhooks',
@@ -86,7 +88,7 @@ export function planCatalog(billing: BillingConfig): Record<PlanId, PlanDefiniti
       storageBase: 10 * GB,
       storagePerMember: 5 * GB,
       aiPerMember: 0,
-      features: ['automations', 'planning', 'insights', 'guests', 'api'],
+      features: ['automations', 'planning', 'fields', 'goals', 'insights', 'guests', 'api'],
       tagline: 'For growing teams that plan and track work together.',
     },
     business: {
@@ -97,7 +99,7 @@ export function planCatalog(billing: BillingConfig): Record<PlanId, PlanDefiniti
       storageBase: 20 * GB,
       storagePerMember: 10 * GB,
       aiPerMember: 50,
-      features: ['automations', 'planning', 'insights', 'guests', 'api', 'ai', 'sso', 'scim', 'retention'],
+      features: ['automations', 'planning', 'fields', 'goals', 'insights', 'guests', 'api', 'ai', 'sso', 'scim', 'retention'],
       tagline: 'For organisations that need AI, single sign-on and compliance controls.',
     },
   };

@@ -21,6 +21,7 @@ import { emitEvent } from '../webhooks.js';
 import { runAutomations } from '../automations.js';
 import { badRequest, forbidden, newId, notFound, now, parse, today, filterAsync } from '../util.js';
 import { parseCsv, parseLooseDate } from '../csv.js';
+import { taskExtras } from './work.js';
 
 const DateStr = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'use YYYY-MM-DD');
 const Status = z.enum(['todo', 'in_progress', 'blocked', 'review', 'done']);
@@ -55,6 +56,7 @@ export async function serializeTasks(db: Database, rows: Row[]) {
     userIds.length ? (await db.all(`SELECT id, name, color FROM users WHERE id IN (${userIds.map(() => '?').join(',')})`, ...userIds)).map((u) => [u.id, u]) : [],
   );
   const t0 = today();
+  const extras = await taskExtras(db, ids);
   return rows.map((t) => {
     const c = checklist.find((x) => x.task_id === t.id);
     const s = subtasks.find((x) => x.parent_id === t.id);
@@ -86,6 +88,9 @@ export async function serializeTasks(db: Database, rows: Row[]) {
       subtasks: { total: s?.total ?? 0, done: s?.done ?? 0 },
       comment_count: comments.find((x) => x.task_id === t.id)?.n ?? 0,
       waiting_on: openDeps.find((x) => x.task_id === t.id)?.n ?? 0,
+      labels: extras.labels.get(t.id) ?? [],
+      fields: extras.fields.get(t.id) ?? {},
+      time_minutes: extras.minutes.get(t.id) ?? 0,
     };
   });
 }
@@ -242,6 +247,7 @@ export function tasksRouter(ctx: Ctx) {
         ownerId: z.string().optional(),
         status: Status.optional(),
         milestoneId: z.string().optional(),
+        labelId: z.string().optional(),
         includeSubtasks: z.enum(['true', 'false']).default('false'),
       }),
       req.query,
@@ -264,6 +270,10 @@ export function tasksRouter(ctx: Ctx) {
     if (q.milestoneId) {
       where.push('t.milestone_id = ?');
       params.push(q.milestoneId);
+    }
+    if (q.labelId) {
+      where.push('EXISTS (SELECT 1 FROM task_labels tl WHERE tl.task_id = t.id AND tl.label_id = ?)');
+      params.push(q.labelId);
     }
     if (q.includeSubtasks === 'false') where.push('t.parent_id IS NULL');
     const rows = (await filterAsync((await db
