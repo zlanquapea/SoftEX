@@ -479,6 +479,7 @@ export function workspaceRouter(ctx: Ctx) {
     if (body.confirmName.trim() !== ws.name) throw badRequest('Type the workspace name exactly to confirm');
     const members = (await db.all('SELECT user_id FROM memberships WHERE workspace_id = ?', ws.id)).map((m) => m.user_id as string);
     const keys = (await db.all(`SELECT v.storage_key FROM file_versions v JOIN files f ON f.id = v.file_id WHERE f.workspace_id = ?`, ws.id)).map((v) => v.storage_key as string);
+    keys.push(...(await db.all('SELECT storage_key FROM meeting_recordings WHERE workspace_id = ? AND storage_key IS NOT NULL', ws.id)).map((v) => v.storage_key as string));
     await db.transaction(async () => {
       await platformEvent(ctx, user.email, 'workspace.deleted', { id: ws.id, name: ws.name }, { members: members.length, files: keys.length });
       await db.run('DELETE FROM workspaces WHERE id = ?', ws.id);

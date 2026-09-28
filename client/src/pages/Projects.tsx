@@ -11,6 +11,7 @@ import { TaskRow } from '../components/TaskDrawer';
 import { TaskCalendar, TaskTable } from '../components/ProjectViews';
 import { FieldsManager, LabelChips, useProjectFields } from '../components/Work';
 import { ProjectForms } from './Forms';
+import { Boards } from './Boards';
 import { FavoriteButton } from '../components/Favorites';
 import { ProjectAutomations, ProjectTimeline } from './Planning';
 import { UpgradeNotice, usePlan } from '../components/Plan';
@@ -108,7 +109,7 @@ interface ProjectFull extends Project {
   ai_excluded: boolean;
 }
 
-type Tab = 'overview' | 'tasks' | 'timeline' | 'automations' | 'forms' | 'time' | 'decisions' | 'risks' | 'resources' | 'checkins' | 'activity';
+type Tab = 'overview' | 'tasks' | 'timeline' | 'automations' | 'forms' | 'boards' | 'time' | 'decisions' | 'risks' | 'resources' | 'checkins' | 'activity';
 
 interface ImportPreview {
   columns: Record<string, string | null>;
@@ -320,6 +321,7 @@ export function ProjectDetail() {
           { id: 'timeline', label: 'Timeline' },
           { id: 'automations', label: 'Automations' },
           { id: 'forms', label: 'Forms' },
+          { id: 'boards', label: 'Whiteboards' },
           { id: 'time', label: 'Time' },
           { id: 'decisions', label: 'Decisions' },
           { id: 'risks', label: 'Risks' },
@@ -333,6 +335,7 @@ export function ProjectDetail() {
       {tab === 'timeline' && (has('planning') ? <ProjectTimeline projectId={project.id} milestones={project.milestones} canEdit={project.can_contribute} /> : <UpgradeNotice feature="planning" />)}
       {tab === 'automations' && (has('automations') ? <ProjectAutomations projectId={project.id} /> : <UpgradeNotice feature="automations" />)}
       {tab === 'forms' && (has('goals') ? <ProjectForms projectId={project.id} canManage={project.can_manage} /> : <UpgradeNotice feature="goals" />)}
+      {tab === 'boards' && <Boards projectId={project.id} />}
       {tab === 'time' && <ProjectTime projectId={project.id} />}
       {tab === 'decisions' && <ProjectDecisions project={project} />}
       {tab === 'risks' && <Risks project={project} />}

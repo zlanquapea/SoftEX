@@ -27,6 +27,10 @@ import { goalsRouter } from './routes/goals.js';
 import { formsRouter, publicFormsRouter } from './routes/forms.js';
 import { pagesRouter, publicPagesRouter } from './routes/pages.js';
 import { dashboardsRouter } from './routes/dashboards.js';
+import { canViewDoc } from './collab.js';
+import { createWhisperClient, type SpeechToText } from './stt.js';
+import { recordingsRouter } from './routes/recordings.js';
+import { boardsRouter } from './routes/boards.js';
 import { authRouter, authenticate, meRouter, requireAuth } from './routes/auth.js';
 import { channelsRouter } from './routes/channels.js';
 import { homeRouter } from './routes/home.js';
@@ -56,6 +60,13 @@ export interface AppOptions extends Partial<Omit<Config, 'billing' | 'backups'>>
   anthropicApiKey?: string;
   mail?: MailTransport;
   ai?: AiClient;
+  /** Speech-to-text for meeting recordings (tests pass a fake). */
+  stt?: SpeechToText;
+  /** An OpenAI-compatible transcription endpoint, e.g. https://api.openai.com/v1/audio/transcriptions or a self-hosted Whisper server. */
+  sttUrl?: string;
+  sttApiKey?: string;
+  sttModel?: string;
+  sttLanguage?: string;
   /** Web Push sender (default: the real push services); false turns push off. */
   push?: PushTransport | false;
 }
@@ -115,6 +126,7 @@ export function createApp(options: AppOptions = {}): SoftexApp {
     mail: options.mail,
     push: options.push === false ? undefined : (options.push ?? webPushTransport),
     ai: options.ai ?? (options.anthropicApiKey ? createClaudeClient(options.anthropicApiKey, config.aiModel) : undefined),
+    stt: options.stt ?? (options.sttUrl ? createWhisperClient({ url: options.sttUrl, apiKey: options.sttApiKey, model: options.sttModel, language: options.sttLanguage }) : undefined),
   };
   const stopJobs = options.startJobs === false ? () => {} : startBackgroundJobs(ctx);
 
@@ -126,7 +138,8 @@ export function createApp(options: AppOptions = {}): SoftexApp {
     res.setHeader('X-Content-Type-Options', 'nosniff');
     res.setHeader('Referrer-Policy', 'same-origin');
     res.setHeader('X-Frame-Options', 'DENY');
-    res.setHeader('Permissions-Policy', 'camera=(), microphone=(), geolocation=()');
+    // Küü itself may use the microphone and screen sharing (voice notes, meeting recordings); nothing embedded may.
+    res.setHeader('Permissions-Policy', 'camera=(), microphone=(self), display-capture=(self), geolocation=()');
     // Cookie sessions + mutating requests: reject cross-origin browser requests (CSRF defence in depth).
     if (!['GET', 'HEAD', 'OPTIONS'].includes(req.method) && req.headers.origin) {
       const host = req.headers['x-forwarded-host'] ?? req.headers.host;
@@ -171,6 +184,8 @@ export function createApp(options: AppOptions = {}): SoftexApp {
   api.use(formsRouter(ctx));
   api.use(pagesRouter(ctx));
   api.use(dashboardsRouter(ctx));
+  api.use(boardsRouter(ctx));
+  api.use(recordingsRouter(ctx));
   api.use(homeRouter(ctx));
   api.use(channelsRouter(ctx));
   api.use(projectsRouter(ctx));
@@ -253,6 +268,8 @@ export function createApp(options: AppOptions = {}): SoftexApp {
         const meeting = await db.get('SELECT * FROM meetings WHERE id = ?', audience.meetingId);
         return (a) => !!meeting && canViewMeeting(db, a, meeting);
       }
+      case 'doc':
+        return (a) => canViewDoc(db, a, audience.key);
     }
   };
   // Events published inside a transaction go out once it commits.

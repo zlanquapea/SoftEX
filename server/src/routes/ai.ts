@@ -180,7 +180,15 @@ ${transcript(rows)}
     const decisions = (await filterAsync((await db.all('SELECT * FROM decisions WHERE meeting_id = ?', meeting.id)), (d) => canViewDecision(db, auth, d)));
     const tasks = (await filterAsync((await db
       .all('SELECT t.*, u.name AS owner_name FROM tasks t LEFT JOIN users u ON u.id = t.owner_id WHERE t.meeting_id = ?', meeting.id)), (t) => canViewTask(db, auth, t)));
-    if (!meeting.notes.trim() && !decisions.length && !tasks.length) throw new HttpError(400, 'Add notes, decisions or follow-ups before asking for a summary');
+    // The transcript, when there is one (the server's full transcript if made, else live captions), trimmed to a sensible length.
+    const transcriptRows = await db.all(
+      `SELECT s.text, u.name AS speaker FROM transcript_segments s LEFT JOIN users u ON u.id = s.speaker_id
+        WHERE s.meeting_id = ? AND (s.source = 'server' OR NOT EXISTS (SELECT 1 FROM transcript_segments x WHERE x.recording_id = s.recording_id AND x.source = 'server'))
+        ORDER BY s.recording_id, s.start_ms, s.created_at`,
+      meeting.id,
+    );
+    const transcript = transcriptRows.map((t) => `${t.speaker ? `${t.speaker}: ` : ''}${t.text}`).join('\n').slice(0, 60_000);
+    if (!meeting.notes.trim() && !decisions.length && !tasks.length && !transcript) throw new HttpError(400, 'Add notes, decisions or follow-ups, or record the meeting, before asking for a summary');
     const summary = await run(auth, {
       prompt: `Write a short follow-up summary of the meeting "${fence(meeting.title)}" for people who could not attend. Sections: "Summary", "Decisions", "Follow-ups" (owner and due date when present).
 
@@ -196,6 +204,9 @@ ${decisions.map((d) => `- ${fence(d.title)}${d.rationale ? ` (${fence(d.rational
 
 Follow-up tasks:
 ${tasks.map((t) => `- ${fence(t.title)} — ${t.owner_name ?? 'unassigned'}${t.due_date ? `, due ${t.due_date}` : ''} [${t.status}]`).join('\n') || '- none'}
+
+Transcript (may contain recognition errors):
+${transcript ? fence(transcript) : '- no recording'}
 </records>`,
     });
     await audit(ctx, auth.workspaceId, auth.userId, 'ai.meeting_summary', 'meeting', meeting.id);

@@ -18,7 +18,8 @@ export type Audience =
   | { kind: 'user'; userId: string }
   | { kind: 'channel'; channelId: string; exceptUserId?: string }
   | { kind: 'task'; taskId: string }
-  | { kind: 'meeting'; meetingId: string };
+  | { kind: 'meeting'; meetingId: string }
+  | { kind: 'doc'; key: string };
 
 /** Turns an audience into a per-client check (set up by the app with database access). */
 export type AudienceResolver = (workspaceId: string, audience: Audience) => Promise<(auth: Auth) => boolean | Promise<boolean>>;

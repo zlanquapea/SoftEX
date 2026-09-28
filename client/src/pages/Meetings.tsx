@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
+import { MeetingRecordings } from '../components/Recorder';
 import { api, qs, type Decision, type Meeting, type Task } from '../api';
 import { AiDraft, useAiEnabled } from '../components/Ai';
 import { Avatar, AvatarStack } from '../components/Avatar';
@@ -263,6 +264,7 @@ export function MeetingDetail() {
 
       <div className="dashboard-grid">
         <div className="main-column">
+          <MeetingRecordings meetingId={m.id} meetingTitle={m.title} />
           <article className="card">
             <div className="section-heading compact">
               <h2>Agenda</h2>
@@ -295,7 +297,7 @@ export function MeetingDetail() {
             <div className="section-heading compact">
               <h2>Notes</h2>
               <div className="row-gap">
-                {aiEnabled && (m.notes || m.decisions.length > 0 || m.tasks.length > 0) && (
+                {aiEnabled && (
                   <button
                     className="btn sm"
                     disabled={aiBusy}

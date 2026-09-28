@@ -41,27 +41,28 @@ Küü puts team chat, projects, documents, meetings and company knowledge in one
 | Self-hosting | — | — | — | — | — | — | — | ✅ |
 | Native iOS / Android / desktop apps | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | 🟡 installable web app |
 | Databases with relations and formulas | ✅ | ✅ | 🟡 | ✅ | — | — | 🟡 | ❌ |
-| Whiteboards | 🟡 | ✅ | — | ✅ | — | 🟡 | ✅ | ❌ |
+| Whiteboards | 🟡 | ✅ | — | ✅ | — | 🟡 | ✅ | ✅ *new* |
 | Dashboards with chart widgets | 🟡 | ✅ | ✅ | ✅ | 🟡 | — | 🟡 | ✅ *new* |
-| Real-time co-editing of documents | ✅ | ✅ | — | ✅ | — | ✅ | ✅ | ❌ (versioned) |
+| Real-time co-editing of documents | ✅ | ✅ | — | ✅ | — | ✅ | ✅ | ✅ *new* |
 | Huddles and screen sharing | — | — | — | ✅ | — | ✅ | ✅ | 🟡 via Jitsi |
+| Meeting recording and transcripts | 🟡 (AI notes) | — | — | ✅ | — | ✅ (huddles) | ✅ | ✅ *new* |
 | App marketplace | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ❌ (API and webhooks) |
 
 ## What each tool is known for, and where Küü stands
 
-**Notion.** Pages that nest inside each other, databases with many views, templates, publishing pages to the web, and AI. *Küü now has* nested pages with breadcrumbs and icons, comments, publishing and favorites, plus table and calendar views for tasks. *Still missing:* free-form databases (any fields, relations, formulas) and live co-editing. Küü pages are Markdown with version history instead.
+**Notion.** Pages that nest inside each other, databases with many views, templates, publishing pages to the web, and AI. *Küü now has* nested pages with breadcrumbs and icons, comments, publishing and favorites, plus table and calendar views for tasks. *Now also has* live co-editing: several people type in the same page at once. *Still missing:* free-form databases (any fields, relations, formulas).
 
 **Monday.com.** Colourful boards with custom columns, many views, dashboards, forms, time tracking and automations. *Küü now has* custom fields, table and calendar views, labels, forms that create tasks, and time tracking. Automations and a workload view were already there. *Now also has* dashboards built from chart widgets (numbers, bars, donuts, weekly trends, goal and project progress), where each viewer sees only the work they can open.
 
 **Asana.** Goals linked to projects, portfolios, forms, rules and workload. *Küü now has* goals with key results and sub-goals, linked to projects, and intake forms. *Still missing:* portfolios as their own object. Goals that link several projects, plus project health updates, cover most of what portfolios are used for.
 
-**ClickUp.** "Everything app": tasks with many views, docs, goals, time tracking, whiteboards, chat and forms. *Küü now has* nearly all of it. *Still missing:* whiteboards, and sprint points.
+**ClickUp.** "Everything app": tasks with many views, docs, goals, time tracking, whiteboards, chat and forms. *Küü now has* nearly all of it, including whiteboards. *Still missing:* sprint points.
 
 **Trello.** Simple boards and cards with labels, checklists and Butler automation. Küü covers all of this (board view, labels, checklists, automations) and imports Trello CSV exports.
 
 **Slack.** Channels, threads, huddles, clips, polls, workflows and the broadest app catalogue. *Küü now has* polls, @channel/@here, forwarding and voice notes, alongside threads, reminders, scheduled messages, saved items and urgent messages. *Still missing:* huddles with screen sharing (Küü links to Jitsi meetings), and an app marketplace. The API and webhooks cover custom integrations.
 
-**Microsoft Teams.** Chat, meetings with recording and transcripts, Planner tasks, Loop components and SharePoint files. Küü covers chat, meetings with agendas, notes, decisions and follow-up tasks, projects and files in one place. *Still missing:* built-in recording and transcription, and live co-editing.
+**Microsoft Teams.** Chat, meetings with recording and transcripts, Planner tasks, Loop components and SharePoint files. Küü covers chat, meetings with agendas, notes, decisions and follow-up tasks, projects and files in one place. *Now also has* meeting recording with live captions and searchable transcripts, live co-editing of pages, and whiteboards. *Still missing:* built-in video calls (Küü links to Jitsi or another provider).
 
 ## What Küü does that the others don't
 
@@ -84,10 +85,12 @@ Küü puts team chat, projects, documents, meetings and company knowledge in one
 | Favorites | ☆ on pages, projects, channels and goals; sidebar | All plans |
 | Polls, @channel/@here, forwarding, voice notes | Chat composer and message menu | All plans |
 | Dashboards | **Dashboards** in the sidebar | Standard, Business |
+| Live co-editing of pages | Knowledge page → Edit | All plans |
+| Whiteboards | **Whiteboards** in the sidebar; Project → **Whiteboards** | All plans |
+| Meeting recordings and transcripts | Meeting → **Record** | Standard, Business |
 
 ## Recommended next steps
 
-1. **Real-time co-editing** of knowledge pages.
-2. **Whiteboards** for workshops and planning.
-3. **Native mobile apps** that wrap the web app, for better push and file handling on Android.
-4. **Meeting recording and transcripts**, once a managed video provider is chosen.
+1. **Native mobile apps** that wrap the web app, for better push and file handling on Android.
+2. **Built-in video calls** (instead of linking to Jitsi), once a managed video provider is chosen; recordings would then capture every participant directly.
+3. **Databases** with relations and formulas, for teams that outgrow custom fields.
