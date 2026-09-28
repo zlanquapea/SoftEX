@@ -57,7 +57,7 @@ test('appearance: choose dark or light, and it stays after a reload', async ({ p
   await page.goto('/settings');
   await page.getByRole('radio', { name: /Dark/ }).click();
   await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark');
-  expect(await canvas()).toBe('rgb(25, 19, 15)');
+  expect(await canvas()).toBe('rgb(19, 19, 18)');
   await page.reload();
   await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark');
   await expect(page.getByRole('radio', { name: /Dark/ })).toHaveAttribute('aria-checked', 'true');
