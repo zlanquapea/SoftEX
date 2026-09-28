@@ -9,6 +9,7 @@ import { Empty, ErrorState, Field, Loading, Modal, Tabs, useAction } from '../co
 import { bytes, dateTime, plainMentions, timeAgo } from '../format';
 import { useApi } from '../hooks';
 import { useSession } from '../session';
+import { MediaAttachment, isPlayable } from '../components/Media';
 
 interface PageSummary {
   id: string;
@@ -473,7 +474,7 @@ export function FileView() {
   const { data: projects } = useApi<Project[]>('/projects');
   if (error) return <ErrorState error={error} retry={reload} />;
   if (!file) return <Loading />;
-  const previewable = !file.external_url && file.mime && (file.mime.startsWith('image/') || file.mime.startsWith('text/'));
+  const previewable = !file.external_url && file.mime && (file.mime.startsWith('image/') || file.mime.startsWith('text/') || isPlayable(file.mime));
   const src = `/api/files/${file.id}/download?inline=1`;
   return (
     <div className="page narrow">
@@ -523,7 +524,13 @@ export function FileView() {
         </div>
         {previewable && (
           <div className="file-preview">
-            {file.mime!.startsWith('image/') ? <img src={src} alt={file.name} /> : <iframe src={src} title={`Preview of ${file.name}`} sandbox="" />}
+            {file.mime!.startsWith('image/') ? (
+              <img src={src} alt={file.name} />
+            ) : isPlayable(file.mime) ? (
+              <MediaAttachment file={file} />
+            ) : (
+              <iframe src={src} title={`Preview of ${file.name}`} sandbox="" />
+            )}
           </div>
         )}
       </div>

@@ -171,7 +171,12 @@ export function homeRouter(ctx: Ctx) {
   r.get('/notifications', async (req, res) => {
     const auth = authOf(req);
     const q = parse(
-      z.object({ filter: z.enum(['all', 'unread', 'mentions', 'assigned', 'meetings']).default('all'), before: z.string().optional(), limit: z.coerce.number().int().min(1).max(100).default(50) }),
+      z.object({
+        filter: z.enum(['all', 'unread', 'mentions', 'assigned', 'meetings']).default('all'),
+        kind: z.string().regex(/^[a-z_]{1,30}$/).optional(),
+        before: z.string().optional(),
+        limit: z.coerce.number().int().min(1).max(100).default(50),
+      }),
       req.query,
     );
     const where = ['n.user_id = ?', 'n.workspace_id = ?'];
@@ -180,6 +185,10 @@ export function homeRouter(ctx: Ctx) {
     if (q.filter === 'mentions') where.push(`n.kind IN ('mention', 'dm', 'thread', 'urgent')`);
     if (q.filter === 'assigned') where.push(`n.kind IN ('assigned', 'review', 'handoff', 'status', 'comment')`);
     if (q.filter === 'meetings') where.push(`n.kind = 'meeting'`);
+    if (q.kind) {
+      where.push('n.kind = ?');
+      params.push(q.kind);
+    }
     if (q.before) {
       where.push('n.created_at < ?');
       params.push(q.before);

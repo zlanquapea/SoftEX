@@ -8,7 +8,7 @@ import { plainMentions, timeAgo } from '../format';
 import { useApi, useRealtime } from '../hooks';
 
 type Filter = 'all' | 'unread' | 'mentions' | 'assigned' | 'meetings';
-const KIND_ICON: Record<string, string> = {
+export const KIND_ICON: Record<string, string> = {
   reminder: 'clock',
   billing: 'flag',
   deadline: 'calendar',
@@ -31,11 +31,41 @@ const KIND_ICON: Record<string, string> = {
   file: 'file',
 };
 
+/** Names for notification kinds in the "Last 24 hours" summary: [one, many]. */
+const KIND_LABEL: Record<string, [string, string]> = {
+  reminder: ['reminder', 'reminders'],
+  billing: ['billing notice', 'billing notices'],
+  deadline: ['deadline', 'deadlines'],
+  automation: ['automation', 'automations'],
+  mention: ['mention', 'mentions'],
+  dm: ['direct message', 'direct messages'],
+  thread: ['thread reply', 'thread replies'],
+  urgent: ['urgent message', 'urgent messages'],
+  assigned: ['assignment', 'assignments'],
+  review: ['review request', 'review requests'],
+  handoff: ['handoff', 'handoffs'],
+  status: ['status change', 'status changes'],
+  comment: ['comment', 'comments'],
+  meeting: ['meeting update', 'meeting updates'],
+  request: ['request', 'requests'],
+  announcement: ['announcement', 'announcements'],
+  project: ['project update', 'project updates'],
+  channel: ['channel update', 'channel updates'],
+  page: ['page update', 'page updates'],
+  file: ['file update', 'file updates'],
+};
+const kindLabel = (kind: string, count: number) => {
+  const [one, many] = KIND_LABEL[kind] ?? [kind, kind];
+  return `${count} ${count === 1 ? one : many}`;
+};
+
 export function Inbox() {
   const [filter, setFilter] = useState<Filter>('all');
+  // Set by the "Last 24 hours" pills to show one kind of notification.
+  const [kind, setKind] = useState<string | null>(null);
   const act = useAction();
   const { data, error, reload, setData } = useApi<{ notifications: (Notification & { actor_name: string; actor_color: string })[]; unread: number }>(
-    `/notifications${qs({ filter, limit: 100 })}`,
+    `/notifications${qs({ filter, kind, limit: 100 })}`,
   );
   const { data: digest } = useApi<{ kind: string; count: number; unread: number }[]>('/notifications/digest');
   useRealtime((e) => e.type === 'notification' && reload());
@@ -66,16 +96,36 @@ export function Inbox() {
         <div className="digest" aria-label="Last 24 hours">
           <span className="muted small">Last 24 hours:</span>
           {digest.map((d) => (
-            <span key={d.kind} className="pill">
-              {d.count} {d.kind}
+            <button
+              key={d.kind}
+              type="button"
+              className={`pill pill-button ${kind === d.kind ? 'active' : ''}`}
+              aria-pressed={kind === d.kind}
+              onClick={() => {
+                setKind(kind === d.kind ? null : d.kind);
+                setFilter('all');
+              }}
+            >
+              <Icon name={KIND_ICON[d.kind] ?? 'bell'} size={12} /> {kindLabel(d.kind, d.count)}
               {d.unread ? ` · ${d.unread} new` : ''}
-            </span>
+            </button>
           ))}
         </div>
       )}
+      {kind && (
+        <p className="filter-note">
+          Showing {KIND_LABEL[kind]?.[1] ?? kind} only.{' '}
+          <button type="button" className="link-btn" onClick={() => setKind(null)}>
+            Show everything
+          </button>
+        </p>
+      )}
       <Tabs
         value={filter}
-        onChange={setFilter}
+        onChange={(f) => {
+          setFilter(f);
+          setKind(null);
+        }}
         tabs={[
           { id: 'all', label: 'All' },
           { id: 'unread', label: 'Unread', count: data?.unread },

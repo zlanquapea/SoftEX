@@ -11,8 +11,8 @@ export interface FileStore {
   readonly kind: 'local' | 's3';
   /** Move a finished upload (a temporary local file) into storage under `key`. */
   put(key: string, localPath: string, contentType: string): Promise<void>;
-  /** Open a stored file for reading, or null if it's gone. */
-  open(key: string): Promise<Readable | null>;
+  /** Open a stored file for reading (optionally just bytes start..end, inclusive), or null if it's gone. */
+  open(key: string, range?: { start: number; end: number }): Promise<Readable | null>;
   remove(key: string): Promise<void>;
   /** Stored files whose keys start with `prefix` (used for backups). */
   list(prefix: string): Promise<{ key: string; size: number; modified: string }[]>;
@@ -28,9 +28,9 @@ export class LocalFileStore implements FileStore {
     renameSync(localPath, join(this.dir, key));
   }
 
-  async open(key: string) {
+  async open(key: string, range?: { start: number; end: number }) {
     const path = join(this.dir, key);
-    return existsSync(path) && statSync(path).isFile() ? createReadStream(path) : null;
+    return existsSync(path) && statSync(path).isFile() ? createReadStream(path, range) : null;
   }
 
   async remove(key: string) {
@@ -110,10 +110,12 @@ export class S3FileStore implements FileStore {
     }
   }
 
-  async open(key: string) {
+  async open(key: string, range?: { start: number; end: number }) {
     const { sdk, client } = await this.s3();
     try {
-      const res = await client.send(new sdk.GetObjectCommand({ Bucket: this.settings.bucket, Key: this.key(key) }));
+      const res = await client.send(
+        new sdk.GetObjectCommand({ Bucket: this.settings.bucket, Key: this.key(key), Range: range ? `bytes=${range.start}-${range.end}` : undefined }),
+      );
       return (res.Body as Readable | undefined) ?? null;
     } catch (error) {
       if ((error as { name?: string }).name === 'NoSuchKey') return null;

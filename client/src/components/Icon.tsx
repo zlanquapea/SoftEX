@@ -5,6 +5,7 @@ const PATHS: Record<string, string> = {
   check: 'm5 12 4 4L19 6',
   folder: 'M3 6h7l2 2h9v11H3z',
   book: 'M4 5a3 3 0 0 1 3-3h5v19H7a3 3 0 0 0-3 1zm16 0a3 3 0 0 0-3-3h-5v19h5a3 3 0 0 1 3 1z',
+  play: 'M8 5v14l11-7z',
   video: 'M3 6h13v12H3zM16 10l5-3v10l-5-3z',
   users: 'M9 11a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM3 20v-2a5 5 0 0 1 5-5h2a5 5 0 0 1 5 5v2m1-9a3 3 0 0 0 0-6m2 8a4 4 0 0 1 3 4v3',
   plus: 'M12 5v14M5 12h14',
