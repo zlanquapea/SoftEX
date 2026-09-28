@@ -35,6 +35,22 @@ export function parsePatch<T extends object>(schema: ZodType<T>, value: unknown)
   return Object.fromEntries(Object.entries(parsed).filter(([key]) => sent.has(key))) as Partial<T>;
 }
 
+/**
+ * Does a browser origin match an allowed pattern? Patterns are full origins such as
+ * `https://kuu.example.com`; a `*` matches one run of letters, digits and hyphens, so
+ * `https://my-space-*.app.github.dev` covers every forwarded port of one codespace.
+ */
+export function originAllowed(origin: string, patterns: string[]) {
+  const o = origin.toLowerCase().replace(/\/$/, '');
+  return patterns.some((p) => {
+    const pattern = p.trim().toLowerCase().replace(/\/$/, '');
+    if (!pattern) return false;
+    if (!pattern.includes('*')) return pattern === o;
+    const re = new RegExp(`^${pattern.split('*').map((part) => part.replace(/[.+?^${}()|[\]\\]/g, '\\$&')).join('[a-z0-9-]+')}$`);
+    return re.test(o);
+  });
+}
+
 export function hashPassword(password: string): string {
   const salt = randomBytes(16);
   const hash = scryptSync(password, salt, 64);
