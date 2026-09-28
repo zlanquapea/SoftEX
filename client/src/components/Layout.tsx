@@ -15,6 +15,7 @@ import { clearOfflineData } from '../pwa';
 import { Logo } from './Logo';
 import { setTheme, useTheme } from '../theme';
 import { NotificationsMenu } from './NotificationsMenu';
+import { FavoritesNav } from './Favorites';
 
 interface Shell {
   openTask: (id: string) => void;
@@ -110,6 +111,7 @@ export function Layout({ children }: { children: ReactNode }) {
     { to: '/channels', icon: 'hash', label: 'Channels', badge: channelUnread },
     { to: '/my-work', icon: 'check', label: 'My work', badge: workDue, soft: true },
     { to: '/projects', icon: 'folder', label: 'Projects' },
+    ...(me.role === 'guest' ? [] : [{ to: '/goals', icon: 'target', label: 'Goals' }]),
   ];
   const explore = [
     { to: '/knowledge', icon: 'book', label: 'Knowledge' },
@@ -119,6 +121,7 @@ export function Layout({ children }: { children: ReactNode }) {
     { to: '/requests', icon: 'inboxCheck', label: 'Requests' },
     { to: '/workload', icon: 'board', label: 'Workload' },
     { to: '/later', icon: 'clock', label: 'Later' },
+    { to: '/timesheet', icon: 'calendar', label: 'Timesheet' },
   ];
 
   return (
@@ -181,6 +184,7 @@ export function Layout({ children }: { children: ReactNode }) {
                 {n.badge ? n.soft ? <em>{n.badge}</em> : <b>{n.badge}</b> : null}
               </NavLink>
             ))}
+            <FavoritesNav />
             {joinedChannels.length > 0 && (
               <div className="nav-channels" aria-label="Your channels">
                 <p className="nav-label sub">Your channels</p>

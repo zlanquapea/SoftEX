@@ -1,6 +1,6 @@
 import { useRef, useState, type FormEvent } from 'react';
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
-import { api, qs, type Decision, type Project, type Task, type TaskStatus } from '../api';
+import { api, qs, type Decision, type Label, type Project, type Task, type TaskStatus } from '../api';
 import { useAiEnabled } from '../components/Ai';
 import { Avatar, AvatarStack } from '../components/Avatar';
 import { Icon } from '../components/Icon';
@@ -8,10 +8,14 @@ import { useShell } from '../components/Layout';
 import { Markdown } from '../components/Markdown';
 import { NewMeetingForm, NewTaskForm } from '../components/QuickCreate';
 import { TaskRow } from '../components/TaskDrawer';
+import { TaskCalendar, TaskTable } from '../components/ProjectViews';
+import { FieldsManager, LabelChips, useProjectFields } from '../components/Work';
+import { ProjectForms } from './Forms';
+import { FavoriteButton } from '../components/Favorites';
 import { ProjectAutomations, ProjectTimeline } from './Planning';
 import { UpgradeNotice, usePlan } from '../components/Plan';
 import { Empty, ErrorState, Field, HealthPill, Loading, Modal, PeoplePicker, Tabs, useAction } from '../components/ui';
-import { bytes, dateTime, dueLabel, HEALTH_LABEL, STATUS_LABEL, timeAgo } from '../format';
+import { bytes, dateTime, dueLabel, duration, HEALTH_LABEL, STATUS_LABEL, timeAgo } from '../format';
 import { useApi, useRealtime } from '../hooks';
 import { useSession } from '../session';
 import { CheckinModal } from './Home';
@@ -104,7 +108,7 @@ interface ProjectFull extends Project {
   ai_excluded: boolean;
 }
 
-type Tab = 'overview' | 'tasks' | 'timeline' | 'automations' | 'decisions' | 'risks' | 'resources' | 'checkins' | 'activity';
+type Tab = 'overview' | 'tasks' | 'timeline' | 'automations' | 'forms' | 'time' | 'decisions' | 'risks' | 'resources' | 'checkins' | 'activity';
 
 interface ImportPreview {
   columns: Record<string, string | null>;
@@ -256,6 +260,7 @@ export function ProjectDetail() {
   const { data: project, error, reload } = useApi<ProjectFull>(`/projects/${id}`);
   const [settings, setSettings] = useState(false);
   const [importing, setImporting] = useState(false);
+  const [fieldsOpen, setFieldsOpen] = useState(false);
   const { has } = usePlan();
   useRealtime((e) => e.type === 'task.updated' && e.projectId === id && reload());
 
@@ -272,7 +277,9 @@ export function ProjectDetail() {
           <p className="eyebrow">
             {project.team?.name ?? 'PROJECT'} {project.visibility === 'private' && '· PRIVATE'} {project.archived_at && '· ARCHIVED'}
           </p>
-          <h1>{project.name}</h1>
+          <h1>
+            {project.name} <FavoriteButton kind="project" id={project.id} />
+          </h1>
           <div className="project-meta">
             <HealthPill health={project.health} />
             <span>
@@ -293,6 +300,11 @@ export function ProjectDetail() {
           </button>
         )}
         {project.can_manage && (
+          <button className="btn" onClick={() => setFieldsOpen(true)}>
+            <Icon name="list" size={16} /> Fields
+          </button>
+        )}
+        {project.can_manage && (
           <button className="btn" onClick={() => setSettings(true)}>
             <Icon name="settings" size={16} /> Settings
           </button>
@@ -307,6 +319,8 @@ export function ProjectDetail() {
           { id: 'tasks', label: 'Tasks', count: project.stats.total - project.stats.done },
           { id: 'timeline', label: 'Timeline' },
           { id: 'automations', label: 'Automations' },
+          { id: 'forms', label: 'Forms' },
+          { id: 'time', label: 'Time' },
           { id: 'decisions', label: 'Decisions' },
           { id: 'risks', label: 'Risks' },
           { id: 'resources', label: 'Resources' },
@@ -318,11 +332,14 @@ export function ProjectDetail() {
       {tab === 'tasks' && <ProjectTasks project={project} />}
       {tab === 'timeline' && (has('planning') ? <ProjectTimeline projectId={project.id} milestones={project.milestones} canEdit={project.can_contribute} /> : <UpgradeNotice feature="planning" />)}
       {tab === 'automations' && (has('automations') ? <ProjectAutomations projectId={project.id} /> : <UpgradeNotice feature="automations" />)}
+      {tab === 'forms' && (has('goals') ? <ProjectForms projectId={project.id} canManage={project.can_manage} /> : <UpgradeNotice feature="goals" />)}
+      {tab === 'time' && <ProjectTime projectId={project.id} />}
       {tab === 'decisions' && <ProjectDecisions project={project} />}
       {tab === 'risks' && <Risks project={project} />}
       {tab === 'resources' && <Resources project={project} />}
       {tab === 'checkins' && <Checkins project={project} />}
       {tab === 'activity' && <ProjectActivity projectId={project.id} />}
+      {project.can_manage && <FieldsManager projectId={project.id} open={fieldsOpen} onClose={() => setFieldsOpen(false)} />}
       {project.can_manage && <ProjectSettings open={settings} onClose={() => setSettings(false)} project={project} onSaved={reload} />}
     </div>
   );
@@ -573,26 +590,74 @@ function Members({ project, reload }: { project: ProjectFull; reload: () => void
 }
 
 const COLUMNS: TaskStatus[] = ['todo', 'in_progress', 'blocked', 'review', 'done'];
+type View = 'list' | 'board' | 'table' | 'calendar';
+const VIEWS: View[] = ['list', 'board', 'table', 'calendar'];
+
+/** Hours logged on the project, by person and by task. */
+function ProjectTime({ projectId }: { projectId: string }) {
+  const { data, error, reload } = useApi<{
+    total_minutes: number;
+    by_person: { id: string; name: string; color: string; minutes: number }[];
+    by_task: { id: string; title: string; estimate_hours: number | null; minutes: number }[];
+  }>(`/projects/${projectId}/time`);
+  const { openTask } = useShell();
+  if (error) return <ErrorState error={error} retry={reload} />;
+  if (!data) return <Loading />;
+  if (!data.total_minutes) return <Empty icon="clock" title="No time logged yet">Start a timer or log time from any task in this project.</Empty>;
+  const max = Math.max(...data.by_person.map((p) => p.minutes), 1);
+  return (
+    <div className="grid-2">
+      <section className="card pad">
+        <h3>By person · {duration(data.total_minutes)}</h3>
+        {data.by_person.map((p) => (
+          <div key={p.id} className="bar-row">
+            <Avatar user={p} size="xs" /> <span className="bar-label">{p.name}</span>
+            <span className="bar">
+              <i style={{ width: `${(p.minutes / max) * 100}%` }} />
+            </span>
+            <strong>{duration(p.minutes)}</strong>
+          </div>
+        ))}
+      </section>
+      <section className="card pad">
+        <h3>By task</h3>
+        {data.by_task.map((t) => (
+          <button key={t.id} className="bar-row link-row" onClick={() => openTask(t.id)}>
+            <span className="bar-label grow">{t.title}</span>
+            <strong className={t.estimate_hours && t.minutes > t.estimate_hours * 60 ? 'warn-text' : ''}>
+              {duration(t.minutes)}
+              {t.estimate_hours ? <small className="muted"> / {t.estimate_hours}h</small> : null}
+            </strong>
+          </button>
+        ))}
+      </section>
+    </div>
+  );
+}
 
 function ProjectTasks({ project }: { project: ProjectFull }) {
   const { openTask } = useShell();
   const act = useAction();
-  const [view, setView] = useState<'list' | 'board'>(() => {
+  const [view, setView] = useState<View>(() => {
     try {
-      return (localStorage.getItem('softex.project.view') as 'list' | 'board') ?? 'list';
+      const saved = localStorage.getItem('softex.project.view') as View | null;
+      return saved && VIEWS.includes(saved) ? saved : 'list';
     } catch {
       return 'list';
     }
   });
   const [owner, setOwner] = useState('');
   const [milestone, setMilestone] = useState('');
+  const [label, setLabel] = useState('');
+  const { data: labels } = useApi<Label[]>('/labels');
+  const { data: fields } = useProjectFields(project.id);
   const [adding, setAdding] = useState<TaskStatus | null>(null);
   const [showDone, setShowDone] = useState(false);
   const dragged = useRef<string | null>(null);
-  const { data: tasks, error, reload, setData } = useApi<Task[]>(`/tasks${qs({ projectId: project.id, milestoneId: milestone || undefined })}`);
+  const { data: tasks, error, reload, setData } = useApi<Task[]>(`/tasks${qs({ projectId: project.id, milestoneId: milestone || undefined, labelId: label || undefined })}`);
   useRealtime((e) => e.type === 'task.updated' && e.projectId === project.id && reload());
 
-  const changeView = (v: 'list' | 'board') => {
+  const changeView = (v: View) => {
     setView(v);
     try {
       localStorage.setItem('softex.project.view', v);
@@ -605,6 +670,8 @@ function ProjectTasks({ project }: { project: ProjectFull }) {
     await act(() => api.patch(`/tasks/${taskId}`, { status }));
     reload();
   };
+
+  const replace = (task: Task) => setData(tasks?.map((t) => (t.id === task.id ? task : t)));
 
   if (error) return <ErrorState error={error} retry={reload} />;
   if (!tasks) return <Loading />;
@@ -620,6 +687,12 @@ function ProjectTasks({ project }: { project: ProjectFull }) {
           </button>
           <button className={view === 'board' ? 'active' : ''} onClick={() => changeView('board')}>
             <Icon name="board" size={15} /> Board
+          </button>
+          <button className={view === 'table' ? 'active' : ''} onClick={() => changeView('table')}>
+            <Icon name="table" size={15} /> Table
+          </button>
+          <button className={view === 'calendar' ? 'active' : ''} onClick={() => changeView('calendar')}>
+            <Icon name="calendar" size={15} /> Calendar
           </button>
         </div>
         <select value={owner} onChange={(e) => setOwner(e.target.value)} aria-label="Filter by owner">
@@ -640,6 +713,16 @@ function ProjectTasks({ project }: { project: ProjectFull }) {
             ))}
           </select>
         )}
+        {!!labels?.length && (
+          <select value={label} onChange={(e) => setLabel(e.target.value)} aria-label="Filter by label">
+            <option value="">Any label</option>
+            {labels.map((l) => (
+              <option key={l.id} value={l.id}>
+                {l.name}
+              </option>
+            ))}
+          </select>
+        )}
         {view === 'list' && (
           <label className="check-inline">
             <input type="checkbox" checked={showDone} onChange={(e) => setShowDone(e.target.checked)} /> Show done
@@ -653,7 +736,11 @@ function ProjectTasks({ project }: { project: ProjectFull }) {
         )}
       </div>
 
-      {view === 'list' ? (
+      {view === 'table' ? (
+        <TaskTable tasks={filtered} fields={fields ?? []} canEdit={project.can_contribute} onOpen={openTask} onChanged={replace} />
+      ) : view === 'calendar' ? (
+        <TaskCalendar tasks={filtered} canEdit={project.can_contribute} onOpen={openTask} onChanged={replace} />
+      ) : view === 'list' ? (
         <div className="card">
           {COLUMNS.filter((s) => showDone || s !== 'done').map((status) => {
             const group = filtered.filter((t) => t.status === status);
@@ -709,6 +796,7 @@ function ProjectTasks({ project }: { project: ProjectFull }) {
                   >
                     <strong>{t.title}</strong>
                     {t.status === 'blocked' && t.blocked_reason && <small className="warn-text">{t.blocked_reason}</small>}
+                    <LabelChips labels={t.labels} />
                     <div className="board-card-meta">
                       {t.priority === 'urgent' || t.priority === 'high' ? <span className={`pill prio-${t.priority}`}>{t.priority}</span> : null}
                       {t.due_date && <small className={`due ${t.overdue ? 'overdue' : ''}`}>{dueLabel(t.due_date)}</small>}

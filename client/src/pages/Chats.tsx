@@ -14,6 +14,8 @@ import { useApi, useRealtime } from '../hooks';
 import { realtime } from '../realtime';
 import { useSession } from '../session';
 import { MediaAttachment, VideoLinks, isPlayable } from '../components/Media';
+import { FavoriteButton } from '../components/Favorites';
+import { ForwardModal, ForwardedQuote, PollCard, PollModal, VoiceNoteButton } from '../components/ChatExtras';
 
 const EMOJI = ['👍', '❤️', '🎉', '✅', '👀', '😄', '🙏', '🚀'];
 
@@ -208,6 +210,7 @@ export function ChannelView() {
   const [typing, setTyping] = useState<Record<string, { name: string; at: number }>>({});
   const [taskFrom, setTaskFrom] = useState<Message | null>(null);
   const [decisionFrom, setDecisionFrom] = useState<Message | null>(null);
+  const [forwarding, setForwarding] = useState<Message | null>(null);
   const [meeting, setMeeting] = useState(false);
   const [adding, setAdding] = useState(false);
   const scroller = useRef<HTMLDivElement>(null);
@@ -289,6 +292,7 @@ export function ChannelView() {
   const typingNames = Object.values(typing).map((t) => t.name);
 
   const actions = {
+    forward: (m: Message) => setForwarding(m),
     react: async (m: Message, emoji: string) => act(() => api.post(`/messages/${m.id}/reactions`, { emoji })),
     pin: async (m: Message) => act(() => api.post(`/messages/${m.id}/pin`), m.pinned ? 'Unpinned' : 'Pinned to channel'),
     save: async (m: Message) => {
@@ -325,6 +329,7 @@ export function ChannelView() {
             </div>
           </div>
           <div className="chat-actions">
+            <FavoriteButton kind="channel" id={channel.id} />
             <button className="icon-btn" onClick={() => setPanel(panel === 'members' ? null : 'members')} aria-label="Members" title="Members">
               <Icon name="users" />
               <span className="count">{channel.members.length}</span>
@@ -495,6 +500,7 @@ export function ChannelView() {
           </>
         )}
       </Modal>
+      <ForwardModal message={forwarding} onClose={() => setForwarding(null)} />
       <Modal open={!!decisionFrom} onClose={() => setDecisionFrom(null)} title="Record a decision" eyebrow="DECISION LOG">
         {decisionFrom && <DecisionForm message={decisionFrom} onDone={() => setDecisionFrom(null)} />}
       </Modal>
@@ -646,6 +652,7 @@ function FilesList({ channelId }: { channelId: string }) {
 // ======================= Messages =======================
 
 interface Actions {
+  forward: (m: Message) => void;
   react: (m: Message, emoji: string) => void;
   pin: (m: Message) => void;
   save: (m: Message) => void;
@@ -680,6 +687,8 @@ function MessageItem({
   const [picker, setPicker] = useState(false);
   const [menu, setMenu] = useState(false);
   const [remind, setRemind] = useState(false);
+  const [poll, setPoll] = useState(m.poll ?? null);
+  useEffect(() => setPoll(m.poll ?? null), [m.poll]);
   const mine = m.user?.id === me!.user.id;
   const isAdmin = me!.role === 'admin' || me!.role === 'owner';
   const policy = me!.workspace.message_edit_policy;
@@ -739,6 +748,8 @@ function MessageItem({
               <button className="btn primary sm">Save</button>
             </div>
           </form>
+        ) : poll ? (
+          <PollCard poll={poll} authorId={m.user?.id} onChange={setPoll} />
         ) : (
           m.body && (
             <>
@@ -747,6 +758,7 @@ function MessageItem({
             </>
           )
         )}
+        {m.forwarded && <ForwardedQuote f={m.forwarded} />}
         {m.edited_at && !editing && <small className="muted edited">(edited)</small>}
         {m.files.length > 0 && (
           <div className="attachments">
@@ -833,6 +845,9 @@ function MessageItem({
         )}
         {menu && (
           <div className="popover right" role="menu" onClick={() => setMenu(false)}>
+            <button role="menuitem" onClick={() => actions.forward(m)}>
+              <Icon name="forward" size={15} /> Forward
+            </button>
             <button role="menuitem" onClick={() => actions.decision(m)}>
               <Icon name="gavel" size={15} /> Record decision
             </button>
@@ -850,7 +865,7 @@ function MessageItem({
             <button role="menuitem" onClick={() => navigator.clipboard?.writeText(`${location.origin}/channels/${m.channel_id}?message=${m.parent_id ?? m.id}`)}>
               <Icon name="link" size={15} /> Copy link
             </button>
-            {canEdit && (
+            {canEdit && !poll && (
               <button
                 role="menuitem"
                 onClick={() => {
@@ -927,6 +942,11 @@ function ThreadPanel({
 
 // ======================= Composer =======================
 
+const BROADCASTS = [
+  { id: 'channel', name: 'channel', color: 'gold', hint: 'Notify everyone here' },
+  { id: 'here', name: 'here', color: 'gold', hint: 'Notify people online now' },
+];
+
 function Composer({
   channelId,
   parentId,
@@ -957,6 +977,7 @@ function Composer({
   const [sending, setSending] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [later, setLater] = useState(false);
+  const [polling, setPolling] = useState(false);
   const ref = useRef<HTMLTextAreaElement>(null);
   const fileInput = useRef<HTMLInputElement>(null);
   const lastTyping = useRef(0);
@@ -973,7 +994,10 @@ function Composer({
   const candidates = useMemo(() => {
     if (query === null) return [];
     const pool = [...members, ...people.filter((p) => !members.some((m) => m.id === p.id))];
-    return pool.filter((p) => p.name.toLowerCase().includes(query.toLowerCase())).slice(0, 6);
+    const found = pool.filter((p) => p.name.toLowerCase().includes(query.toLowerCase())).slice(0, 6);
+    // @channel and @here notify everyone in the conversation (everyone, or those online now).
+    const everyone = members.length > 2 ? BROADCASTS.filter((b) => b.name.startsWith(query.toLowerCase())) : [];
+    return [...found, ...everyone].slice(0, 7);
   }, [query, members, people]);
 
   const onChange = (value: string) => {
@@ -991,7 +1015,7 @@ function Composer({
     const caret = ref.current?.selectionStart ?? text.length;
     const before = text.slice(0, caret).replace(/@([\w.-]*)$/, `@${p.name} `);
     setText(before + text.slice(caret));
-    setMentions((m) => ({ ...m, [p.name]: p.id }));
+    if (!BROADCASTS.some((b) => b.id === p.id)) setMentions((m) => ({ ...m, [p.name]: p.id }));
     setQuery(null);
     window.setTimeout(() => ref.current?.focus(), 0);
   };
@@ -1051,7 +1075,15 @@ function Composer({
         <div className="mention-menu" role="listbox" aria-label="Mention someone">
           {candidates.map((p) => (
             <button key={p.id} role="option" aria-selected={false} onMouseDown={(e) => (e.preventDefault(), pick(p))}>
-              <Avatar user={p} size="xs" /> {p.name}
+              {'hint' in p ? (
+                <>
+                  <Icon name="megaphone" size={14} /> @{p.name} <small className="muted">{String(p.hint)}</small>
+                </>
+              ) : (
+                <>
+                  <Avatar user={p} size="xs" /> {p.name}
+                </>
+              )}
             </button>
           ))}
         </div>
@@ -1108,6 +1140,10 @@ function Composer({
           <Icon name="paperclip" size={16} />
         </button>
         <input ref={fileInput} type="file" hidden onChange={(e) => e.target.files?.[0] && (upload(e.target.files[0]), (e.target.value = ''))} />
+        <VoiceNoteButton onRecorded={upload} disabled={uploading} />
+        <button className="icon-btn xs" onClick={() => setPolling(true)} aria-label="Create a poll" title="Create a poll">
+          <Icon name="poll" size={16} />
+        </button>
         <button className="icon-btn xs" onClick={() => onChange(`${text}${text && !text.endsWith(' ') ? ' ' : ''}@`)} aria-label="Mention someone" title="Mention">
           @
         </button>
@@ -1129,6 +1165,7 @@ function Composer({
         </button>
       </div>
       <WhenModal open={later} onClose={() => setLater(false)} eyebrow="SEND LATER" title="Schedule this message" confirmLabel="Schedule" onPick={schedule} />
+      <PollModal open={polling} onClose={() => setPolling(false)} channelId={channelId} parentId={parentId} onSent={onSent} />
     </div>
   );
 }

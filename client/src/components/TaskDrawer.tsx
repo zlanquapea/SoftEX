@@ -10,6 +10,7 @@ import { RemindButton } from './Later';
 import { Markdown } from './Markdown';
 import { NewTaskForm } from './QuickCreate';
 import { ErrorState, Loading, StatusPill, useAction } from './ui';
+import { LabelChips, LabelPicker, TaskFieldRows, TimeTracker } from './Work';
 
 /** Side drawer wrapper around TaskDetail, opened from any list. */
 export function TaskDrawer({ taskId, onClose }: { taskId: string | null; onClose: () => void }) {
@@ -220,6 +221,11 @@ export function TaskDetail({ taskId, onDeleted }: { taskId: string; onDeleted?: 
             </dd>
           </>
         )}
+        <dt>Labels</dt>
+        <dd>
+          <LabelPicker taskId={task.id} value={task.labels ?? []} disabled={disabled} onChange={(labels) => setData({ ...task, labels })} />
+        </dd>
+        <TaskFieldRows taskId={task.id} projectId={task.project?.id} values={task.fields ?? {}} disabled={disabled} onChange={(fields) => setData({ ...task, fields })} />
         <dt>Repeats</dt>
         <dd>
           <select value={task.recurrence ?? ''} disabled={disabled} onChange={(e) => update({ recurrence: e.target.value || null })} aria-label="Repeats">
@@ -423,6 +429,8 @@ export function TaskDetail({ taskId, onDeleted }: { taskId: string; onDeleted?: 
         )}
       </section>
 
+      <TimeTracker taskId={task.id} estimateHours={task.estimate_hours} canLog={!disabled} />
+
       <section className="detail-section">
         <div className="section-title">
           <h3>Attachments</h3>
@@ -535,6 +543,7 @@ export function TaskRow({ task, onOpen, onToggle, showProject = true }: { task: 
         <small>
           {showProject && (task.project ? <><span className={`project-dot bg-${task.project.color}`} />{task.project.name}</> : 'Personal')}
           {task.status !== 'todo' && task.status !== 'done' && <StatusPill status={task.status} />}
+          <LabelChips labels={task.labels} />
           {task.priority === 'urgent' || task.priority === 'high' ? <span className={`pill prio-${task.priority}`}>{task.priority}</span> : null}
           {task.checklist.total > 0 && (
             <span className="meta">
