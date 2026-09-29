@@ -63,7 +63,9 @@ npm run seed            # creates a demo "Acme Studio" workspace (add -- --reset
 npm run dev             # API on :4000, web app on http://localhost:5173
 ```
 
-**GitHub Codespaces:** open the repository in a codespace and it installs, seeds the demo and runs `npm run dev` for you; the app opens on the forwarded port 5173. Küü recognises the codespace's `*.app.github.dev` addresses automatically. Behind any other proxy or tunnel (Gitpod, ngrok, a reverse proxy), set `SOFTEX_PUBLIC_URL` to the address people use, or list extra addresses in `SOFTEX_ALLOWED_ORIGINS`; otherwise changes are refused with *Cross-origin request rejected*.
+**GitHub Codespaces:** open the repository in a codespace and it installs, seeds the demo and runs `npm run dev` for you; the app opens on the forwarded port 5173. Codespaces run in hosted mode (`SOFTEX_MODE=saas`), like the production service, so signed-out visitors see the website and the demo workspace is on its Business trial. Küü recognises the codespace's `*.app.github.dev` addresses automatically. Behind any other proxy or tunnel (Gitpod, ngrok, a reverse proxy), set `SOFTEX_PUBLIC_URL` to the address people use, or list extra addresses in `SOFTEX_ALLOWED_ORIGINS`; otherwise changes are refused with *Cross-origin request rejected*.
+
+The product website (landing page) shows at `/` for signed-out visitors on hosted servers (`SOFTEX_MODE=saas`); self-hosted servers go straight to sign-in. You can preview it on any server, signed in or not, at **`/welcome`**. If you switch an existing database to hosted mode, run `npm run seed -- --reset` so the demo workspace gets its trial.
 
 Demo accounts (password `softex-demo`): `alex@acme.test` (owner), `leo@acme.test` (admin), `maya@acme.test` (lead), `jordan@acme.test`, `nina@acme.test`, and `casey@northwind.test` (a guest who can only see one shared channel). You can also register a new workspace from the sign-in page.
 

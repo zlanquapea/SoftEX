@@ -1,10 +1,19 @@
 {
   "name": "Küü",
   "image": "mcr.microsoft.com/devcontainers/typescript-node:1-22-bookworm",
-  "forwardPorts": [5173, 4000],
+  "forwardPorts": [
+    5173,
+    4000
+  ],
   "portsAttributes": {
-    "5173": { "label": "Küü (open this)", "onAutoForward": "openBrowser" },
-    "4000": { "label": "Küü API", "onAutoForward": "silent" }
+    "5173": {
+      "label": "Küü (open this)",
+      "onAutoForward": "openBrowser"
+    },
+    "4000": {
+      "label": "Küü API",
+      "onAutoForward": "silent"
+    }
   },
   "postCreateCommand": "npm ci && npm run seed",
   "postAttachCommand": {
@@ -12,10 +21,18 @@
   },
   "customizations": {
     "vscode": {
-      "extensions": ["dbaeumer.vscode-eslint", "esbenp.prettier-vscode"]
+      "extensions": [
+        "dbaeumer.vscode-eslint",
+        "esbenp.prettier-vscode"
+      ]
     },
     "codespaces": {
-      "openFiles": ["README.md"]
+      "openFiles": [
+        "README.md"
+      ]
     }
+  },
+  "containerEnv": {
+    "SOFTEX_MODE": "saas"
   }
 }
