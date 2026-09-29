@@ -20,7 +20,7 @@ export const FEATURE_LABEL: Record<Feature, string> = {
   recordings: 'Meeting recordings and transcripts',
 };
 
-const BUSINESS_ONLY: Feature[] = ['ai', 'sso', 'scim', 'retention'];
+const ORGANIZATION_ONLY: Feature[] = ['ai', 'sso', 'scim', 'retention'];
 
 /** Plan helpers: which features this workspace has, and whether plans apply at all. */
 export function usePlan() {
@@ -43,7 +43,7 @@ export const lrd = (n: number, rate: number | null | undefined) => (rate ? `≈ 
 /** Shown in place of a feature the workspace's plan doesn't include. */
 export function UpgradeNotice({ feature, compact = false }: { feature: Feature; compact?: boolean }) {
   const { can } = useSession();
-  const plan = BUSINESS_ONLY.includes(feature) ? 'Business' : 'Standard';
+  const plan = ORGANIZATION_ONLY.includes(feature) ? 'Organization' : 'Team';
   return (
     <div className={`upgrade-notice ${compact ? 'compact' : ''}`} role="note">
       <span className="upgrade-icon">
@@ -93,7 +93,7 @@ export function AccountBanners() {
       const days = daysUntil(plan.trial_ends_at);
       banners.push(
         <div className="banner" key="trial">
-          <Icon name="clock" size={15} /> {days <= 1 ? 'Your Business trial ends today.' : `${days} days left in your Business trial.`} Choose a plan to keep every feature.
+          <Icon name="clock" size={15} /> {days <= 1 ? 'Your Organization trial ends today.' : `${days} days left in your Organization trial.`} Choose a plan to keep every feature.
           <Link to="/admin?tab=billing">See plans</Link>
         </div>,
       );
@@ -110,27 +110,57 @@ export function AccountBanners() {
   return <>{banners}</>;
 }
 
+const storage = (gb: number) => (gb >= 1024 ? `${gb / 1024} TB` : `${gb} GB`);
+
+/** A plan's price line: flat per workspace, free, or by quote. */
+export function PlanPrice({ plan }: { plan: PublicPlan }) {
+  return (
+    <p className="plan-price">
+      {plan.price == null ? (
+        <strong>Custom quote</strong>
+      ) : plan.price ? (
+        <>
+          <strong>{usd(plan.price)}</strong> <span className="muted">per workspace / month</span>
+        </>
+      ) : (
+        <>
+          <strong>$0</strong> <span className="muted">forever</span>
+        </>
+      )}
+    </p>
+  );
+}
+
 export function PlanFeatures({ plan, all }: { plan: PublicPlan; all: Feature[] }) {
+  const has = (f: Feature) => plan.features.includes(f);
   return (
     <ul className="plan-features">
       <li>
-        <Icon name="check" size={14} /> {plan.member_limit ? `Up to ${plan.member_limit} members` : 'Unlimited members'}
+        <Icon name="check" size={14} /> {plan.member_limit ? `Up to ${plan.member_limit} members` : 'More than 50 members'}
       </li>
       <li>
-        <Icon name="check" size={14} />{' '}
-        {plan.storage_per_member_gb ? `${plan.storage_base_gb} GB + ${plan.storage_per_member_gb} GB per member` : `${plan.storage_base_gb} GB file storage`}
+        <Icon name="check" size={14} /> {storage(plan.storage_gb)} storage
       </li>
       <li>
-        <Icon name="check" size={14} /> Chat, channels, tasks, projects, knowledge, meetings and decisions
+        <Icon name="check" size={14} /> Projects, tasks, messaging, file sharing, knowledge and meetings
       </li>
       {all.map((f) => (
-        <li key={f} className={plan.features.includes(f) ? '' : 'off'}>
-          <Icon name={plan.features.includes(f) ? 'check' : 'x'} size={14} /> {FEATURE_LABEL[f]}
-          {f === 'ai' && plan.ai_per_member ? ` (${plan.ai_per_member} requests per member each month)` : ''}
+        <li key={f} className={has(f) ? '' : 'off'}>
+          <Icon name={has(f) ? 'check' : 'x'} size={14} /> {FEATURE_LABEL[f]}
+          {f === 'recordings' && has(f) ? (plan.recording_hours == null ? ' (unlimited)' : ` (${plan.recording_hours} hours a month)`) : ''}
+          {f === 'ai' && has(f) && plan.ai_per_month ? ` (${plan.ai_per_month.toLocaleString()} requests a month)` : ''}
         </li>
       ))}
+      <li className={plan.priority_support ? '' : 'off'}>
+        <Icon name={plan.priority_support ? 'check' : 'x'} size={14} /> Priority support
+      </li>
     </ul>
   );
+}
+
+/** How to get a plan that can't be bought in the app (Enterprise). */
+export function contactHref(supportEmail: string | null | undefined, planName: string) {
+  return supportEmail ? `mailto:${supportEmail}?subject=${encodeURIComponent(`Küü ${planName} quote`)}` : null;
 }
 
 export const FEATURE_ORDER: Feature[] = ['planning', 'fields', 'goals', 'recordings', 'automations', 'guests', 'insights', 'api', 'ai', 'sso', 'scim', 'retention'];

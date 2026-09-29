@@ -12,10 +12,12 @@ test('sign up on a hosted server: trial, pricing and billing', async ({ page }) 
   await expect(page.getByRole('heading', { level: 1, name: 'Privacy Policy' })).toBeVisible();
   await page.goto('/pricing');
   await expect(page.getByRole('heading', { name: /priced for Liberia/ })).toBeVisible();
-  await expect(page.getByText('$1.50')).toBeVisible();
+  // One flat price per workspace; larger organisations get a quote.
+  await expect(page.getByText('$25', { exact: true })).toBeVisible();
+  await expect(page.getByText('Custom quote', { exact: true })).toBeVisible();
 
   await page.getByRole('link', { name: 'Start free trial' }).first().click();
-  await expect(page.getByText(/30-day free trial of Business/)).toBeVisible();
+  await expect(page.getByText(/14-day free trial of Organization/)).toBeVisible();
   await page.getByLabel('Your name').fill('Musu Kollie');
   await page.getByLabel('Work email').fill(`musu-${run}@example.com`);
   await page.getByLabel('Password').fill('password123');
@@ -28,9 +30,10 @@ test('sign up on a hosted server: trial, pricing and billing', async ({ page }) 
   await expect(page.getByText(/Please confirm your email address/)).toBeVisible();
 
   await page.goto('/admin?tab=billing');
-  await expect(page.getByRole('heading', { name: /Business trial/ })).toBeVisible();
-  await expect(page.getByText(/30 days left/)).toBeVisible();
-  await page.getByRole('button', { name: 'Choose Standard' }).click();
+  await expect(page.getByRole('heading', { name: /Organization trial/ })).toBeVisible();
+  await expect(page.getByText(/Organization trial — 14 days left/)).toBeVisible();
+  await page.getByRole('button', { name: 'Choose Team' }).click();
+  await expect(page.getByText('One price for the whole workspace, up to 25 members.', { exact: false })).toBeVisible();
   await expect(page.getByText('Send to Orange Money 0770 000 000')).toBeVisible();
   // Payments need a confirmed email address.
   await expect(page.getByRole('button', { name: 'Submit payment' })).toBeDisabled();

@@ -235,6 +235,7 @@ export function workspaceRouter(ctx: Ctx) {
     if (req.params.userId === auth.userId && body.deactivated) throw badRequest('You cannot deactivate yourself');
     if (body.deactivated === false && target.deactivated_at) await requireMemberCapacity(ctx, auth.workspaceId, 1, body.role ?? target.role);
     else if (body.role === 'guest' && target.role !== 'guest') await requireMemberCapacity(ctx, auth.workspaceId, 0, 'guest');
+    else if (body.role && body.role !== 'guest' && target.role === 'guest' && !target.deactivated_at) await requireMemberCapacity(ctx, auth.workspaceId, 1, body.role);
     const role = body.role as Role | undefined;
     const changes: Record<string, unknown> = {};
     if (role) changes.role = role;

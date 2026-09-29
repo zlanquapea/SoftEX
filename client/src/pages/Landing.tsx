@@ -16,11 +16,11 @@ const FEATURES: { icon: string; title: string; text: string }[] = [
 ];
 
 const FAQ: [string, string][] = [
-  ['Do I need a card to start?', 'No. Create a workspace and you get the Business plan free for 30 days. Afterwards you can stay on the Free plan for as long as you like, or choose a paid plan.'],
+  ['Do I need a card to start?', 'No. Create a workspace and you get the Organization plan free for 14 days. Afterwards you can stay on the Free plan (up to 5 members) for as long as you like, or choose a paid plan.'],
   ['How do we pay?', 'An admin chooses a plan in the app, pays with Orange Money, MTN Mobile Money or bank transfer, and enters the transaction ID. Your plan starts as soon as the payment is confirmed.'],
   ['Does it work on phones and slow connections?', 'Yes. Küü works in any modern browser and installs on Android and iPhone home screens like an app. Pages are kept small, and recently viewed information stays readable when your connection drops.'],
   ['Who owns our data?', 'You do. Admins can export everything at any time, and owners can delete the workspace permanently. See the Privacy Policy for the details.'],
-  ['Can we invite people from outside our company?', 'Yes. On paid plans, guests see only the channels and projects you share with them, and their access expires automatically. Guests are free.'],
+  ['Can we invite people from outside our company?', 'Yes. On the Team plan and above, guests see only the channels and projects you share with them, and their access expires automatically. Guests don’t count toward your member limit.'],
   ['What happens if we stop paying?', 'After a short grace period your workspace moves to the Free plan. Nothing is deleted; paid features pause until you pay again.'],
 ];
 
@@ -84,8 +84,7 @@ function AppPreview() {
 /** Public home page for the hosted service. */
 export function Landing() {
   const { data } = usePublicPricing();
-  const standard = data?.plans.find((p) => p.id === 'standard');
-  const business = data?.plans.find((p) => p.id === 'business');
+  const teaser = (['starter', 'team', 'organization'] as const).map((id) => data?.plans.find((p) => p.id === id));
   return (
     <PublicPage title="Küü — work moves forward together">
       <section className="hero">
@@ -98,7 +97,7 @@ export function Landing() {
           </p>
           <div className="row-gap wrap">
             <Link className="btn primary lg" to="/register">
-              Start your free 30-day trial
+              Start your free {data?.trial_days ?? 14}-day trial
             </Link>
             <Link className="btn lg" to="/pricing">
               See pricing
@@ -181,7 +180,7 @@ export function Landing() {
           <li>
             <b>1</b>
             <h3>Create your workspace</h3>
-            <p className="muted">Sign up with your email. You get every Business feature free for 30 days.</p>
+            <p className="muted">Sign up with your email. You get every Organization feature free for 14 days.</p>
           </li>
           <li>
             <b>2</b>
@@ -196,36 +195,26 @@ export function Landing() {
         </ol>
       </section>
 
-      {standard && business && (
+      {teaser.every(Boolean) && (
         <section className="public-section price-teaser">
-          <h2 className="center">Simple pricing, per member</h2>
+          <h2 className="center">One flat price per workspace</h2>
+          <p className="center muted">Free for up to 5 members. New workspaces try every Organization feature free for {data?.trial_days} days.</p>
           <div className="teaser-grid">
-            <div className="card">
-              <h3>Free</h3>
-              <p className="plan-price">
-                <strong>$0</strong> <span className="muted">forever</span>
-              </p>
-              <p className="muted">Up to 10 members with chat, tasks, projects, knowledge and meetings.</p>
-            </div>
-            <div className="card">
-              <h3>Standard</h3>
-              <p className="plan-price">
-                <strong>{usd(standard.price)}</strong> <span className="muted">per member / month</span>
-              </p>
-              <p className="muted small">{lrd(standard.price, data?.lrd_per_usd)}</p>
-              <p className="muted">Unlimited members, timelines, workload, automations, guests and insights.</p>
-            </div>
-            <div className="card featured">
-              <h3>Business</h3>
-              <p className="plan-price">
-                <strong>{usd(business.price)}</strong> <span className="muted">per member / month</span>
-              </p>
-              <p className="muted small">{lrd(business.price, data?.lrd_per_usd)}</p>
-              <p className="muted">Everything in Standard plus AI, single sign-on and compliance controls.</p>
-            </div>
+            {teaser.map((p) => (
+              <div key={p!.id} className={`card ${p!.id === 'team' ? 'featured' : ''}`}>
+                <h3>{p!.name}</h3>
+                <p className="plan-price">
+                  <strong>{usd(p!.price ?? 0)}</strong> <span className="muted">per workspace / month</span>
+                </p>
+                <p className="muted small">
+                  Up to {p!.member_limit} members {lrd(p!.price ?? 0, data?.lrd_per_usd)}
+                </p>
+                <p className="muted">{p!.tagline}</p>
+              </div>
+            ))}
           </div>
           <p className="center">
-            <Link to="/pricing">Compare plans in detail →</Link>
+            More than 50 people? We'll quote for you. <Link to="/pricing">Compare plans in detail →</Link>
           </p>
         </section>
       )}
@@ -242,7 +231,7 @@ export function Landing() {
 
       <section className="final-cta">
         <h2>Give your team one place to work.</h2>
-        <p>Free for 30 days. Free forever for small teams.</p>
+        <p>Free for {data?.trial_days ?? 14} days. Free forever for teams of up to 5.</p>
         <Link className="btn lg" to="/register">
           Create your workspace
         </Link>

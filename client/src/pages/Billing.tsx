@@ -1,14 +1,12 @@
 import { useState } from 'react';
-import { api, type Feature, type PublicPlan } from '../api';
+import { api, type Feature, type PlanId, type PublicPlan } from '../api';
 import { Icon } from '../components/Icon';
 import { Markdown } from '../components/Markdown';
-import { FEATURE_ORDER, PlanFeatures, daysUntil, lrd, usd } from '../components/Plan';
+import { FEATURE_ORDER, PlanFeatures, PlanPrice, contactHref, daysUntil, lrd, usd } from '../components/Plan';
 import { ErrorState, Field, Loading, Modal, useAction } from '../components/ui';
 import { bytes, dateTime } from '../format';
 import { useApi } from '../hooks';
 import { useSession } from '../session';
-
-type PlanId = 'free' | 'standard' | 'business';
 
 interface Payment {
   id: string;
@@ -36,7 +34,17 @@ interface BillingData {
     paid_through: string | null;
     features: Feature[];
   };
-  usage: { members: number; member_limit: number | null; seats: number; storage_bytes: number; storage_limit: number | null; ai_used: number; ai_limit: number | null };
+  usage: {
+    members: number;
+    member_limit: number | null;
+    guests: number;
+    storage_bytes: number;
+    storage_limit: number | null;
+    ai_used: number;
+    ai_limit: number | null;
+    recording_seconds: number;
+    recording_hours: number | null;
+  };
   plans: PublicPlan[];
   lrd_per_usd: number | null;
   annual_factor: number;
@@ -50,8 +58,10 @@ interface BillingData {
 
 const STATUS_TEXT: Record<Payment['status'], string> = { pending: 'Waiting for confirmation', approved: 'Confirmed', rejected: 'Not confirmed', cancelled: 'Cancelled' };
 
-export const totalFor = (price: number, seats: number, months: number, annualFactor: number) =>
-  Math.round(price * seats * months * (months >= 12 ? annualFactor : 1) * 100) / 100;
+/** A flat price per workspace; paying for 12 months at once applies the annual discount. */
+export const totalFor = (price: number, months: number, annualFactor: number) => Math.round(price * months * (months >= 12 ? annualFactor : 1) * 100) / 100;
+
+const hours = (seconds: number) => `${Math.round((seconds / 3600) * 10) / 10} h`;
 
 function Meter({ label, used, limit, format = String }: { label: string; used: number; limit: number | null; format?: (n: number) => string }) {
   const pct = limit ? Math.min(100, Math.round((used / limit) * 100)) : 0;
@@ -83,7 +93,7 @@ export function BillingSettings() {
 
   const statusLine =
     plan.status === 'trial'
-      ? `Business trial — ${daysUntil(plan.trial_ends_at)} days left (ends ${plan.trial_ends_at?.slice(0, 10)}). If you don't choose a plan, you move to Free and keep all your data.`
+      ? `Organization trial — ${daysUntil(plan.trial_ends_at)} days left (ends ${plan.trial_ends_at?.slice(0, 10)}). If you don't choose a plan, you move to Free and keep all your data.`
       : plan.status === 'active'
         ? `Paid until ${plan.paid_through?.slice(0, 10)}.`
         : plan.status === 'grace'
@@ -108,8 +118,9 @@ export function BillingSettings() {
           )}
         </div>
         <div className="meters">
-          <Meter label="Members" used={usage.members} limit={usage.member_limit} />
+          <Meter label={usage.guests ? `Members (plus ${usage.guests} guest${usage.guests === 1 ? '' : 's'}, who don't count)` : 'Members'} used={usage.members} limit={usage.member_limit} />
           <Meter label="File storage" used={usage.storage_bytes} limit={usage.storage_limit} format={(n) => bytes(n)} />
+          {!!usage.recording_hours && <Meter label="Meeting recording this month" used={usage.recording_seconds} limit={usage.recording_hours * 3600} format={hours} />}
           {!!usage.ai_limit && <Meter label={plan.status === 'trial' ? 'AI requests during trial' : 'AI requests this month'} used={usage.ai_used} limit={usage.ai_limit} />}
         </div>
       </div>
@@ -117,37 +128,36 @@ export function BillingSettings() {
       <div className="plan-grid">
         {data.plans.map((p) => {
           const current = plan.status !== 'trial' && plan.id === p.id;
-          const monthly = p.price * usage.seats;
+          const tooSmall = p.member_limit != null && usage.members > p.member_limit;
+          const contact = contactHref(data.support_email, p.name);
           return (
-            <div key={p.id} className={`card plan-card ${p.id === 'business' ? 'featured' : ''} ${current ? 'current' : ''}`}>
-              {p.id === 'business' && <span className="plan-badge">Includes AI</span>}
+            <div key={p.id} className={`card plan-card ${p.id === 'organization' ? 'featured' : ''} ${current ? 'current' : ''}`}>
+              {p.id === 'organization' && <span className="plan-badge">Includes AI</span>}
               <h3>{p.name}</h3>
-              <p className="plan-price">
-                {p.price ? (
-                  <>
-                    <strong>{usd(p.price)}</strong> <span className="muted">per member / month</span>
-                  </>
-                ) : (
-                  <>
-                    <strong>$0</strong> <span className="muted">forever</span>
-                  </>
-                )}
-              </p>
-              {p.price > 0 && (
-                <p className="muted small">
-                  {usd(monthly)} a month for your {usage.seats} member{usage.seats === 1 ? '' : 's'} {lrd(monthly, data.lrd_per_usd)}
-                </p>
-              )}
+              <PlanPrice plan={p} />
+              {!!p.price && <p className="muted small">{lrd(p.price, data.lrd_per_usd) || 'Paid monthly or yearly'}</p>}
               <p className="muted">{p.tagline}</p>
               <PlanFeatures plan={p} all={FEATURE_ORDER} />
               {current ? (
                 <button className="btn" disabled>
                   Current plan
                 </button>
-              ) : p.price > 0 ? (
-                <button className={`btn ${p.id === 'business' ? 'primary' : ''}`} onClick={() => setPaying(p.id)}>
+              ) : p.self_serve && tooSmall ? (
+                <p className="muted small">
+                  Your workspace has {usage.members} members; {p.name} allows up to {p.member_limit}.
+                </p>
+              ) : p.self_serve ? (
+                <button className={`btn ${p.id === 'organization' ? 'primary' : ''}`} onClick={() => setPaying(p.id)}>
                   Choose {p.name}
                 </button>
+              ) : p.price == null ? (
+                contact ? (
+                  <a className="btn" href={contact}>
+                    Contact us for a quote
+                  </a>
+                ) : (
+                  <p className="muted small">Contact us for a quote.</p>
+                )
               ) : (
                 <p className="muted small">Workspaces move here automatically when a trial or paid plan ends.</p>
               )}
@@ -178,7 +188,7 @@ export function BillingSettings() {
                   <tr key={p.id}>
                     <td>{dateTime(p.created_at)}</td>
                     <td>
-                      {p.plan} · {p.months} mo · {p.seats} members
+                      {data.plans.find((x) => x.id === p.plan)?.name ?? p.plan} · {p.months} mo
                     </td>
                     <td>{usd(p.amount)}</td>
                     <td>{p.method_label}</td>
@@ -218,7 +228,7 @@ export function BillingSettings() {
 function PayModal({ data, plan, onClose, onDone }: { data: BillingData; plan: PlanId | null; onClose: () => void; onDone: () => void }) {
   const { me } = useSession();
   const act = useAction();
-  const [form, setForm] = useState({ plan: plan ?? 'standard', months: 1, method: data.methods[0]?.id ?? 'orange_money', reference: '', payerName: '', payerPhone: '', note: '' });
+  const [form, setForm] = useState({ plan: plan ?? 'team', months: 1, method: data.methods[0]?.id ?? 'orange_money', reference: '', payerName: '', payerPhone: '', note: '' });
   const [done, setDone] = useState(false);
   const [lastPlan, setLastPlan] = useState(plan);
   if (plan !== lastPlan) {
@@ -227,7 +237,7 @@ function PayModal({ data, plan, onClose, onDone }: { data: BillingData; plan: Pl
     if (plan) setForm((f) => ({ ...f, plan, reference: '' }));
   }
   const chosen = data.plans.find((p) => p.id === form.plan)!;
-  const total = chosen ? totalFor(chosen.price, data.usage.seats, form.months, data.annual_factor) : 0;
+  const total = chosen ? totalFor(chosen.price ?? 0, form.months, data.annual_factor) : 0;
   const switching = data.plan.status === 'active' && data.plan.purchased !== form.plan;
 
   return (
@@ -258,10 +268,10 @@ function PayModal({ data, plan, onClose, onDone }: { data: BillingData; plan: Pl
             <Field label="Plan">
               <select value={form.plan} onChange={(e) => setForm({ ...form, plan: e.target.value as PlanId })}>
                 {data.plans
-                  .filter((p) => p.price > 0)
+                  .filter((p) => p.self_serve && (p.member_limit == null || data.usage.members <= p.member_limit))
                   .map((p) => (
                     <option key={p.id} value={p.id}>
-                      {p.name} — {usd(p.price)} per member / month
+                      {p.name} — {usd(p.price ?? 0)} per workspace / month
                     </option>
                   ))}
               </select>
@@ -278,9 +288,9 @@ function PayModal({ data, plan, onClose, onDone }: { data: BillingData; plan: Pl
           </div>
           <div className="pay-total">
             <span className="grow">
-              {data.usage.seats} member{data.usage.seats === 1 ? '' : 's'} × {usd(chosen.price)} × {form.months} month{form.months === 1 ? '' : 's'}
+              {usd(chosen.price ?? 0)} × {form.months} month{form.months === 1 ? '' : 's'}
               {form.months >= 12 ? ' − 2 months free' : ''}
-              <small className="muted block">Guests are free. Members added later are billed at your next renewal.</small>
+              <small className="muted block">One price for the whole workspace, up to {chosen.member_limit} members. Guests don't count.</small>
             </span>
             <strong>
               {usd(total)} <small className="muted">{lrd(total, data.lrd_per_usd)}</small>

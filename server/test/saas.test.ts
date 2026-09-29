@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import type { AppOptions } from '../src/app.js';
+import { DATA_MIGRATIONS } from '../src/db.js';
 import { processBillingNotices } from '../src/routes/billing.js';
 import { totp } from '../src/totp.js';
 import { flushJobs, invite, registerOwner, setup, type TestEnv } from './helpers.js';
@@ -48,14 +49,14 @@ async function operator() {
 const endTrial = async (workspaceId: string) => await db().run('UPDATE workspaces SET trial_ends_at = ? WHERE id = ?', iso(-1), workspaceId);
 
 describe('sign-up on a hosted server', () => {
-  it('starts a 30-day Business trial and asks for email confirmation', async () => {
+  it('starts a 14-day Organization trial and asks for email confirmation', async () => {
     env = saas();
     const owner = await registerOwner(env);
     expect(owner.me.mode).toBe('saas');
     expect(owner.me.user.email_verified).toBe(false);
-    expect(owner.me.workspace.plan).toMatchObject({ id: 'business', status: 'trial' });
+    expect(owner.me.workspace.plan).toMatchObject({ id: 'organization', status: 'trial', member_limit: 50, priority_support: true });
     const days = (new Date(owner.me.workspace.plan.trial_ends_at).getTime() - Date.now()) / DAY;
-    expect(Math.round(days)).toBe(30);
+    expect(Math.round(days)).toBe(14);
 
     // Unconfirmed accounts can use the workspace but can't invite people or use AI.
     const blocked = await owner.agent.post('/api/admin/invitations').send({ email: 'a@example.com' });
@@ -102,15 +103,15 @@ describe('sign-up on a hosted server', () => {
 });
 
 describe('plan limits', () => {
-  it('keeps the Free plan to 10 members and core features', async () => {
+  it('keeps the Free plan to 5 members and core features', async () => {
     env = saas();
     const owner = await verifiedOwner();
     const wsId = owner.me.workspace.id;
     await endTrial(wsId);
     expect((await owner.agent.get('/api/me')).body.workspace.plan).toMatchObject({ id: 'free', status: 'free', features: [] });
 
-    for (let i = 0; i < 9; i++) await invite(env, owner.agent);
-    const full = await owner.agent.post('/api/admin/invitations').send({ email: 'eleventh@example.com' });
+    for (let i = 0; i < 4; i++) await invite(env, owner.agent);
+    const full = await owner.agent.post('/api/admin/invitations').send({ email: 'sixth@example.com' });
     expect(full.status).toBe(402);
     expect(full.body.details).toMatchObject({ code: 'plan_limit', limit: 'members' });
 
@@ -193,20 +194,25 @@ describe('paying with mobile money', () => {
     const billing = (await owner.agent.get('/api/billing')).body;
     expect(billing.instructions).toContain('Orange Money');
     expect(billing.lrd_per_usd).toBe(190);
-    expect(billing.usage).toMatchObject({ members: 3, seats: 2 });
-    expect(billing.plans.map((p: { id: string; price: number }) => [p.id, p.price])).toEqual([
-      ['free', 0],
-      ['standard', 1.5],
-      ['business', 3],
+    // Guests don't count toward the member limit.
+    expect(billing.usage).toMatchObject({ members: 2, guests: 1, member_limit: 50 });
+    expect(billing.plans.map((p: { id: string; price: number | null; member_limit: number | null }) => [p.id, p.price, p.member_limit])).toEqual([
+      ['free', 0, 5],
+      ['starter', 10, 10],
+      ['team', 25, 25],
+      ['organization', 60, 50],
+      ['enterprise', null, null],
     ]);
+    // Enterprise is arranged with the operator, not paid from the billing screen.
+    expect((await owner.agent.post('/api/billing/payments').send({ plan: 'enterprise', months: 1, method: 'bank', reference: 'ENT-1' })).status).toBe(400);
 
     const submitted = await owner.agent
       .post('/api/billing/payments')
-      .send({ plan: 'business', months: 12, method: 'orange_money', reference: 'OM240925.1234', payerPhone: '0770000001' });
+      .send({ plan: 'organization', months: 12, method: 'orange_money', reference: 'OM240925.1234', payerPhone: '0770000001' });
     expect(submitted.status).toBe(201);
-    // 2 billable members (guests are free) × $3 × 12 months, with two months free.
-    expect(submitted.body).toMatchObject({ status: 'pending', seats: 2, amount: 60 });
-    expect((await owner.agent.post('/api/billing/payments').send({ plan: 'business', months: 1, method: 'orange_money', reference: 'OM240925.1234' })).status).toBe(400);
+    // A flat $60 a month for the workspace, whatever its size, with two months free for a year.
+    expect(submitted.body).toMatchObject({ status: 'pending', seats: 2, amount: 600 });
+    expect((await owner.agent.post('/api/billing/payments').send({ plan: 'organization', months: 1, method: 'orange_money', reference: 'OM240925.1234' })).status).toBe(400);
     await flushJobs(env);
     expect(env.sent.some((m) => m.to === 'ops@softex.test' && m.subject.includes('Payment to confirm'))).toBe(true);
 
@@ -220,7 +226,7 @@ describe('paying with mobile money', () => {
     const approved = await ops.post(`/api/operator/payments/${pending[0].id}/approve`).send({ note: 'Seen on statement' });
     expect(approved.status).toBe(200);
     const plan = (await owner.agent.get('/api/me')).body.workspace.plan;
-    expect(plan).toMatchObject({ id: 'business', status: 'active' });
+    expect(plan).toMatchObject({ id: 'organization', status: 'active' });
     expect(Math.round((new Date(plan.paid_through).getTime() - Date.now()) / DAY)).toBeGreaterThanOrEqual(365);
     await flushJobs(env);
     expect(env.sent.some((m) => m.to === owner.email && m.subject.startsWith('Payment received'))).toBe(true);
@@ -228,13 +234,14 @@ describe('paying with mobile money', () => {
 
     // Renewing the same plan extends from the end of the paid period.
     const before = new Date(plan.paid_through).getTime();
-    const renewal = (await owner.agent.post('/api/billing/payments').send({ plan: 'business', months: 1, method: 'mtn_momo', reference: 'MP240925.9' })).body;
+    const renewal = (await owner.agent.post('/api/billing/payments').send({ plan: 'organization', months: 1, method: 'mtn_momo', reference: 'MP240925.9' })).body;
     await ops.post(`/api/operator/payments/${renewal.id}/approve`).send({});
     const after = new Date((await owner.agent.get('/api/me')).body.workspace.plan.paid_through).getTime();
     expect(Math.round((after - before) / DAY)).toBeGreaterThanOrEqual(28);
 
     const summary = (await ops.get('/api/operator/summary')).body;
-    expect(summary.revenue_30d).toBe(66);
+    expect(summary.revenue_30d).toBe(660);
+    expect(summary.mrr).toBe(60);
     expect(summary.workspaces.active).toBe(1);
     const events = (await ops.get('/api/operator/events')).body.map((e: { action: string }) => e.action);
     expect(events).toContain('payment.approved');
@@ -242,10 +249,46 @@ describe('paying with mobile money', () => {
     expect(wsId).toBeTruthy();
   });
 
+  it('refuses a plan the workspace has outgrown, and limits recording hours', async () => {
+    env = saas();
+    const owner = await verifiedOwner();
+    const wsId = owner.me.workspace.id;
+    for (let i = 0; i < 10; i++) await invite(env, owner.agent);
+    const tooSmall = await owner.agent.post('/api/billing/payments').send({ plan: 'starter', months: 1, method: 'bank', reference: 'BANK-S1' });
+    expect([tooSmall.status, tooSmall.body.error]).toEqual([400, expect.stringContaining('Starter allows up to 10 members and this workspace has 11')]);
+    expect((await owner.agent.post('/api/billing/payments').send({ plan: 'team', months: 1, method: 'bank', reference: 'BANK-T1' })).status).toBe(201);
+
+    // A workspace over its plan's limit keeps everyone, but can't add members or turn a guest into one.
+    const general = (await owner.agent.get('/api/channels')).body.find((c: { name: string }) => c.name === 'general');
+    const guest = await invite(env, owner.agent, 'guest', { channelIds: [general.id] });
+    await db().run(`UPDATE workspaces SET plan = 'starter', paid_through = ? WHERE id = ?`, iso(30), wsId);
+    expect((await owner.agent.post('/api/admin/invitations').send({ email: 'twelfth@example.com' })).status).toBe(402);
+    const promote = await owner.agent.patch(`/api/admin/members/${guest.id}`).send({ role: 'member' });
+    expect([promote.status, promote.body.details?.limit]).toEqual([402, 'members']);
+
+    // Team includes 20 hours of meeting recording a month.
+    await db().run(`UPDATE workspaces SET plan = 'team', paid_through = ? WHERE id = ?`, iso(30), wsId);
+    const meeting = (await owner.agent.post('/api/meetings').send({ title: 'Sync', startsAt: iso(1) })).body;
+    const record = () => owner.agent.post(`/api/meetings/${meeting.id}/recordings`).send({ consent: true });
+    const first = (await record()).body;
+    await db().run('UPDATE meeting_recordings SET duration_sec = ? WHERE id = ?', 20 * 3600, first.id);
+    expect((await owner.agent.get('/api/billing')).body.usage).toMatchObject({ recording_seconds: 20 * 3600, recording_hours: 20 });
+    const over = await record();
+    expect([over.status, over.body.details.limit]).toEqual([402, 'recordings']);
+  });
+
+  it('moves workspaces on the old Standard and Business plans to Team and Organization', async () => {
+    env = saas();
+    const owner = await verifiedOwner();
+    await db().run(`UPDATE workspaces SET plan = 'business', paid_through = ? WHERE id = ?`, iso(30), owner.me.workspace.id);
+    for (const sql of DATA_MIGRATIONS) await db().run(sql);
+    expect((await owner.agent.get('/api/me')).body.workspace.plan).toMatchObject({ id: 'organization', status: 'active' });
+  });
+
   it('tells the admin when a payment is rejected', async () => {
     env = saas();
     const owner = await verifiedOwner();
-    const p = (await owner.agent.post('/api/billing/payments').send({ plan: 'standard', months: 1, method: 'bank', reference: 'BANK-001' })).body;
+    const p = (await owner.agent.post('/api/billing/payments').send({ plan: 'team', months: 1, method: 'bank', reference: 'BANK-001' })).body;
     const ops = await operator();
     expect((await ops.post(`/api/operator/payments/${p.id}/reject`).send({ reason: 'No payment with this reference' })).status).toBe(200);
     const payments = (await owner.agent.get('/api/billing')).body.payments;
@@ -257,8 +300,8 @@ describe('paying with mobile money', () => {
     env = saas();
     const owner = await verifiedOwner();
     const wsId = owner.me.workspace.id;
-    await db().run(`UPDATE workspaces SET plan = 'standard', paid_through = ?, trial_ends_at = ? WHERE id = ?`, iso(-3), iso(-40), wsId);
-    expect((await owner.agent.get('/api/me')).body.workspace.plan).toMatchObject({ id: 'standard', status: 'grace' });
+    await db().run(`UPDATE workspaces SET plan = 'team', paid_through = ?, trial_ends_at = ? WHERE id = ?`, iso(-3), iso(-40), wsId);
+    expect((await owner.agent.get('/api/me')).body.workspace.plan).toMatchObject({ id: 'team', status: 'grace' });
     expect((await owner.agent.get('/api/workload')).status).toBe(200);
     await db().run('UPDATE workspaces SET paid_through = ? WHERE id = ?', iso(-8), wsId);
     expect((await owner.agent.get('/api/me')).body.workspace.plan).toMatchObject({ id: 'free', status: 'free' });
@@ -313,9 +356,9 @@ describe('operator console', () => {
     expect((await env.agent().post('/api/auth/login').send({ email: owner.email, password: 'password123' })).status).toBe(200);
 
     // Operators can also extend a trial or grant a plan by hand.
-    await ops.patch(`/api/operator/workspaces/${list[0].id}`).send({ plan: 'standard', paidThrough: iso(30) });
+    await ops.patch(`/api/operator/workspaces/${list[0].id}`).send({ plan: 'enterprise', paidThrough: iso(30) });
     expect((await member.agent.post('/api/auth/login').send({ email: member.email, password: 'password123' })).body.workspace.plan).toMatchObject({
-      id: 'standard',
+      id: 'enterprise',
       status: 'active',
     });
   });
@@ -323,11 +366,15 @@ describe('operator console', () => {
 
 describe('public pricing', () => {
   it('lists plans without signing in', async () => {
-    env = saas({ billing: { priceStandard: 1, priceBusiness: 2.5 } });
+    env = saas({ billing: { priceStarter: 8, priceTeam: 20, priceOrganization: 50 } });
     const res = await env.agent().get('/api/public/plans');
     expect(res.status).toBe(200);
-    expect(res.body).toMatchObject({ mode: 'saas', currency: 'USD', trial_days: 30, lrd_per_usd: 190 });
-    expect(res.body.plans.find((p: { id: string }) => p.id === 'business')).toMatchObject({ price: 2.5, features: expect.arrayContaining(['ai', 'sso']) });
-    expect(res.body.plans.find((p: { id: string }) => p.id === 'standard').features).not.toContain('ai');
+    expect(res.body).toMatchObject({ mode: 'saas', currency: 'USD', trial_days: 14, lrd_per_usd: 190 });
+    const plan = (id: string) => res.body.plans.find((p: { id: string }) => p.id === id);
+    expect(plan('starter')).toMatchObject({ price: 8, member_limit: 10, features: [] });
+    expect(plan('team')).toMatchObject({ price: 20, member_limit: 25, recording_hours: 20, features: expect.arrayContaining(['insights', 'recordings']) });
+    expect(plan('team').features).not.toContain('ai');
+    expect(plan('organization')).toMatchObject({ price: 50, member_limit: 50, priority_support: true, features: expect.arrayContaining(['ai', 'sso', 'scim']) });
+    expect(plan('enterprise')).toMatchObject({ price: null, member_limit: null, self_serve: false });
   });
 });

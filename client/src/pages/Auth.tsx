@@ -153,7 +153,7 @@ export function Register() {
       subtitle={
         pricing?.mode === 'saas' ? (
           <>
-            Start a {pricing.trial_days}-day free trial of Business — no payment needed. Afterwards, keep a free plan or <Link to="/pricing">choose a plan</Link>.
+            Start a {pricing.trial_days}-day free trial of Organization — no payment needed. Afterwards, keep a free plan or <Link to="/pricing">choose a plan</Link>.
           </>
         ) : (
           'You will be the workspace owner. Invite your team next.'

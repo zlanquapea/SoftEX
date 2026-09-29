@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { api, type Feature, type PublicPlan } from '../api';
 import { Icon } from '../components/Icon';
-import { FEATURE_ORDER, PlanFeatures, lrd, usd } from '../components/Plan';
+import { FEATURE_ORDER, PlanFeatures, PlanPrice, contactHref, lrd, usd } from '../components/Plan';
 import { Loading } from '../components/ui';
 import { useApi } from '../hooks';
 import { useSession } from '../session';
@@ -28,43 +28,43 @@ export function Pricing() {
   const { me } = useSession();
   const { data } = usePublicPricing();
   if (!data) return <Loading />;
-  const perYear = (p: PublicPlan) => p.price * 12 * data.annual_factor;
+  const perYear = (p: PublicPlan) => (p.price ?? 0) * 12 * data.annual_factor;
   const body = (
     <>
       <section className="pricing-hero">
         <p className="eyebrow">PRICING</p>
         <h1>Everything your team needs, priced for Liberia</h1>
         <p className="muted">
-          Chat, projects, knowledge and meetings in one place. Start with a {data.trial_days}-day free trial of Business — no payment needed — and keep a free plan forever.
-          Pay monthly or yearly with Orange Money, MTN Mobile Money or bank transfer.
+          Chat, projects, knowledge and meetings in one place. One flat price per workspace, not per person. Start with a {data.trial_days}-day free trial of Organization — no payment
+          needed — and keep a free plan for up to 5 members forever. Pay monthly or yearly with Orange Money, MTN Mobile Money or bank transfer.
         </p>
       </section>
       <div className="plan-grid">
         {data.plans.map((p) => (
-          <div key={p.id} className={`card plan-card ${p.id === 'business' ? 'featured' : ''}`}>
-            {p.id === 'business' && <span className="plan-badge">Includes AI</span>}
+          <div key={p.id} className={`card plan-card ${p.id === 'organization' ? 'featured' : ''}`}>
+            {p.id === 'organization' && <span className="plan-badge">Includes AI</span>}
             <h3>{p.name}</h3>
-            <p className="plan-price">
-              {p.price ? (
-                <>
-                  <strong>{usd(p.price)}</strong> <span className="muted">per member / month</span>
-                </>
-              ) : (
-                <>
-                  <strong>$0</strong> <span className="muted">forever</span>
-                </>
-              )}
-            </p>
+            <PlanPrice plan={p} />
             <p className="muted small">
-              {p.price ? `${lrd(p.price, data.lrd_per_usd)}${data.lrd_per_usd ? ' · ' : ''}${usd(perYear(p))} per member / year when paid yearly` : 'Free forever'}
+              {p.price == null
+                ? 'Based on usage, onboarding and support needs'
+                : p.price
+                  ? `${lrd(p.price, data.lrd_per_usd)}${data.lrd_per_usd ? ' · ' : ''}${usd(perYear(p))} a year when paid yearly`
+                  : 'Free forever'}
             </p>
             <p className="muted">{p.tagline}</p>
             <PlanFeatures plan={p} all={FEATURE_ORDER as Feature[]} />
-            {!me && (
-              <Link className={`btn block ${p.id === 'business' ? 'primary' : ''}`} to="/register">
-                {p.price ? 'Start free trial' : 'Get started free'}
-              </Link>
-            )}
+            {p.price == null
+              ? contactHref(data.support_email, p.name) && (
+                  <a className="btn block" href={contactHref(data.support_email, p.name)!}>
+                    Contact us
+                  </a>
+                )
+              : !me && (
+                  <Link className={`btn block ${p.id === 'organization' ? 'primary' : ''}`} to="/register">
+                    {p.price ? 'Start free trial' : 'Get started free'}
+                  </Link>
+                )}
           </div>
         ))}
       </div>
@@ -82,8 +82,25 @@ export function Pricing() {
           </p>
         </details>
         <details>
-          <summary>Who counts as a member?</summary>
-          <p>Everyone in your workspace except guests. Guests (clients and partners you share specific channels or projects with) are free on paid plans.</p>
+          <summary>Is the price per person?</summary>
+          <p>
+            No. Each plan is one flat monthly price for the whole workspace, up to its member limit. Guests (clients and partners you share specific channels or
+            projects with) don't count toward the limit.
+          </p>
+        </details>
+        <details>
+          <summary>We have more than 50 people.</summary>
+          <p>
+            Larger organisations get a custom quote based on usage, onboarding and support needs.
+            {data.support_email ? (
+              <>
+                {' '}
+                Email <a href={`mailto:${data.support_email}`}>{data.support_email}</a> to talk it through.
+              </>
+            ) : (
+              ' Contact us to talk it through.'
+            )}
+          </p>
         </details>
         <details>
           <summary>Can I leave at any time?</summary>

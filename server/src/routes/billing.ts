@@ -7,9 +7,9 @@ import { queueEmail } from '../mailer.js';
 import {
   GRACE_DAYS,
   TERMS_VERSION,
+  activeGuestCount,
   activeMemberCount,
   aiUsedThisMonth,
-  billableSeats,
   effectivePlan,
   isOperator,
   isSaas,
@@ -17,7 +17,9 @@ import {
   planCatalog,
   priceFor,
   publicPlans,
+  recordingSecondsThisMonth,
   requireVerifiedEmail,
+  SELF_SERVE_PLANS,
   storageUsed,
   type PlanId,
 } from '../plans.js';
@@ -105,11 +107,13 @@ async function usage(ctx: Ctx, workspaceId: string) {
   return {
     members: await activeMemberCount(ctx.db, workspaceId),
     member_limit: plan.member_limit,
-    seats: await billableSeats(ctx.db, workspaceId),
+    guests: await activeGuestCount(ctx.db, workspaceId),
     storage_bytes: await storageUsed(ctx.db, workspaceId),
     storage_limit: plan.storage_limit,
     ai_used: await aiUsedThisMonth(ctx.db, workspaceId, plan.status === 'trial' ? new Date(0).toISOString() : monthStart()),
     ai_limit: plan.features.includes('ai') ? plan.ai_limit : 0,
+    recording_seconds: await recordingSecondsThisMonth(ctx.db, workspaceId),
+    recording_hours: plan.features.includes('recordings') ? plan.recording_hours : 0,
   };
 }
 
@@ -176,7 +180,7 @@ export function billingRouter(ctx: Ctx) {
     await requireVerifiedEmail(ctx, auth);
     const body = parse(
       z.object({
-        plan: z.enum(['standard', 'business']),
+        plan: z.enum(SELF_SERVE_PLANS),
         months: z.number().int().refine((m) => (MONTH_OPTIONS as readonly number[]).includes(m), 'months must be 1, 3, 6 or 12'),
         method: z.enum(Object.keys(PAYMENT_METHODS) as [keyof typeof PAYMENT_METHODS]),
         reference: z.string().trim().min(3).max(100),
@@ -191,8 +195,12 @@ export function billingRouter(ctx: Ctx) {
     if (await db.get(`SELECT 1 FROM payments WHERE reference = ? AND method = ? AND status IN ('pending', 'approved')`, body.reference, body.method)) {
       throw badRequest('A payment with this transaction reference has already been submitted');
     }
-    const seats = await billableSeats(db, auth.workspaceId);
-    const amount = priceFor(ctx, body.plan, seats, body.months);
+    const chosen = planCatalog(ctx.config.billing)[body.plan];
+    const members = await activeMemberCount(db, auth.workspaceId);
+    if (chosen.memberLimit != null && members > chosen.memberLimit) {
+      throw badRequest(`${chosen.name} allows up to ${chosen.memberLimit} members and this workspace has ${members}. Choose a larger plan, or remove members first.`);
+    }
+    const amount = priceFor(ctx, body.plan, body.months);
     const id = newId();
     await db.insert('payments', {
       id,
@@ -200,7 +208,7 @@ export function billingRouter(ctx: Ctx) {
       submitted_by: auth.userId,
       plan: body.plan,
       months: body.months,
-      seats,
+      seats: members, // recorded for reference; the price is per workspace, not per member
       amount,
       method: body.method,
       reference: body.reference,
@@ -217,7 +225,7 @@ export function billingRouter(ctx: Ctx) {
         kind: 'operator_payment',
         to: email,
         subject: `Payment to confirm: ${ws.name} — ${money(amount)}`,
-        text: `${ws.name} submitted a ${PAYMENT_METHODS[body.method]} payment of ${money(amount)} for ${body.months} month(s) of ${body.plan} (${seats} member${seats === 1 ? '' : 's'}).\n\nReference: ${body.reference}${body.payerPhone ? `\nPhone: ${body.payerPhone}` : ''}${body.payerName ? `\nName: ${body.payerName}` : ''}\n\nCheck it arrived, then approve or reject it in the operator console.`,
+        text: `${ws.name} submitted a ${PAYMENT_METHODS[body.method]} payment of ${money(amount)} for ${body.months} month(s) of ${chosen.name} (${members} member${members === 1 ? '' : 's'}).\n\nReference: ${body.reference}${body.payerPhone ? `\nPhone: ${body.payerPhone}` : ''}${body.payerName ? `\nName: ${body.payerName}` : ''}\n\nCheck it arrived, then approve or reject it in the operator console.`,
         action: { label: 'Open operator console', url: `${ctx.config.publicUrl}/operator` },
       });
     }
@@ -290,7 +298,7 @@ export function operatorRouter(ctx: Ctx) {
       }
       const plan = await effectivePlan(ctx, ws);
       if (plan.status === 'trial' || plan.status === 'active' || plan.status === 'grace' || plan.status === 'free') counts[plan.status] += 1;
-      if (plan.status === 'active' && plan.id !== 'unlimited') mrr += catalog[plan.id].price * await billableSeats(db, ws.id);
+      if (plan.status === 'active' && plan.id !== 'unlimited') mrr += catalog[plan.id].price ?? 0;
     }
     const since = new Date(Date.now() - 7 * 86_400_000).toISOString();
     res.json({
@@ -333,7 +341,7 @@ export function operatorRouter(ctx: Ctx) {
     if (!ws) throw notFound('Workspace');
     const body = parse(
       z.object({
-        plan: z.enum(['free', 'standard', 'business']).optional(),
+        plan: z.enum(['free', 'starter', 'team', 'organization', 'enterprise']).optional(),
         paidThrough: z.string().datetime().nullable().optional(),
         trialEndsAt: z.string().datetime().nullable().optional(),
         suspended: z.boolean().optional(),
@@ -495,8 +503,8 @@ export async function processBillingNotices(ctx: Ctx, at = new Date()) {
     if (plan.status === 'trial' && ws.trial_ends_at) {
       const left = days(ws.trial_ends_at);
       const end = ws.trial_ends_at.slice(0, 10);
-      if (left <= 1) await notice('trial_1', ws.trial_ends_at, `Your Küü trial ends tomorrow`, `The Business trial for ${ws.name} ends on ${end}. Choose a plan to keep AI, automations, timelines and more. If you do nothing, ${ws.name} moves to the Free plan and nothing is deleted.`);
-      else if (left <= 7) await notice('trial_7', ws.trial_ends_at, `Your Küü trial ends in ${Math.ceil(left)} days`, `The Business trial for ${ws.name} ends on ${end}. Choose a plan any time from Administration → Billing. If you do nothing, ${ws.name} moves to the Free plan and nothing is deleted.`);
+      if (left <= 1) await notice('trial_1', ws.trial_ends_at, `Your Küü trial ends tomorrow`, `The Organization trial for ${ws.name} ends on ${end}. Choose a plan to keep reporting, automations, AI and more. If you do nothing, ${ws.name} moves to the Free plan and nothing is deleted.`);
+      else if (left <= 7) await notice('trial_7', ws.trial_ends_at, `Your Küü trial ends in ${Math.ceil(left)} days`, `The Organization trial for ${ws.name} ends on ${end}. Choose a plan any time from Administration → Billing. If you do nothing, ${ws.name} moves to the Free plan and nothing is deleted.`);
     } else if (plan.status === 'active' && ws.paid_through) {
       const left = days(ws.paid_through);
       if (left <= 7) await notice('renew_7', ws.paid_through, `Time to renew Küü for ${ws.name}`, `${ws.name}'s ${plan.name} plan is paid until ${ws.paid_through.slice(0, 10)}. Renew from Administration → Billing to avoid interruption.`);

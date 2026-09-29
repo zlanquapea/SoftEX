@@ -6,20 +6,27 @@ import { HttpError } from './util.js';
  * Plans, trials and usage limits for hosted (SaaS) deployments.
  *
  * Self-hosted servers (the default) run everything without limits. With
- * SOFTEX_MODE=saas every workspace gets a plan:
+ * SOFTEX_MODE=saas every workspace gets a plan. Paid plans have a flat monthly
+ * price per workspace, whatever the number of members up to the plan's limit:
  *
- * - Free: permanent, up to 10 members, core collaboration only.
- * - Standard: paid per member, adds planning, automations, guests, API and insights.
- * - Business: paid per member, adds AI, single sign-on, SCIM and retention controls.
+ * - Free: permanent, up to 5 members, core collaboration only.
+ * - Starter: up to 10 members; projects, tasks, messaging and file sharing.
+ * - Team: up to 25 members; adds reporting, planning, automations, guests, API,
+ *   meeting recordings, and more storage.
+ * - Organization: up to 50 members; adds AI, single sign-on, SCIM, retention
+ *   controls and priority support.
+ * - Enterprise: above 50 members, priced by quote and set up by the operator.
  *
- * New workspaces start with a Business trial. When a trial or paid period ends
- * the workspace falls back to Free: nothing is deleted, but Free limits apply.
+ * New workspaces start with an Organization trial. When a trial or paid period
+ * ends the workspace falls back to Free: nothing is deleted, but Free limits apply.
  */
 
 /** Bump when the terms of service or privacy policy change materially; recorded on each acceptance. */
-export const TERMS_VERSION = '2026-09-25';
+export const TERMS_VERSION = '2026-09-29';
 
-export type PlanId = 'free' | 'standard' | 'business';
+export type PlanId = 'free' | 'starter' | 'team' | 'organization' | 'enterprise';
+/** Plans a workspace admin can pay for themselves; Enterprise is arranged with the operator. */
+export const SELF_SERVE_PLANS = ['starter', 'team', 'organization'] as const;
 export type Feature = 'ai' | 'automations' | 'planning' | 'fields' | 'goals' | 'recordings' | 'insights' | 'guests' | 'api' | 'sso' | 'scim' | 'retention';
 
 export const FEATURE_LABEL: Record<Feature, string> = {
@@ -40,15 +47,19 @@ export const FEATURE_LABEL: Record<Feature, string> = {
 export interface PlanDefinition {
   id: PlanId;
   name: string;
-  /** Price per member per month in USD. */
-  price: number;
+  /** Price per workspace per month in USD; null means priced by quote. */
+  price: number | null;
   /** Maximum active members (guests count too); null means unlimited. */
   memberLimit: number | null;
-  /** Storage allowance: a fixed base plus an amount per member, in bytes. */
-  storageBase: number;
-  storagePerMember: number;
-  /** AI requests per member per month. */
-  aiPerMember: number;
+  /** File and recording storage for the whole workspace, in bytes. */
+  storage: number;
+  /** AI requests per month for the whole workspace. */
+  aiPerMonth: number;
+  /** Hours of meeting recording per month; null means unlimited. */
+  recordingHours: number | null;
+  prioritySupport: boolean;
+  /** Can a workspace admin pay for it from the billing screen? */
+  selfServe: boolean;
   features: Feature[];
   tagline: string;
 }
@@ -56,8 +67,9 @@ export interface PlanDefinition {
 const GB = 1024 ** 3;
 
 export interface BillingConfig {
-  priceStandard: number;
-  priceBusiness: number;
+  priceStarter: number;
+  priceTeam: number;
+  priceOrganization: number;
   trialDays: number;
   /** AI requests a trial workspace may make in total, to limit abuse of free trials. */
   trialAiRequests: number;
@@ -68,42 +80,82 @@ export interface BillingConfig {
   supportEmail?: string;
 }
 
+const TEAM_FEATURES: Feature[] = ['automations', 'planning', 'fields', 'goals', 'recordings', 'insights', 'guests', 'api'];
+const ORGANIZATION_FEATURES: Feature[] = [...TEAM_FEATURES, 'ai', 'sso', 'scim', 'retention'];
+
 export function planCatalog(billing: BillingConfig): Record<PlanId, PlanDefinition> {
   return {
     free: {
       id: 'free',
       name: 'Free',
       price: 0,
-      memberLimit: 10,
-      storageBase: 2 * GB,
-      storagePerMember: 0,
-      aiPerMember: 0,
+      memberLimit: 5,
+      storage: 2 * GB,
+      aiPerMonth: 0,
+      recordingHours: 0,
+      prioritySupport: false,
+      selfServe: false,
       features: [],
-      tagline: 'For small teams getting started. Free forever.',
+      tagline: 'For very small teams getting started.',
     },
-    standard: {
-      id: 'standard',
-      name: 'Standard',
-      price: billing.priceStandard,
-      memberLimit: null,
-      storageBase: 10 * GB,
-      storagePerMember: 5 * GB,
-      aiPerMember: 0,
-      features: ['automations', 'planning', 'fields', 'goals', 'recordings', 'insights', 'guests', 'api'],
-      tagline: 'For growing teams that plan and track work together.',
+    starter: {
+      id: 'starter',
+      name: 'Starter',
+      price: billing.priceStarter,
+      memberLimit: 10,
+      storage: 20 * GB,
+      aiPerMonth: 0,
+      recordingHours: 0,
+      prioritySupport: false,
+      selfServe: true,
+      features: [],
+      tagline: 'Projects, tasks, messaging and file sharing for small teams.',
     },
-    business: {
-      id: 'business',
-      name: 'Business',
-      price: billing.priceBusiness,
+    team: {
+      id: 'team',
+      name: 'Team',
+      price: billing.priceTeam,
+      memberLimit: 25,
+      storage: 100 * GB,
+      aiPerMonth: 0,
+      recordingHours: 20,
+      prioritySupport: false,
+      selfServe: true,
+      features: TEAM_FEATURES,
+      tagline: 'Everything in Starter, plus reporting, planning, automations and meeting recordings.',
+    },
+    organization: {
+      id: 'organization',
+      name: 'Organization',
+      price: billing.priceOrganization,
+      memberLimit: 50,
+      storage: 250 * GB,
+      aiPerMonth: 1000,
+      recordingHours: 60,
+      prioritySupport: true,
+      selfServe: true,
+      features: ORGANIZATION_FEATURES,
+      tagline: 'Everything in Team, plus AI, advanced administration and priority support.',
+    },
+    enterprise: {
+      id: 'enterprise',
+      name: 'Enterprise',
+      price: null,
       memberLimit: null,
-      storageBase: 20 * GB,
-      storagePerMember: 10 * GB,
-      aiPerMember: 50,
-      features: ['automations', 'planning', 'fields', 'goals', 'recordings', 'insights', 'guests', 'api', 'ai', 'sso', 'scim', 'retention'],
-      tagline: 'For organisations that need AI, single sign-on and compliance controls.',
+      storage: 1024 * GB,
+      aiPerMonth: 5000,
+      recordingHours: null,
+      prioritySupport: true,
+      selfServe: false,
+      features: ORGANIZATION_FEATURES,
+      tagline: 'For organisations above 50 members. Priced on usage, onboarding and support needs.',
     },
   };
+}
+
+/** The cheapest plan that includes a feature, for upgrade messages. */
+export function planWith(billing: BillingConfig, feature: Feature) {
+  return Object.values(planCatalog(billing)).find((p) => p.selfServe && p.features.includes(feature))?.name ?? 'Organization';
 }
 
 export type PlanStatus = 'self_hosted' | 'trial' | 'active' | 'grace' | 'free';
@@ -120,6 +172,9 @@ export interface EffectivePlan {
   member_limit: number | null;
   storage_limit: number | null;
   ai_limit: number | null;
+  /** Hours of meeting recording per month; null means unlimited. */
+  recording_hours: number | null;
+  priority_support: boolean;
 }
 
 /** Days after a paid period ends during which paid features keep working. */
@@ -132,21 +187,19 @@ export const isSaas = (ctx: Ctx) => ctx.config.mode === 'saas';
 /** People who run the service (SOFTEX_OPERATOR_EMAILS). Only meaningful in SaaS mode. */
 export const isOperator = (ctx: Ctx, email: string | undefined) => isSaas(ctx) && !!email && ctx.config.operatorEmails.includes(email.toLowerCase());
 
+/** Active members who count toward the plan's member limit. Guests don't. */
 export async function activeMemberCount(db: Database, workspaceId: string) {
+  return (await db.get(`SELECT COUNT(*) AS n FROM memberships WHERE workspace_id = ? AND deactivated_at IS NULL AND role != 'guest'`, workspaceId))!.n as number;
+}
+
+/** Guests whose access hasn't expired. */
+export async function activeGuestCount(db: Database, workspaceId: string) {
   return (await db.get(
-    `SELECT COUNT(*) AS n FROM memberships WHERE workspace_id = ? AND deactivated_at IS NULL
+    `SELECT COUNT(*) AS n FROM memberships WHERE workspace_id = ? AND deactivated_at IS NULL AND role = 'guest'
        AND (guest_expires_at IS NULL OR guest_expires_at > ?)`,
     workspaceId,
     new Date().toISOString(),
   ))!.n as number;
-}
-
-/** Members who are billed: everyone active except guests. */
-export async function billableSeats(db: Database, workspaceId: string) {
-  return Math.max(
-    1,
-    (await db.get(`SELECT COUNT(*) AS n FROM memberships WHERE workspace_id = ? AND deactivated_at IS NULL AND role != 'guest'`, workspaceId))!.n as number,
-  );
 }
 
 export async function storageUsed(db: Database, workspaceId: string) {
@@ -168,13 +221,15 @@ export async function effectivePlan(ctx: Ctx, workspace: Row | string, at = new 
       id: 'unlimited',
       name: 'Self-hosted',
       status: 'self_hosted',
-      purchased: 'business',
+      purchased: 'enterprise',
       trial_ends_at: null,
       paid_through: null,
       features: ALL_FEATURES,
       member_limit: null,
       storage_limit: null,
       ai_limit: null,
+      recording_hours: null,
+      priority_support: false,
     };
   }
   const catalog = planCatalog(ctx.config.billing);
@@ -191,10 +246,9 @@ export async function effectivePlan(ctx: Ctx, workspace: Row | string, at = new 
     id = purchased;
   } else if (ws.trial_ends_at && ws.trial_ends_at > nowIso) {
     status = 'trial';
-    id = 'business';
+    id = 'organization';
   }
   const plan = catalog[id];
-  const seats = await billableSeats(ctx.db, ws.id);
   return {
     id,
     name: status === 'trial' ? `${plan.name} trial` : plan.name,
@@ -204,8 +258,10 @@ export async function effectivePlan(ctx: Ctx, workspace: Row | string, at = new 
     paid_through: ws.paid_through ?? null,
     features: plan.features,
     member_limit: plan.memberLimit,
-    storage_limit: plan.storageBase + plan.storagePerMember * seats,
-    ai_limit: status === 'trial' ? ctx.config.billing.trialAiRequests : plan.aiPerMember * seats,
+    storage_limit: plan.storage,
+    ai_limit: status === 'trial' ? ctx.config.billing.trialAiRequests : plan.aiPerMonth,
+    recording_hours: plan.recordingHours,
+    priority_support: plan.prioritySupport,
   };
 }
 
@@ -221,7 +277,7 @@ export function planError(message: string, details: Record<string, unknown>) {
 export async function requireFeature(ctx: Ctx, workspaceId: string, feature: Feature) {
   const plan = await effectivePlan(ctx, workspaceId);
   if (!plan.features.includes(feature)) {
-    const needed = feature === 'ai' || feature === 'sso' || feature === 'scim' || feature === 'retention' ? 'Business' : 'Standard';
+    const needed = planWith(ctx.config.billing, feature);
     throw planError(`${FEATURE_LABEL[feature]} is available on the ${needed} plan. An admin can upgrade under Administration → Billing.`, {
       feature,
       plan: plan.id,
@@ -229,15 +285,35 @@ export async function requireFeature(ctx: Ctx, workspaceId: string, feature: Fea
   }
 }
 
-/** Check there is room for `adding` more active members (and guest access when adding guests). */
+/** Check there is room for `adding` more members, or that guest access is included when adding guests (who don't count toward the limit). */
 export async function requireMemberCapacity(ctx: Ctx, workspaceId: string, adding = 1, role?: string) {
   const plan = await effectivePlan(ctx, workspaceId);
-  if (role === 'guest' && !plan.features.includes('guests')) await requireFeature(ctx, workspaceId, 'guests');
+  if (role === 'guest') {
+    if (!plan.features.includes('guests')) await requireFeature(ctx, workspaceId, 'guests');
+    return;
+  }
   if (plan.member_limit != null && await activeMemberCount(ctx.db, workspaceId) + adding > plan.member_limit) {
     throw planError(`The ${plan.name} plan allows up to ${plan.member_limit} members. An admin can upgrade under Administration → Billing.`, {
       limit: 'members',
       plan: plan.id,
     });
+  }
+}
+
+/** Seconds of meeting recording made this month. */
+export async function recordingSecondsThisMonth(db: Database, workspaceId: string) {
+  return Number((await db.get('SELECT COALESCE(SUM(duration_sec), 0) AS n FROM meeting_recordings WHERE workspace_id = ? AND started_at >= ?', workspaceId, monthStart()))!.n) || 0;
+}
+
+/** Check the workspace has recording hours left this month. */
+export async function requireRecordingAllowance(ctx: Ctx, workspaceId: string) {
+  const plan = await effectivePlan(ctx, workspaceId);
+  if (plan.recording_hours == null) return;
+  if (await recordingSecondsThisMonth(ctx.db, workspaceId) >= plan.recording_hours * 3600) {
+    throw planError(
+      `This workspace has used its ${plan.recording_hours} hours of meeting recording for this month. The allowance resets on the 1st, or an admin can upgrade under Administration → Billing.`,
+      { limit: 'recordings', plan: plan.id },
+    );
   }
 }
 
@@ -285,17 +361,19 @@ export function publicPlans(ctx: Ctx) {
     name: p.name,
     price: p.price,
     member_limit: p.memberLimit,
-    storage_base_gb: p.storageBase / GB,
-    storage_per_member_gb: p.storagePerMember / GB,
-    ai_per_member: p.aiPerMember,
+    storage_gb: p.storage / GB,
+    ai_per_month: p.aiPerMonth,
+    recording_hours: p.recordingHours,
+    priority_support: p.prioritySupport,
+    self_serve: p.selfServe,
     features: p.features,
     tagline: p.tagline,
   }));
 }
 
-/** Amount due for a payment covering `months` of `plan` for `seats` members. */
-export function priceFor(ctx: Ctx, plan: PlanId, seats: number, months: number) {
-  const unit = planCatalog(ctx.config.billing)[plan].price;
+/** Amount due for a payment covering `months` of a self-serve plan (a flat price per workspace). */
+export function priceFor(ctx: Ctx, plan: PlanId, months: number) {
+  const unit = planCatalog(ctx.config.billing)[plan].price ?? 0;
   const factor = months >= 12 ? ctx.config.billing.annualFactor : 1;
-  return Math.round(unit * seats * months * factor * 100) / 100;
+  return Math.round(unit * months * factor * 100) / 100;
 }

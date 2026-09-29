@@ -7,7 +7,7 @@ import { z } from 'zod';
 import { canManageMeeting, canTakeMeetingNotes, canViewMeeting, isAdmin, type Auth } from '../access.js';
 import { audit, authOf, notify, type Ctx } from '../context.js';
 import type { Row } from '../db.js';
-import { hasFeature, requireFeature, requireStorage } from '../plans.js';
+import { hasFeature, requireFeature, requireRecordingAllowance, requireStorage } from '../plans.js';
 import { scanUpload } from '../scanner.js';
 import { HttpError, badRequest, forbidden, newId, notFound, now, parse } from '../util.js';
 import { parseRange } from './knowledge.js';
@@ -143,6 +143,7 @@ export function recordingsRouter(ctx: Ctx) {
     const meeting = await loadMeeting(auth, req.params.id);
     if (!await canTakeMeetingNotes(db, auth, meeting)) throw forbidden('Only people taking part can record this meeting');
     await requireFeature(ctx, auth.workspaceId, 'recordings');
+    await requireRecordingAllowance(ctx, auth.workspaceId);
     const body = parse(
       z.object({
         kind: z.enum(['audio', 'screen']).default('audio'),

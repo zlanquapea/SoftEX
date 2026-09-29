@@ -88,7 +88,7 @@ export function requireAuth(ctx: Ctx) {
     req.auth = auth;
     if (auth.tokenScope) {
       if (!await hasFeature(ctx, auth.workspaceId, 'api')) {
-        return next(planError('API access is available on the Standard plan.', { feature: 'api' }));
+        return next(planError('API access is available on the Team plan.', { feature: 'api' }));
       }
       if (auth.tokenScope === 'read' && req.method !== 'GET') return next(new HttpError(403, 'This API token is read-only'));
       if (req.path.startsWith('/me/') || req.path.startsWith('/integrations')) {
@@ -240,7 +240,7 @@ export async function mePayload(ctx: Ctx, auth: Auth) {
       retention_days: workspace.retention_days ?? null,
       legal_hold: !!workspace.legal_hold,
       ai_available: !!ctx.ai,
-      plan: (({ id, name, status, trial_ends_at, paid_through, features }) => ({ id, name, status, trial_ends_at, paid_through, features }))(
+      plan: (({ id, name, status, trial_ends_at, paid_through, features, member_limit, priority_support }) => ({ id, name, status, trial_ends_at, paid_through, features, member_limit, priority_support }))(
         await effectivePlan(ctx, workspace),
       ),
     },

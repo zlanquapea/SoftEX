@@ -611,7 +611,7 @@ function WorkspaceSettings() {
           <strong>AI assistance</strong>
           <small className="muted block">
             {!has('ai')
-              ? 'Available on the Business plan.'
+              ? 'Available on the Organization plan.'
               : ws.ai_available
               ? 'Lets people draft thread and meeting summaries, task suggestions and project briefs with Claude. It only reads content the requesting person can already open, drafts are never shared automatically, every use is audited, and channel or project owners can exclude their spaces.'
               : 'Not available: the server administrator must set ANTHROPIC_API_KEY first.'}

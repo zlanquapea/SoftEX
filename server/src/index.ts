@@ -58,8 +58,9 @@ const num = (name: string) => {
 };
 const billing = Object.fromEntries(
   Object.entries({
-    priceStandard: num('SOFTEX_PRICE_STANDARD'),
-    priceBusiness: num('SOFTEX_PRICE_BUSINESS'),
+    priceStarter: num('SOFTEX_PRICE_STARTER'),
+    priceTeam: num('SOFTEX_PRICE_TEAM'),
+    priceOrganization: num('SOFTEX_PRICE_ORGANIZATION'),
     trialDays: num('SOFTEX_TRIAL_DAYS'),
     trialAiRequests: num('SOFTEX_TRIAL_AI_REQUESTS'),
     lrdPerUsd: num('SOFTEX_LRD_PER_USD'),
