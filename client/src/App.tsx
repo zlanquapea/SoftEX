@@ -66,7 +66,10 @@ const TITLES: [RegExp, string][] = [
   [/^\/help/, 'Help'],
 ];
 
-/** Signed-out visitors to "/" see the product website on hosted servers, and the sign-in page otherwise. */
+/**
+ * Signed-out visitors to "/" see the product website on hosted servers, and the sign-in page otherwise.
+ * The website itself is always at /welcome, signed in or not, so it can be previewed on any server.
+ */
 function PublicHome() {
   const { data, error } = usePublicPricing();
   if (error) return <Login />;
@@ -108,15 +111,17 @@ export function App() {
         <Route path="/privacy" element={<Privacy />} />
         <Route path="/login" element={<Login />} />
         <Route path="/" element={<PublicHome />} />
+        <Route path="/welcome" element={<Landing />} />
         <Route path="*" element={<Login />} />
       </Routes>
     );
   }
 
   // Pages that stand on their own even when signed in.
-  if (/^\/(verify-email\/|terms$|privacy$)/.test(location.pathname)) {
+  if (/^\/(verify-email\/|terms$|privacy$|welcome$)/.test(location.pathname)) {
     return (
       <Routes>
+        <Route path="/welcome" element={<Landing />} />
         <Route path="/verify-email/:token" element={<VerifyEmail />} />
         <Route path="/terms" element={<Terms />} />
         <Route path="/privacy" element={<Privacy />} />

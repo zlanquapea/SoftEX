@@ -24,7 +24,9 @@ if (process.argv.includes('--reset')) {
   for (const p of [dbPath, `${dbPath}-wal`, `${dbPath}-shm`, join(dataDir, 'uploads')]) if (existsSync(p)) rmSync(p, { recursive: true, force: true });
 }
 
-const { server, ctx, close } = createApp({ dbPath, databaseUrl, uploadDir: join(dataDir, 'uploads') });
+// On a hosted (SaaS) server the demo workspace starts its Business trial like any new sign-up.
+const mode = process.env.SOFTEX_MODE === 'saas' ? 'saas' : undefined;
+const { server, ctx, close } = createApp({ dbPath, databaseUrl, uploadDir: join(dataDir, 'uploads'), mode });
 if (await ctx.db.get('SELECT 1 FROM users LIMIT 1')) {
   console.log('Database already has data. Use `npm run seed -- --reset` to start over.');
   await close();
@@ -64,13 +66,15 @@ const at = (dayOffset: number, hour: number, minute = 0) => {
 const m = (name: string, id: string) => `@[${name}](${id})`;
 
 const alex = new Client();
-const me = await alex.post('/auth/register', { name: 'Alex Parker', email: 'alex@acme.test', password: PASSWORD, workspaceName: 'Acme Studio' });
+const me = await alex.post('/auth/register', { name: 'Alex Parker', email: 'alex@acme.test', password: PASSWORD, workspaceName: 'Acme Studio', acceptTerms: true });
+// Demo addresses can't receive email, so treat them as confirmed (hosted servers require it before inviting).
+await ctx.db.run('UPDATE users SET email_verified_at = COALESCE(email_verified_at, created_at)');
 await alex.patch('/me', { title: 'Head of Product', timezone: 'Europe/London', expertise: ['Product strategy', 'Roadmaps'] });
 
 async function addPerson(name: string, email: string, role: string, profile: Record<string, unknown>, extra: Record<string, unknown> = {}) {
   const inv = await alex.post('/admin/invitations', { email, role, ...extra });
   const c = new Client();
-  const res = await c.post(`/invitations/${inv.token}/accept`, { name, password: PASSWORD });
+  const res = await c.post(`/invitations/${inv.token}/accept`, { name, password: PASSWORD, acceptTerms: true });
   await c.patch('/me', profile);
   return { c, id: res.user.id as string, name };
 }
@@ -280,6 +284,7 @@ const client = await alex.post('/channels', { name: 'client-northwind', kind: 'p
 await addPerson('Casey Morgan', 'casey@northwind.test', 'guest', { title: 'Marketing Director, Northwind' }, { channelIds: [client.id], guestDays: 45 });
 
 await new Promise((r) => setTimeout(r, 50));
+await ctx.db.run('UPDATE users SET email_verified_at = COALESCE(email_verified_at, created_at)');
 await close();
 console.log(`
 Seeded the “Acme Studio” demo workspace.
