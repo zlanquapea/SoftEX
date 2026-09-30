@@ -109,9 +109,10 @@ export function createApp(options: AppOptions = {}): SoftexApp {
       ...Object.fromEntries(Object.entries(options.backups ?? {}).filter(([, v]) => v !== undefined)),
     },
     billing: {
-      priceStandard: 1.5,
-      priceBusiness: 3,
-      trialDays: 30,
+      priceStarter: 10,
+      priceTeam: 25,
+      priceOrganization: 60,
+      trialDays: 14,
       trialAiRequests: 100,
       annualFactor: 10 / 12,
       paymentInstructions: '',

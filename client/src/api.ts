@@ -103,23 +103,31 @@ export interface Me {
 
 export type Feature = 'ai' | 'automations' | 'planning' | 'insights' | 'guests' | 'api' | 'sso' | 'scim' | 'retention' | 'fields' | 'goals' | 'recordings';
 
+export type PlanId = 'free' | 'starter' | 'team' | 'organization' | 'enterprise';
+
 export interface PlanInfo {
-  id: 'free' | 'standard' | 'business' | 'unlimited';
+  id: PlanId | 'unlimited';
   name: string;
   status: 'self_hosted' | 'trial' | 'active' | 'grace' | 'free';
   trial_ends_at: string | null;
   paid_through: string | null;
   features: Feature[];
+  member_limit: number | null;
+  priority_support: boolean;
 }
 
 export interface PublicPlan {
-  id: 'free' | 'standard' | 'business';
+  id: PlanId;
   name: string;
-  price: number;
+  /** Per workspace per month in USD; null means priced by quote. */
+  price: number | null;
   member_limit: number | null;
-  storage_base_gb: number;
-  storage_per_member_gb: number;
-  ai_per_member: number;
+  storage_gb: number;
+  ai_per_month: number;
+  recording_hours: number | null;
+  priority_support: boolean;
+  /** Can an admin pay for it from the billing screen? */
+  self_serve: boolean;
   features: Feature[];
   tagline: string;
 }

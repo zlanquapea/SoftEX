@@ -76,18 +76,18 @@ Küü puts team chat, projects, documents, meetings and company knowledge in one
 | Feature | Where to find it | Plan |
 | --- | --- | --- |
 | Labels, and a label filter on project tasks | Task drawer → Labels; Projects → Tasks | All plans |
-| Custom fields | Project → **Fields**; task drawer; Table view | Standard, Business |
+| Custom fields | Project → **Fields**; task drawer; Table view | Team, Organization |
 | Table and calendar views | Project → Tasks → Table / Calendar | All plans |
-| Time tracking, timesheet, project time report | Task drawer → Time; **Timesheet**; Project → **Time** | Standard, Business |
-| Goals and key results | **Goals** in the sidebar | Standard, Business |
-| Intake forms (members and public link) | Project → **Forms** | Standard, Business |
+| Time tracking, timesheet, project time report | Task drawer → Time; **Timesheet**; Project → **Time** | Team, Organization |
+| Goals and key results | **Goals** in the sidebar | Team, Organization |
+| Intake forms (members and public link) | Project → **Forms** | Team, Organization |
 | Nested pages, page icons, comments, publish to web | Knowledge page → Sub-page / Comments / Publish | All plans |
 | Favorites | ☆ on pages, projects, channels and goals; sidebar | All plans |
 | Polls, @channel/@here, forwarding, voice notes | Chat composer and message menu | All plans |
-| Dashboards | **Dashboards** in the sidebar | Standard, Business |
+| Dashboards | **Dashboards** in the sidebar | Team, Organization |
 | Live co-editing of pages | Knowledge page → Edit | All plans |
 | Whiteboards | **Whiteboards** in the sidebar; Project → **Whiteboards** | All plans |
-| Meeting recordings and transcripts | Meeting → **Record** | Standard, Business |
+| Meeting recordings and transcripts | Meeting → **Record** | Team, Organization |
 
 ## Recommended next steps
 

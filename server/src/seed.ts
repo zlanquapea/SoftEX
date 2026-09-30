@@ -24,7 +24,7 @@ if (process.argv.includes('--reset')) {
   for (const p of [dbPath, `${dbPath}-wal`, `${dbPath}-shm`, join(dataDir, 'uploads')]) if (existsSync(p)) rmSync(p, { recursive: true, force: true });
 }
 
-// On a hosted (SaaS) server the demo workspace starts its Business trial like any new sign-up.
+// On a hosted (SaaS) server the demo workspace starts its Organization trial like any new sign-up.
 const mode = process.env.SOFTEX_MODE === 'saas' ? 'saas' : undefined;
 const { server, ctx, close } = createApp({ dbPath, databaseUrl, uploadDir: join(dataDir, 'uploads'), mode });
 if (await ctx.db.get('SELECT 1 FROM users LIMIT 1')) {

@@ -11,7 +11,7 @@ import { usePublicPricing, type PublicPricing } from './Pricing';
  * SOFTEX_COMPANY_ADDRESS, SOFTEX_LEGAL_EMAIL) before launch.
  */
 
-const EFFECTIVE = 'September 25, 2026';
+const EFFECTIVE = 'September 29, 2026';
 
 function LegalFrame({ title, children }: { title: string; children: (info: PublicPricing | undefined) => ReactNode }) {
   const { data } = usePublicPricing();
@@ -77,9 +77,9 @@ export function Terms() {
 
             <h2>2. Plans, trials and payment</h2>
             <ul>
-              <li>New workspaces receive a free trial of the Business plan. When it ends, the workspace moves to the Free plan unless you choose a paid plan.</li>
+              <li>New workspaces receive a free trial of the Organization plan. When it ends, the workspace moves to the Free plan unless you choose a paid plan.</li>
               <li>
-                Paid plans are priced per member per month, as shown on the <Link to="/pricing">pricing page</Link> when you pay. Guests are not charged. Prices may change;
+                Paid plans are priced per workspace per month, up to each plan's member limit, as shown on the <Link to="/pricing">pricing page</Link> when you pay. Guests don't count toward the limit. Plans above 50 members are priced by written quote. Prices may change;
                 changes apply from your next payment and we will tell you at least 30 days in advance.
               </li>
               <li>

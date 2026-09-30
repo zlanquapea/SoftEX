@@ -63,7 +63,7 @@ export function scimRouter(ctx: Ctx) {
     const ws = token ? await db.get('SELECT id, suspended_at FROM workspaces WHERE scim_token_hash = ?', sha256(token)) : undefined;
     if (!ws) return next(new ScimError(401, 'Invalid or missing SCIM token'));
     if (ws.suspended_at) return next(new ScimError(403, 'This workspace has been suspended'));
-    if (!await hasFeature(ctx, ws.id, 'scim')) return next(new ScimError(403, 'User provisioning is available on the Business plan'));
+    if (!await hasFeature(ctx, ws.id, 'scim')) return next(new ScimError(403, 'User provisioning is available on the Organization plan'));
     req.scimWorkspace = ws.id;
     next();
   });

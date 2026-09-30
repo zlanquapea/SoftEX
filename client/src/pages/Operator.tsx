@@ -43,7 +43,7 @@ interface OpWorkspace {
   suspended_reason: string | null;
   plan: { id: string; name: string; status: string; purchased: string; trial_ends_at: string | null; paid_through: string | null };
   owners: { name: string; email: string }[];
-  usage: { members: number; seats: number; storage_bytes: number; storage_limit: number | null; ai_used: number; ai_limit: number | null };
+  usage: { members: number; guests: number; storage_bytes: number; storage_limit: number | null; ai_used: number; ai_limit: number | null };
   last_active_at: string | null;
   pending_payments: number;
 }
@@ -122,7 +122,7 @@ function PaymentDetails({ p }: { p: OpPayment }) {
     <dl className="props compact">
       <dt>Amount</dt>
       <dd>
-        <strong>{usd(p.amount)}</strong> — {p.plan}, {p.months} month{p.months === 1 ? '' : 's'}, {p.seats} member{p.seats === 1 ? '' : 's'}
+        <strong>{usd(p.amount)}</strong> — {p.plan}, {p.months} month{p.months === 1 ? '' : 's'} ({p.seats} member{p.seats === 1 ? '' : 's'} when paid)
       </dd>
       <dt>Method</dt>
       <dd>{p.method_label}</dd>
@@ -343,7 +343,7 @@ function WorkspaceDetail({ id, onChange }: { id: string; onChange: () => void })
         <p>
           <strong>{data.plan.name}</strong> ({STATUS_LABEL[data.plan.status] ?? data.plan.status})
           {data.plan.status === 'trial' && ` — ${daysUntil(data.plan.trial_ends_at)} days left`}
-          {data.plan.paid_through && ` · paid through ${data.plan.paid_through.slice(0, 10)}`} · {data.usage.members} members ({data.usage.seats} billable) ·{' '}
+          {data.plan.paid_through && ` · paid through ${data.plan.paid_through.slice(0, 10)}`} · {data.usage.members} members, {data.usage.guests} guests ·{' '}
           {bytes(data.usage.storage_bytes)} stored · {data.usage.ai_used} AI requests
         </p>
       </div>
@@ -361,8 +361,10 @@ function WorkspaceDetail({ id, onChange }: { id: string; onChange: () => void })
           <Field label="Plan">
             <select value={f.plan} onChange={(e) => setForm({ ...f, plan: e.target.value })}>
               <option value="free">Free</option>
-              <option value="standard">Standard</option>
-              <option value="business">Business</option>
+              <option value="starter">Starter</option>
+              <option value="team">Team</option>
+              <option value="organization">Organization</option>
+              <option value="enterprise">Enterprise (custom quote)</option>
             </select>
           </Field>
           <Field label="Paid through">

@@ -2,7 +2,7 @@
 
 Küü runs on Railway as **one service** built from the repository's `Dockerfile`, with **one volume** for the database and uploaded files. `railway.json` in the repository sets the builder, the health check (`/api/health`) and the restart policy, so there is nothing to configure for the build itself.
 
-This guide sets Küü up as a **hosted service (SaaS)**: customers sign up themselves, get a 30-day Business trial, can stay on the Free plan forever, and pay for Standard or Business with Orange Money, MTN Mobile Money or bank transfer. If you only want a private server for one organisation, see [Private deployment](#private-deployment-for-one-organisation) at the end.
+This guide sets Küü up as a **hosted service (SaaS)**: customers sign up themselves, get a 14-day Organization trial, can stay on the Free plan (up to 5 members) forever, and pay a flat monthly price per workspace for Starter, Team or Organization with Orange Money, MTN Mobile Money or bank transfer. If you only want a private server for one organisation, see [Private deployment](#private-deployment-for-one-organisation) at the end.
 
 Allow about 20 minutes.
 
@@ -49,8 +49,9 @@ SOFTEX_MODE=saas
 SOFTEX_REGISTRATION=open
 SOFTEX_OPERATOR_EMAILS=you@yourcompany.com
 SOFTEX_SUPPORT_EMAIL=billing@yourcompany.com
-SOFTEX_PRICE_STANDARD=1.50
-SOFTEX_PRICE_BUSINESS=3
+SOFTEX_PRICE_STARTER=10
+SOFTEX_PRICE_TEAM=25
+SOFTEX_PRICE_ORGANIZATION=60
 SOFTEX_LRD_PER_USD=190
 SOFTEX_COMPANY_NAME=Your Company Ltd
 SOFTEX_COMPANY_ADDRESS=Broad Street, Monrovia, Liberia
@@ -61,7 +62,7 @@ SOFTEX_PAYMENT_INSTRUCTIONS=**Orange Money:** send to 0770 000 000 (Your Company
 SOFTEX_SMTP_URL=smtps://USERNAME:PASSWORD@smtp.yourprovider.com:465
 SOFTEX_MAIL_FROM=Küü <softex@yourcompany.com>
 
-# AI features for the Business plan (optional)
+# AI features for the Organization plan (optional)
 ANTHROPIC_API_KEY=<your key>
 ```
 
@@ -74,17 +75,17 @@ What each one does:
 | `SOFTEX_SECURE_COOKIES` | Sign-in cookies are only sent over HTTPS. Railway serves HTTPS for you. |
 | `SOFTEX_TRUST_PROXY` | Railway puts a proxy in front of the app. `1` tells Küü to read the visitor's real address from it, so sign-in rate limits and the audit log work per person. |
 | `SOFTEX_SECRET_KEY` | Encrypts stored secrets such as the single sign-on client secret. **Keep it safe and never change it** once set, or saved secrets can't be decrypted. |
-| `SOFTEX_MODE` | `saas` turns on plans, the 30-day trial, usage limits, email confirmation, billing and the operator console. |
+| `SOFTEX_MODE` | `saas` turns on plans, the 14-day trial, usage limits, email confirmation, billing and the operator console. |
 | `SOFTEX_REGISTRATION` | `open` lets anyone create a workspace from the sign-up page, which is what a SaaS needs. |
 | `SOFTEX_OPERATOR_EMAILS` | Your own email address (comma-separate several). These accounts get the **Operator console**, where you confirm payments and manage customers. Operators must turn on multifactor authentication. |
 | `SOFTEX_SUPPORT_EMAIL` | Shown to customers on the pricing and billing pages. |
-| `SOFTEX_PRICE_STANDARD`, `SOFTEX_PRICE_BUSINESS` | Price per member per month, in US dollars. Defaults are $1.50 and $3. Paying 12 months at once gets two months free. |
+| `SOFTEX_PRICE_STARTER`, `SOFTEX_PRICE_TEAM`, `SOFTEX_PRICE_ORGANIZATION` | Price per workspace per month, in US dollars, whatever the number of members up to the plan's limit. Defaults are $10, $25 and $60. Paying 12 months at once gets two months free. |
 | `SOFTEX_LRD_PER_USD` | Optional exchange rate. When set, prices also show an approximate amount in Liberian dollars. Update it when the rate moves. |
 | `SOFTEX_COMPANY_NAME`, `SOFTEX_COMPANY_ADDRESS`, `SOFTEX_LEGAL_EMAIL` | Your business details. They appear on the website footer and in the Terms of Service and Privacy Policy at `/terms` and `/privacy`. Those pages are **drafts**: have a lawyer review them before you take customers. |
 | `SOFTEX_PAYMENT_INSTRUCTIONS` | What customers see when they pay: your mobile money numbers and bank details. Markdown is allowed; write `\n` for a new line. |
 | `RAILWAY_RUN_UID` | Railway mounts volumes as root, and Küü's image runs as an unprivileged user. `0` lets the app write to the volume. If it is missing, the logs say *Küü cannot write to its data directory*. |
 | `SOFTEX_SMTP_URL`, `SOFTEX_MAIL_FROM` | Without them, emails are kept in **Administration → Email** but not sent, so customers can't confirm their address. URL-encode special characters in the password (for example `@` → `%40`). Use port 465 with `smtps://`, or port 587 with `smtp://`. |
-| `ANTHROPIC_API_KEY` | Makes Ask Küü, summaries and task suggestions available on the Business plan and during trials. Every workspace's AI use is billed to this key, so it is capped: 50 requests per member per month on Business, and 100 requests in total per trial (`SOFTEX_TRIAL_AI_REQUESTS`). |
+| `ANTHROPIC_API_KEY` | Makes Ask Küü, summaries and task suggestions available on the Organization and Enterprise plans and during trials. Every workspace's AI use is billed to this key, so it is capped: 1,000 requests per month on Organization, 5,000 on Enterprise, and 100 requests in total per trial (`SOFTEX_TRIAL_AI_REQUESTS`). |
 | `SOFTEX_STT_URL`, `SOFTEX_STT_API_KEY`, `SOFTEX_STT_MODEL` | Optional. Transcribes meeting recordings with any OpenAI-compatible speech-to-text service (for example `https://api.openai.com/v1/audio/transcriptions` with model `whisper-1`, or a self-hosted Whisper server). Recordings are only sent when a workspace has turned on AI features. Without it, recordings still work, with live captions in browsers that support them. |
 
 To make a secret key, run this on your computer and paste the output:
@@ -101,7 +102,7 @@ Click **Deploy** (or **Apply changes**) to redeploy with the volume and variable
 2. Open the confirmation email and click the link. If it doesn't arrive, check the SMTP settings and **Administration → Email**.
 3. Go to **Settings → Security** and turn on multifactor authentication. The operator console won't open without it.
 4. Open the workspace menu (top left) → **Operator console**.
-5. Your own workspace starts on a trial like everyone else's. To keep it on Business, open **Workspaces**, click it, set **Plan** to *Business* and **Paid through** to a date far in the future, and save.
+5. Your own workspace starts on a trial like everyone else's. To keep it on every feature, open **Workspaces**, click it, set **Plan** to *Enterprise* and **Paid through** to a date far in the future, and save.
 6. Check that the proxy setting works. In **Administration → Audit log**, find your `auth.login` entry and check the IP address is your own public address, not a private one like `10.x.x.x` or `100.64.x.x`. If it is private, set `SOFTEX_TRUST_PROXY=2` and check again.
 7. Sign out and open your address: signed-out visitors see the product website, with pricing at `/pricing`, and the terms and privacy policy at `/terms` and `/privacy`. Sign-in is at `/login`. Share the address on your social media and in your email signature.
 
@@ -147,16 +148,24 @@ Railway redeploys automatically when `main` changes, because the service is conn
 
 **Plans**
 
-| | Free | Standard | Business |
-| --- | --- | --- | --- |
-| Price per member / month | $0 | `SOFTEX_PRICE_STANDARD` ($1.50) | `SOFTEX_PRICE_BUSINESS` ($3) |
-| Members | Up to 10 | Unlimited | Unlimited |
-| Storage | 2 GB | 10 GB + 5 GB per member | 20 GB + 10 GB per member |
-| Chat, tasks, projects, knowledge, meetings, decisions | ✓ | ✓ | ✓ |
-| Timeline, workload, automations, guests, insights, API and webhooks | | ✓ | ✓ |
-| AI, single sign-on, SCIM, retention and legal hold | | | ✓ |
+| | Free | Starter | Team | Organization | Enterprise |
+| --- | --- | --- | --- | --- | --- |
+| Price per workspace / month | $0 | `SOFTEX_PRICE_STARTER` ($10) | `SOFTEX_PRICE_TEAM` ($25) | `SOFTEX_PRICE_ORGANIZATION` ($60) | Custom quote |
+| Members (guests don't count) | Up to 5 | Up to 10 | Up to 25 | Up to 50 | Above 50 |
+| Storage | 2 GB | 20 GB | 100 GB | 250 GB | 1 TB |
+| Projects, tasks, messaging, file sharing, knowledge, meetings, decisions | ✓ | ✓ | ✓ | ✓ | ✓ |
+| Reporting (insights, dashboards, time reports), timeline, workload, custom fields, goals, forms, automations, guests, API and webhooks | | | ✓ | ✓ | ✓ |
+| Meeting recordings and transcripts | | | 20 hours a month | 60 hours a month | Unlimited |
+| AI (requests a month), single sign-on, SCIM, retention and legal hold | | | | ✓ (1,000) | ✓ (5,000) |
+| Priority support | | | | ✓ | ✓ |
 
-New workspaces get a 30-day Business trial (`SOFTEX_TRIAL_DAYS`). When a trial or paid period ends, the workspace moves to Free after a 7-day grace period for paid plans. Nothing is deleted; paid features pause until they pay. Owners and admins get reminders by email and in the app 7 days and 1 day before a trial ends, 7 days before a paid period ends, when a payment is overdue, and when the workspace moves to Free.
+**Enterprise** isn't sold in the app. Agree the price with the customer, take the payment your usual way, then in **Operator console → Workspaces** set the workspace's **Plan** to *Enterprise* and **Paid through** to the end of the agreed period. Customers see a *Contact us for a quote* button that emails `SOFTEX_SUPPORT_EMAIL`.
+
+A workspace that has more members than a plan allows can't choose that plan, and when it goes over its limit (for example after a trial) nobody is removed: it just can't add members until it upgrades.
+
+Workspaces that were on the earlier **Standard** and **Business** plans move to **Team** and **Organization** automatically when the server starts, keeping their paid-through dates.
+
+New workspaces get a 14-day Organization trial (`SOFTEX_TRIAL_DAYS`). When a trial or paid period ends, the workspace moves to Free after a 7-day grace period for paid plans. Nothing is deleted; paid features pause until they pay. Owners and admins get reminders by email and in the app 7 days and 1 day before a trial ends, 7 days before a paid period ends, when a payment is overdue, and when the workspace moves to Free.
 
 **Confirming payments.** When a customer pays, they enter the transaction ID in **Administration → Billing**, and you get an email. In **Operator console → Payments to confirm**, check the payment really arrived in your Orange Money, MTN MoMo or bank account (match the reference and the amount), then click **Confirm**. The customer's plan starts or extends immediately, and they get a receipt by email. If the money didn't arrive, click **Reject** and give a reason; they're told by email.
 

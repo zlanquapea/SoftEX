@@ -582,7 +582,7 @@ CREATE TABLE IF NOT EXISTS payments (
   id TEXT PRIMARY KEY,
   workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
   submitted_by TEXT NOT NULL REFERENCES users(id),
-  plan TEXT NOT NULL,                               -- standard | business
+  plan TEXT NOT NULL,                               -- starter | team | organization
   months INTEGER NOT NULL,
   seats INTEGER NOT NULL,
   amount REAL NOT NULL,                             -- USD
@@ -908,14 +908,14 @@ const ADDED_COLUMNS: [table: string, column: string, definition: string, backfil
   // Accounts that existed before email verification count as verified.
   ['users', 'email_verified_at', 'TEXT', 'UPDATE users SET email_verified_at = created_at'],
   ['workspaces', 'plan', "TEXT NOT NULL DEFAULT 'free'"],
-  // Workspaces that existed before plans get a fresh 30-day trial when a server switches to SaaS mode.
+  // Workspaces that existed before plans get a fresh 14-day trial when a server switches to SaaS mode.
   [
     'workspaces',
     'trial_ends_at',
     'TEXT',
     {
-      sqlite: "UPDATE workspaces SET trial_ends_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now', '+30 days')",
-      postgres: `UPDATE workspaces SET trial_ends_at = to_char((now() AT TIME ZONE 'UTC') + interval '30 days', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')`,
+      sqlite: "UPDATE workspaces SET trial_ends_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now', '+14 days')",
+      postgres: `UPDATE workspaces SET trial_ends_at = to_char((now() AT TIME ZONE 'UTC') + interval '14 days', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')`,
     },
   ],
   ['workspaces', 'paid_through', 'TEXT'],
@@ -934,6 +934,15 @@ const ADDED_COLUMNS: [table: string, column: string, definition: string, backfil
   ['pages', 'public_token', 'TEXT'],
   ['tasks', 'form_id', 'TEXT'],
   ['messages', 'forwarded_from', 'TEXT'],
+];
+
+/** Idempotent data fixes run on every start-up, after the columns above exist. */
+export const DATA_MIGRATIONS = [
+  // Standard and Business (priced per member) became Team and Organization (priced per workspace).
+  "UPDATE workspaces SET plan = 'team' WHERE plan = 'standard'",
+  "UPDATE workspaces SET plan = 'organization' WHERE plan = 'business'",
+  "UPDATE payments SET plan = 'team' WHERE plan = 'standard'",
+  "UPDATE payments SET plan = 'organization' WHERE plan = 'business'",
 ];
 
 export type Row = Record<string, any>;
@@ -1071,6 +1080,7 @@ class SqliteDatabase extends BaseDatabase {
         if (backfill) this.raw.exec(typeof backfill === 'string' ? backfill : backfill.sqlite);
       }
     }
+    for (const sql of DATA_MIGRATIONS) this.raw.exec(sql);
   }
 
   /** Wait while another request's transaction is open. */
@@ -1212,6 +1222,7 @@ class PostgresDatabase extends BaseDatabase {
         await client.query(`ALTER TABLE ${table} ADD COLUMN ${column} ${pgType(definition)}`);
         if (backfill) await client.query(typeof backfill === 'string' ? backfill : backfill.postgres);
       }
+      for (const sql of DATA_MIGRATIONS) await client.query(sql);
     } finally {
       await client.query('SELECT pg_advisory_unlock($1)', [lockId('softex:migrate')]).catch(() => {});
       client.release();
