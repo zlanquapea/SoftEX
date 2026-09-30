@@ -1,4 +1,5 @@
 import { useEffect } from 'react';
+import { dateLabel } from '../format';
 import { useParams } from 'react-router-dom';
 import { Logo } from '../components/Logo';
 import { Markdown } from '../components/Markdown';
@@ -28,7 +29,7 @@ export function PublishedPage() {
             <h1>
               {page.icon && <span className="page-emoji">{page.icon}</span>} {page.title}
             </h1>
-            <p className="muted small">Updated {new Date(page.updated_at).toLocaleDateString()}</p>
+            <p className="muted small">Updated {dateLabel(page.updated_at)}</p>
             <Markdown text={page.body} />
           </article>
         )}

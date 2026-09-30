@@ -43,28 +43,43 @@ export function Chats() {
       {error && <ErrorState error={error} retry={reload} />}
       {!channels && !error && <Loading />}
       {channels && !dms.length && (
-        <Empty icon="chat" title="No conversations yet">
+        <Empty
+          icon="chat"
+          title="No conversations yet"
+          action={
+            <button className="btn primary" onClick={() => openCreate('message')}>
+              <Icon name="plus" size={16} /> New message
+            </button>
+          }
+        >
           Start a direct message with a teammate.
         </Empty>
       )}
-      <ul className="list-card">
-        {dms.map((c) => (
-          <li key={c.id}>
-            <Link to={`/channels/${c.id}`} className={`list-row ${c.unread ? 'unread' : ''}`}>
-              {c.members && c.members.length === 1 ? (
-                <Avatar user={c.members[0]} size="md" showPresence />
-              ) : (
-                <span className="avatar avatar-md c-lilac">{c.members?.length ?? 0}</span>
-              )}
-              <span className="grow">
-                <strong>{c.members?.map((m) => m.name).join(', ') || 'Just you'}</strong>
-                <small className="muted">{c.last_message_at ? timeAgo(c.last_message_at) : 'No messages yet'}</small>
-              </span>
-              {c.unread > 0 && <b className="badge">{c.unread}</b>}
-            </Link>
-          </li>
-        ))}
-      </ul>
+      {dms.length > 0 && (
+        <ul className="list-card">
+          {dms.map((c) => (
+            <li key={c.id}>
+              <Link to={`/channels/${c.id}`} className={`list-row ${c.unread ? 'unread' : ''}`}>
+                {c.members && c.members.length === 1 ? (
+                  <Avatar user={c.members[0]} size="md" showPresence />
+                ) : (
+                  <span className="avatar avatar-md c-lilac">{c.members?.length ?? 0}</span>
+                )}
+                <span className="grow list-text">
+                  <span className="list-text-top">
+                    <strong>{c.members?.map((m) => m.name).join(', ') || 'Just you'}</strong>
+                    {c.last_message_at && <small className="muted">{timeAgo(c.last_message_at)}</small>}
+                  </span>
+                  <small className="muted list-preview">
+                    {c.last_message ? `${c.last_message.mine ? 'You: ' : ''}${plainMentions(c.last_message.text) || 'Sent an attachment'}` : 'No messages yet'}
+                  </small>
+                </span>
+                {c.unread > 0 && <b className="badge">{c.unread}</b>}
+              </Link>
+            </li>
+          ))}
+        </ul>
+      )}
       {saved && saved.length > 0 && (
         <>
           <h2 className="section-h">Saved messages</h2>

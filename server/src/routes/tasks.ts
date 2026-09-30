@@ -19,7 +19,7 @@ import type { Database, Row } from '../db.js';
 import { authOf, notify, recordActivity, userSummary, type Ctx } from '../context.js';
 import { emitEvent } from '../webhooks.js';
 import { runAutomations } from '../automations.js';
-import { badRequest, forbidden, newId, notFound, now, parse, today, filterAsync } from '../util.js';
+import { badRequest, forbidden, friendlyDate, newId, notFound, now, parse, today, filterAsync } from '../util.js';
 import { parseCsv, parseLooseDate } from '../csv.js';
 import { taskExtras } from './work.js';
 
@@ -218,7 +218,7 @@ export function tasksRouter(ctx: Ctx) {
         userId: ownerId,
         kind: 'assigned',
         title: `You were assigned “${body.title}”`,
-        body: project ? `In ${project.name}${body.dueDate ? ` · due ${body.dueDate}` : ''}` : body.dueDate ? `Due ${body.dueDate}` : '',
+        body: project ? `In ${project.name}${body.dueDate ? ` · due ${friendlyDate(body.dueDate)}` : ''}` : body.dueDate ? `Due ${friendlyDate(body.dueDate)}` : '',
         link: `/tasks/${id}`,
         actorId: auth.userId,
         urgent: body.priority === 'urgent',

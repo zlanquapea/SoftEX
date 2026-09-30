@@ -16,7 +16,7 @@ import { FavoriteButton } from '../components/Favorites';
 import { ProjectAutomations, ProjectTimeline } from './Planning';
 import { UpgradeNotice, usePlan } from '../components/Plan';
 import { Empty, ErrorState, Field, HealthPill, Loading, Modal, PeoplePicker, Tabs, useAction } from '../components/ui';
-import { bytes, dateTime, dueLabel, duration, HEALTH_LABEL, STATUS_LABEL, timeAgo } from '../format';
+import { bytes, dateTime, dueLabel, duration, HEALTH_LABEL, STATUS_LABEL, timeAgo, dateLabel } from '../format';
 import { useApi, useRealtime } from '../hooks';
 import { useSession } from '../session';
 import { CheckinModal } from './Home';
@@ -52,8 +52,19 @@ export function Projects() {
       {error && <ErrorState error={error} retry={reload} />}
       {!data && !error && <Loading />}
       {data && !list.length && (
-        <Empty icon="folder" title="No projects here">
-          {scope === 'mine' ? 'Projects you are a member of appear here.' : 'Nothing to show.'}
+        <Empty
+          icon="folder"
+          title={scope === 'archived' ? 'No archived projects' : 'No projects here yet'}
+          action={
+            scope !== 'archived' &&
+            me!.role !== 'guest' && (
+              <button className="btn primary" onClick={() => openCreate('project')}>
+                <Icon name="plus" size={16} /> New project
+              </button>
+            )
+          }
+        >
+          {scope === 'archived' ? 'Projects you archive appear here.' : 'A project keeps one piece of work together: its tasks, owners, dates, chat and files.'}
         </Empty>
       )}
       <div className="project-grid wide">
@@ -71,7 +82,7 @@ export function Projects() {
             </div>
             <h3>{p.name}</h3>
             <p>
-              {p.team?.name ?? 'No team'} · {p.member_count} member{p.member_count === 1 ? '' : 's'}
+              {p.team ? `${p.team.name} · ` : ''}{p.member_count} member{p.member_count === 1 ? '' : 's'}
             </p>
             <div className="progress-label">
               <span>
@@ -286,7 +297,7 @@ export function ProjectDetail() {
             <span>
               Owner: <strong>{project.owner?.name}</strong>
             </span>
-            {project.due_date && <span>Target: {new Date(`${project.due_date}T00:00`).toLocaleDateString()}</span>}
+            {project.due_date && <span>Target: {dateLabel(project.due_date)}</span>}
             <AvatarStack users={project.members} max={5} total={project.member_count} />
             {project.channels.map((c) => (
               <Link key={c.id} to={`/channels/${c.id}`} className="pill">
@@ -295,20 +306,24 @@ export function ProjectDetail() {
             ))}
           </div>
         </div>
-        {project.can_contribute && (
-          <button className="btn" onClick={() => setImporting(true)}>
-            <Icon name="upload" size={16} /> Import tasks
-          </button>
-        )}
-        {project.can_manage && (
-          <button className="btn" onClick={() => setFieldsOpen(true)}>
-            <Icon name="list" size={16} /> Fields
-          </button>
-        )}
-        {project.can_manage && (
-          <button className="btn" onClick={() => setSettings(true)}>
-            <Icon name="settings" size={16} /> Settings
-          </button>
+        {(project.can_contribute || project.can_manage) && (
+          <div className="project-actions">
+            {project.can_contribute && (
+              <button className="btn" onClick={() => setImporting(true)}>
+                <Icon name="upload" size={16} /> Import tasks
+              </button>
+            )}
+            {project.can_manage && (
+              <button className="btn" onClick={() => setFieldsOpen(true)}>
+                <Icon name="list" size={16} /> Fields
+              </button>
+            )}
+            {project.can_manage && (
+              <button className="btn" onClick={() => setSettings(true)}>
+                <Icon name="settings" size={16} /> Settings
+              </button>
+            )}
+          </div>
         )}
       </div>
       {project.can_contribute && <ImportTasks open={importing} onClose={() => setImporting(false)} projectId={project.id} onDone={reload} />}

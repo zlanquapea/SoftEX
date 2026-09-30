@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { dateLabel } from '../format';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { api, type Project, type UserRef } from '../api';
 import { Avatar } from '../components/Avatar';
@@ -79,7 +80,7 @@ export function Goals() {
           <strong>{g.title}</strong>
           <small className="muted">
             {g.key_results.length} key result{g.key_results.length === 1 ? '' : 's'}
-            {g.due_date && <> · due {new Date(`${g.due_date}T00:00`).toLocaleDateString()}</>}
+            {g.due_date && <> · due {dateLabel(g.due_date)}</>}
           </small>
         </span>
         <span className="goal-progress">
@@ -117,7 +118,17 @@ export function Goals() {
       ) : !data ? (
         <Loading />
       ) : !data.length ? (
-        <Empty icon="target" title={tab === 'active' ? 'No goals yet' : 'Nothing archived'}>
+        <Empty
+          icon="target"
+          title={tab === 'active' ? 'No goals yet' : 'Nothing archived'}
+          action={
+            tab === 'active' && (
+              <button className="btn primary" onClick={() => setCreating(true)}>
+                <Icon name="plus" size={16} /> New goal
+              </button>
+            )
+          }
+        >
           {tab === 'active' && 'Set a goal, add key results you can measure, and link the projects that move it.'}
         </Empty>
       ) : (
@@ -265,7 +276,7 @@ export function GoalDetail() {
             <span>
               Owner: <strong>{goal.owner?.name}</strong>
             </span>
-            {goal.due_date && <span>Due {new Date(`${goal.due_date}T00:00`).toLocaleDateString()}</span>}
+            {goal.due_date && <span>Due {dateLabel(goal.due_date)}</span>}
             {goal.archived_at && <span className="pill">Archived</span>}
           </div>
         </div>

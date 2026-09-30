@@ -5,7 +5,7 @@ import { Avatar } from '../components/Avatar';
 import { Icon } from '../components/Icon';
 import { statusLabel } from '../components/Layout';
 import { Empty, ErrorState, Loading, Tabs, useAction } from '../components/ui';
-import { localTimeIn, ROLE_LABEL } from '../format';
+import { localTimeIn, ROLE_LABEL, dateLabel } from '../format';
 import { useApi } from '../hooks';
 import { useSession } from '../session';
 
@@ -171,7 +171,7 @@ export function PersonView() {
             <>
               <dt>Guest access</dt>
               <dd>
-                Sponsored by {p.sponsor_name ?? '—'} · ends {p.guest_expires_at ? new Date(p.guest_expires_at).toLocaleDateString() : '—'}
+                Sponsored by {p.sponsor_name ?? '—'} · ends {p.guest_expires_at ? dateLabel(p.guest_expires_at) : '—'}
               </dd>
             </>
           )}
@@ -182,7 +182,7 @@ export function PersonView() {
             </>
           )}
           <dt>Joined</dt>
-          <dd>{new Date(p.joined_at).toLocaleDateString()}</dd>
+          <dd>{dateLabel(p.joined_at)}</dd>
         </dl>
       </div>
     </div>

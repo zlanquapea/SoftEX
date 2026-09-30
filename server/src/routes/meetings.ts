@@ -19,7 +19,7 @@ import {
 import { minutesAfter, type Row } from '../db.js';
 import { authOf, notify, publishToChannel, recordActivity, userSummary, type Ctx } from '../context.js';
 import { emitEvent } from '../webhooks.js';
-import { forbidden, newId, notFound, now, parse, filterAsync, randomToken, sha256 } from '../util.js';
+import { forbidden, friendlyTime, newId, notFound, now, parse, filterAsync, randomToken, sha256 } from '../util.js';
 import { queueEmail } from '../mailer.js';
 import { serializeTasks } from './tasks.js';
 import { serializeMessages } from './channels.js';
@@ -134,7 +134,7 @@ export function meetingsRouter(ctx: Ctx) {
   const emailInvites = async (m: Row, userIds: string[], method: 'REQUEST' | 'CANCEL') => {
     if (!userIds.length) return;
     const organizer = (await db.get('SELECT name FROM users WHERE id = ?', m.organizer_id))!.name;
-    const when = new Date(m.starts_at).toUTCString().replace('GMT', 'UTC');
+    const when = friendlyTime(m.starts_at);
     for (const u of await db.all(`SELECT id, email, timezone FROM users WHERE id IN (${userIds.map(() => '?').join(',')})`, ...userIds)) {
       let local = when;
       try {
@@ -258,7 +258,8 @@ export function meetingsRouter(ctx: Ctx) {
     });
     const organizer = (await db.get('SELECT name FROM users WHERE id = ?', auth.userId))!;
     for (const u of people) {
-      await notify(ctx, auth.workspaceId, { userId: u, kind: 'meeting', title: `${organizer.name} invited you to “${body.title}”`, body: new Date(startsAt).toUTCString(), link: `/meetings/${id}`, actorId: auth.userId });
+      const tz = (await db.get('SELECT timezone FROM users WHERE id = ?', u))?.timezone;
+      await notify(ctx, auth.workspaceId, { userId: u, kind: 'meeting', title: `${organizer.name} invited you to “${body.title}”`, body: friendlyTime(startsAt, tz), link: `/meetings/${id}`, actorId: auth.userId });
     }
     await emailInvites((await db.get('SELECT * FROM meetings WHERE id = ?', id))!, people.filter((u) => u !== auth.userId), 'REQUEST');
     if (channel) {
@@ -348,7 +349,8 @@ export function meetingsRouter(ctx: Ctx) {
     }
     if (body.startsAt && body.startsAt !== m.starts_at) {
       for (const p of await participants(m.id)) {
-        await notify(ctx, auth.workspaceId, { userId: p.id, kind: 'meeting', title: `“${m.title}” was rescheduled`, body: new Date(body.startsAt).toUTCString(), link: `/meetings/${m.id}`, actorId: auth.userId });
+        const tz = (await db.get('SELECT timezone FROM users WHERE id = ?', p.id))?.timezone;
+        await notify(ctx, auth.workspaceId, { userId: p.id, kind: 'meeting', title: `“${m.title}” was rescheduled`, body: `Now ${friendlyTime(body.startsAt, tz)}`, link: `/meetings/${m.id}`, actorId: auth.userId });
       }
     }
     await ctx.hub.publish(auth.workspaceId, { type: 'meeting.updated', meetingId: m.id }, { kind: 'meeting', meetingId: m.id });

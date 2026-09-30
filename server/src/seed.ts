@@ -279,6 +279,20 @@ for (const item of [
   await alex.post('/onboarding/items', item);
 }
 
+// Goals, a dashboard and a whiteboard, so every part of the product has something to show.
+const launchGoal = await alex.post('/goals', {
+  title: 'Launch the refreshed brand and the mobile beta',
+  description: 'The two bets for this quarter: a consistent brand everywhere, and real customers using the app.',
+  dueDate: day(60),
+  projectIds: [brand.id, mobile.id],
+});
+await alex.post(`/goals/${launchGoal.id}/key-results`, { title: 'Brand refresh work completed', kind: 'tasks', projectId: brand.id });
+await alex.post(`/goals/${launchGoal.id}/key-results`, { title: 'Beta testers signed up', startValue: 0, targetValue: 200, currentValue: 64, unit: 'people' });
+const researchGoal = await alex.post('/goals', { title: 'Understand what customers need next', parentId: launchGoal.id, ownerId: nina.id, dueDate: day(30), projectIds: [research.id] });
+await alex.post(`/goals/${researchGoal.id}/key-results`, { title: 'Customer interviews completed', startValue: 0, targetValue: 12, currentValue: 8, unit: 'interviews' });
+await alex.post('/dashboards', { name: 'Leadership overview', description: 'Open work, overdue tasks and progress across every project.' });
+await maya.c.post('/boards', { title: 'Q4 launch brainstorm', projectId: brand.id });
+
 // A guest from a client, limited to one channel.
 const client = await alex.post('/channels', { name: 'client-northwind', kind: 'private', topic: 'Shared with Northwind (external guest)', memberIds: [maya.id] });
 await addPerson('Casey Morgan', 'casey@northwind.test', 'guest', { title: 'Marketing Director, Northwind' }, { channelIds: [client.id], guestDays: 45 });

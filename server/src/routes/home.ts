@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { z } from 'zod';
 import { minutesAfter } from '../db.js';
 import {
+  atLeast,
   accessibleChannelIds,
   accessibleProjectIds,
   canContributeProject,
@@ -15,6 +16,7 @@ import {
   loadProject,
 } from '../access.js';
 import { authOf, notify, recordActivity, type Ctx } from '../context.js';
+import { isSaas } from '../plans.js';
 import { forbidden, likePattern, newId, now, parse, parseJson, today, filterAsync } from '../util.js';
 import { serializeTasks } from './tasks.js';
 
@@ -138,8 +140,32 @@ export function homeRouter(ctx: Ctx) {
       .all(`SELECT * FROM pages WHERE owner_id = ? AND workspace_id = ? AND archived_at IS NULL AND review_date IS NOT NULL AND review_date <= ?`, auth.userId, auth.workspaceId, t0))
       .map((p) => ({ id: p.id, title: p.title, review_date: p.review_date }));
 
+    // A short setup guide for the people who run a new workspace, until every step is done.
+    let setup: { id: string; done: boolean }[] | null = null;
+    if (atLeast(auth, 'admin')) {
+      const exists = async (sql: string, ...params: string[]) => !!(await db.get(`${sql} LIMIT 1`, ...params));
+      const ws = auth.workspaceId;
+      const user = await db.get('SELECT email_verified_at FROM users WHERE id = ?', auth.userId);
+      setup = [
+        ...(isSaas(ctx) ? [{ id: 'verify', done: !!user?.email_verified_at }] : []),
+        {
+          id: 'invite',
+          done:
+            (await exists(`SELECT 1 FROM memberships WHERE workspace_id = ? AND user_id != ? AND deactivated_at IS NULL`, ws, auth.userId)) ||
+            (await exists(`SELECT 1 FROM invitations WHERE workspace_id = ? AND accepted_at IS NULL AND revoked_at IS NULL`, ws)),
+        },
+        { id: 'project', done: await exists('SELECT 1 FROM projects WHERE workspace_id = ?', ws) },
+        { id: 'message', done: await exists('SELECT 1 FROM messages m JOIN channels c ON c.id = m.channel_id WHERE c.workspace_id = ? AND m.user_id = ?', ws, auth.userId) },
+        { id: 'page', done: await exists('SELECT 1 FROM pages WHERE workspace_id = ?', ws) },
+        { id: 'meeting', done: await exists('SELECT 1 FROM meetings WHERE workspace_id = ?', ws) },
+      ];
+      if (setup.every((s) => s.done)) setup = null;
+    }
+
     res.json({
       since,
+      first_visit: !membership.last_seen_home_at,
+      setup,
       focus: await serializeTasks(db, focus),
       up_next: await serializeTasks(db, upNextTasks),
       blocked: await serializeTasks(db, blocked),

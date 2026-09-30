@@ -115,7 +115,17 @@ export function Meetings() {
       {error && <ErrorState error={error} retry={reload} />}
       {!data && !error && <Loading />}
       {data && !data.length && (
-        <Empty icon="video" title={range === 'upcoming' ? 'No upcoming meetings' : 'No past meetings'}>
+        <Empty
+          icon="video"
+          title={range === 'upcoming' ? 'No upcoming meetings' : 'No past meetings'}
+          action={
+            range === 'upcoming' && (
+              <button className="btn primary" onClick={() => openCreate('meeting')}>
+                <Icon name="plus" size={16} /> Schedule a meeting
+              </button>
+            )
+          }
+        >
           Schedule from here, a channel or a project.
         </Empty>
       )}

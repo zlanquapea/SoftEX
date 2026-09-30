@@ -4,7 +4,7 @@ import { Icon } from '../components/Icon';
 import { Markdown } from '../components/Markdown';
 import { FEATURE_ORDER, PlanFeatures, PlanPrice, contactHref, daysUntil, lrd, usd } from '../components/Plan';
 import { ErrorState, Field, Loading, Modal, useAction } from '../components/ui';
-import { bytes, dateTime } from '../format';
+import { bytes, dateTime, dateLabel } from '../format';
 import { useApi } from '../hooks';
 import { useSession } from '../session';
 
@@ -93,11 +93,11 @@ export function BillingSettings() {
 
   const statusLine =
     plan.status === 'trial'
-      ? `Organization trial — ${daysUntil(plan.trial_ends_at)} days left (ends ${plan.trial_ends_at?.slice(0, 10)}). If you don't choose a plan, you move to Free and keep all your data.`
+      ? `Organization trial — ${daysUntil(plan.trial_ends_at)} days left (ends ${dateLabel(plan.trial_ends_at)}). If you don't choose a plan, you move to Free and keep all your data.`
       : plan.status === 'active'
-        ? `Paid until ${plan.paid_through?.slice(0, 10)}.`
+        ? `Paid until ${dateLabel(plan.paid_through)}.`
         : plan.status === 'grace'
-          ? `Payment overdue since ${plan.paid_through?.slice(0, 10)}. Paid features keep working for ${data.grace_days} days after that date.`
+          ? `Payment overdue since ${dateLabel(plan.paid_through)}. Paid features keep working for ${data.grace_days} days after that date.`
           : 'Free forever. Upgrade any time to unlock more.';
 
   return (
@@ -198,7 +198,7 @@ export function BillingSettings() {
                     <td>
                       <span className={`pill pay-${p.status}`}>{STATUS_TEXT[p.status]}</span>
                       {p.decision_note && <small className="muted block">{p.decision_note}</small>}
-                      {p.status === 'approved' && p.period_end && <small className="muted block">Covers until {p.period_end.slice(0, 10)}</small>}
+                      {p.status === 'approved' && p.period_end && <small className="muted block">Covers until {dateLabel(p.period_end)}</small>}
                     </td>
                     <td>
                       {p.status === 'pending' && (

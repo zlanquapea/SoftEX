@@ -10,7 +10,7 @@ import { QuickCreate } from './QuickCreate';
 import { TaskDrawer } from './TaskDrawer';
 import { useToast } from './ui';
 import { AccountBanners } from './Plan';
-import { ROLE_LABEL } from '../format';
+import { ROLE_LABEL, dateLabel } from '../format';
 import { clearOfflineData } from '../pwa';
 import { Logo } from './Logo';
 import { setTheme, useTheme } from '../theme';
@@ -96,6 +96,8 @@ export function Layout({ children }: { children: ReactNode }) {
   const channelUnread = (channels ?? []).filter((c) => c.kind !== 'dm' && c.joined).reduce((n, c) => n + c.mentions, 0);
   const workDue = (work?.overdue.length ?? 0) + (work?.today.length ?? 0);
   const joinedChannels = (channels ?? []).filter((c) => c.kind !== 'dm' && c.joined);
+  const openChannelId = location.pathname.match(/^\/channels\/([^/]+)/)?.[1];
+  const dmOpen = !!openChannelId && (channels ?? []).some((c) => c.id === openChannelId && c.kind === 'dm');
 
   const switchWorkspace = async (id: string) => {
     setMenu(null);
@@ -179,25 +181,39 @@ export function Layout({ children }: { children: ReactNode }) {
           <nav>
             <p className="nav-label">Workspace</p>
             {nav.map((n) => (
-              <NavLink key={n.to} to={n.to} end={n.end} className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`}>
-                <Icon name={n.icon} />
-                <span>{n.label}</span>
-                {n.badge ? n.soft ? <em>{n.badge}</em> : <b>{n.badge}</b> : null}
-              </NavLink>
+              <div key={n.to} className="nav-group">
+                <NavLink
+                  to={n.to}
+                  end={n.end}
+                  className={({ isActive }) => {
+                    // A direct message lives under /channels/…, but belongs with Chats.
+                    const active = n.to === '/chats' ? isActive || dmOpen : n.to === '/channels' ? isActive && !dmOpen : isActive;
+                    return `nav-item ${active ? 'active' : ''}`;
+                  }}
+                >
+                  <Icon name={n.icon} />
+                  <span>{n.label}</span>
+                  {n.badge ? n.soft ? <em>{n.badge}</em> : <b>{n.badge}</b> : null}
+                </NavLink>
+                {n.to === '/channels' && joinedChannels.length > 0 && (
+                  <div className="nav-channels" aria-label="Your channels">
+                    {joinedChannels.slice(0, 8).map((c) => (
+                      <NavLink key={c.id} to={`/channels/${c.id}`} className={({ isActive }) => `nav-channel ${isActive ? 'active' : ''} ${c.unread ? 'unread' : ''}`}>
+                        <Icon name={c.kind === 'private' ? 'lock' : c.kind === 'announcement' ? 'megaphone' : 'hash'} size={14} />
+                        <span>{c.name}</span>
+                        {c.mentions ? <b>{c.mentions}</b> : null}
+                      </NavLink>
+                    ))}
+                    {joinedChannels.length > 8 && (
+                      <NavLink to="/channels" end className="nav-channel more">
+                        <span>All {joinedChannels.length} channels</span>
+                      </NavLink>
+                    )}
+                  </div>
+                )}
+              </div>
             ))}
             <FavoritesNav />
-            {joinedChannels.length > 0 && (
-              <div className="nav-channels" aria-label="Your channels">
-                <p className="nav-label sub">Your channels</p>
-                {joinedChannels.slice(0, 8).map((c) => (
-                  <NavLink key={c.id} to={`/channels/${c.id}`} className={({ isActive }) => `nav-channel ${isActive ? 'active' : ''} ${c.unread ? 'unread' : ''}`}>
-                    <Icon name={c.kind === 'private' ? 'lock' : c.kind === 'announcement' ? 'megaphone' : 'hash'} size={14} />
-                    <span>{c.name}</span>
-                    {c.mentions ? <b>{c.mentions}</b> : null}
-                  </NavLink>
-                ))}
-              </div>
-            )}
             <div className="nav-separator" />
             <p className="nav-label">Explore</p>
             {explore.map((n) => (
@@ -286,7 +302,7 @@ export function Layout({ children }: { children: ReactNode }) {
           </header>
           {me.role === 'guest' && me.guest_expires_at && (
             <div className="banner">
-              You are a guest in {me.workspace.name}. Your access ends {new Date(me.guest_expires_at).toLocaleDateString()}.
+              You are a guest in {me.workspace.name}. Your access ends {dateLabel(me.guest_expires_at)}.
             </div>
           )}
           <AccountBanners />

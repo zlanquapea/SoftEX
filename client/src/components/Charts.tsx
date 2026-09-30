@@ -105,7 +105,7 @@ export function DonutChart({ items, label = 'total' }: { items: SeriesItem[]; la
           {label}
         </text>
       </svg>
-      <ul className="legend">
+      <ul className="chart-legend">
         {items.map((item, i) => (
           <li key={item.key || i}>
             <i style={{ background: colorFor(item, i) }} /> {item.label} <strong>{fmt(item.value)}</strong>
@@ -170,7 +170,7 @@ export function LineChart({ labels, series }: { labels: string[]; series: { key:
           </g>
         ))}
       </svg>
-      <ul className="legend inline">
+      <ul className="chart-legend inline">
         {series.map((s, si) => (
           <li key={s.key}>
             <i style={{ background: colors[si % colors.length] }} /> {s.label} <strong>{s.values.reduce((a, b) => a + b, 0)}</strong>

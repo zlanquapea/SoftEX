@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { dateLabel, timeAgo } from '../format';
 import { useSearchParams } from 'react-router-dom';
 import { api, type Me } from '../api';
 import { Icon } from '../components/Icon';
@@ -417,7 +418,7 @@ function Sessions() {
             <strong>{s.device}</strong> {s.current && <span className="pill">This device</span>}
             <small className="muted block">
               {s.workspace_name}
-              {s.ip && ` · ${s.ip}`} · signed in {new Date(s.created_at).toLocaleDateString()} · last active {new Date(s.last_seen_at).toLocaleString()}
+              {s.ip && ` · ${s.ip}`} · signed in {dateLabel(s.created_at)} · last active {timeAgo(s.last_seen_at)}
             </small>
           </span>
           {!s.current && (
@@ -619,8 +620,8 @@ function ApiTokens() {
             <span className="grow">
               <strong>{t.name}</strong> <span className="pill">{t.scope === 'write' ? 'Read & write' : 'Read only'}</span>
               <small className="muted block">
-                <code>{t.prefix}…</code> · created {new Date(t.created_at).toLocaleDateString()} · {t.last_used_at ? `last used ${new Date(t.last_used_at).toLocaleString()}` : 'never used'}
-                {t.expires_at && ` · expires ${new Date(t.expires_at).toLocaleDateString()}`}
+                <code>{t.prefix}…</code> · created {dateLabel(t.created_at)} · {t.last_used_at ? `last used ${timeAgo(t.last_used_at)}` : 'never used'}
+                {t.expires_at && ` · expires ${dateLabel(t.expires_at)}`}
                 {t.revoked_at && ' · revoked'}
               </small>
             </span>

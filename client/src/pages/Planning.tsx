@@ -437,7 +437,7 @@ export function ProjectTimeline({ projectId, milestones, canEdit }: { projectId:
           Give tasks a due date (and optionally a start date) to see them here.
         </Empty>
       ) : (
-        <div className="timeline" role="figure" aria-label="Project timeline">
+        <div className="gantt" role="figure" aria-label="Project timeline">
           <div className="tl-labels">
             <div className="tl-head" />
             {milestones.some((m) => m.due_date) && <div className="tl-row tl-label muted">Milestones</div>}
