@@ -106,7 +106,7 @@ export function Modal({
 
 // ---------- Small building blocks ----------
 
-export function Empty({ icon = 'spark', title, children }: { icon?: string; title: string; children?: ReactNode }) {
+export function Empty({ icon = 'spark', title, children, action }: { icon?: string; title: string; children?: ReactNode; action?: ReactNode }) {
   return (
     <div className="empty">
       <span className="empty-icon">
@@ -114,6 +114,7 @@ export function Empty({ icon = 'spark', title, children }: { icon?: string; titl
       </span>
       <strong>{title}</strong>
       {children && <div className="muted">{children}</div>}
+      {action && <div className="empty-action">{action}</div>}
     </div>
   );
 }
@@ -154,9 +155,36 @@ export function Field({ label, children, hint }: { label: string; children: Reac
   );
 }
 
+/** Marks a scrolling tab row with `more-left` / `more-right` and keeps the chosen tab in view. */
+export function useTabOverflow(active: unknown) {
+  const ref = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    const update = () => {
+      el.classList.toggle('more-left', el.scrollLeft > 2);
+      el.classList.toggle('more-right', el.scrollLeft + el.clientWidth < el.scrollWidth - 2);
+    };
+    update();
+    el.addEventListener('scroll', update, { passive: true });
+    const ro = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(update) : null;
+    ro?.observe(el);
+    return () => {
+      el.removeEventListener('scroll', update);
+      ro?.disconnect();
+    };
+  }, []);
+  useEffect(() => {
+    const current = ref.current?.querySelector<HTMLElement>('[aria-selected="true"], .active');
+    if (current && ref.current && ref.current.scrollWidth > ref.current.clientWidth) current.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+  }, [active]);
+  return ref;
+}
+
 export function Tabs<T extends string>({ tabs, value, onChange }: { tabs: { id: T; label: string; count?: number }[]; value: T; onChange: (v: T) => void }) {
+  const ref = useTabOverflow(value);
   return (
-    <div className="tabs" role="tablist">
+    <div className="tabs" role="tablist" ref={ref}>
       {tabs.map((t) => (
         <button key={t.id} role="tab" aria-selected={value === t.id} className={value === t.id ? 'active' : ''} onClick={() => onChange(t.id)}>
           {t.label}
@@ -164,6 +192,19 @@ export function Tabs<T extends string>({ tabs, value, onChange }: { tabs: { id: 
         </button>
       ))}
     </div>
+  );
+}
+
+/** A password box with a show/hide toggle, so people can check what they typed on a phone keyboard. */
+export function PasswordInput(props: React.InputHTMLAttributes<HTMLInputElement>) {
+  const [shown, setShown] = useState(false);
+  return (
+    <span className="password-field">
+      <input {...props} type={shown ? 'text' : 'password'} />
+      <button type="button" className="icon-btn" onClick={() => setShown((v) => !v)} aria-label={shown ? 'Hide' : 'Show'} title={shown ? 'Hide password' : 'Show password'} aria-pressed={shown}>
+        <Icon name="eye" size={16} />
+      </button>
+    </span>
   );
 }
 

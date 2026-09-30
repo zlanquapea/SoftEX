@@ -6,7 +6,7 @@ import { Icon } from '../components/Icon';
 import { useShell } from '../components/Layout';
 import { Markdown } from '../components/Markdown';
 import { Empty, ErrorState, Field, Loading, Modal, Tabs, useAction } from '../components/ui';
-import { bytes, dateTime, plainMentions, timeAgo } from '../format';
+import { bytes, dateTime, plainMentions, timeAgo, dateLabel } from '../format';
 import { useApi } from '../hooks';
 import { useSession } from '../session';
 import { MediaAttachment, isPlayable } from '../components/Media';
@@ -336,7 +336,7 @@ export function PageView() {
             </h1>
             <p className="muted small">
               Owner <strong>{page.owner?.name}</strong> · version {page.version} · updated {timeAgo(page.updated_at)} by {page.updated_by?.name}
-              {page.review_date && ` · review by ${new Date(`${page.review_date}T00:00`).toLocaleDateString()}`}
+              {page.review_date && ` · review by ${dateLabel(page.review_date)}`}
             </p>
             {editingNow.length > 0 && (
               <p className="row-gap">

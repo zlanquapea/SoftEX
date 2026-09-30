@@ -175,7 +175,7 @@ export function TaskDetail({ taskId, onDeleted }: { taskId: string; onDeleted?: 
             defaultValue={task.estimate_hours ?? ''}
             key={`est-${task.estimate_hours}`}
             disabled={disabled}
-            placeholder="hours"
+            placeholder="0"
             aria-label="Estimate in hours"
             onBlur={(e) => {
               const v = e.target.value === '' ? null : Number(e.target.value);

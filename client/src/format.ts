@@ -16,6 +16,14 @@ export const timeOf = (iso: string) => new Date(iso).toLocaleTimeString(undefine
 export const dateTime = (iso: string) =>
   new Date(iso).toLocaleString(undefined, { weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
 
+/** A calendar date for people: "Oct 30", or "Oct 30, 2027" outside this year. Takes "YYYY-MM-DD" or a full timestamp. */
+export function dateLabel(value: string | null | undefined) {
+  if (!value) return '';
+  const d = new Date(/^\d{4}-\d{2}-\d{2}$/.test(value) ? `${value}T00:00:00` : value);
+  if (Number.isNaN(d.getTime())) return value;
+  return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: d.getFullYear() === new Date().getFullYear() ? undefined : 'numeric' });
+}
+
 export const localToday = () => {
   const d = new Date();
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;

@@ -16,7 +16,7 @@ import {
 import { ActionConfig, ACTIONS, runAutomations, TriggerConfig, TRIGGERS } from '../automations.js';
 import { daysBetween, type Row } from '../db.js';
 import { audit, authOf, notify, type Ctx } from '../context.js';
-import { badRequest, forbidden, HttpError, newId, notFound, now, parse, parsePatch, parseJson, today, filterAsync } from '../util.js';
+import { badRequest, forbidden, friendlyDate, HttpError, newId, notFound, now, parse, parsePatch, parseJson, today, filterAsync } from '../util.js';
 import { hasFeature, requireFeature } from '../plans.js';
 import { postMessage } from './channels.js';
 
@@ -484,7 +484,7 @@ export async function processDeadlines(ctx: Ctx, at = new Date()) {
   }
   for (const t of await db.all(`SELECT * FROM tasks WHERE status != 'done' AND due_date IS NOT NULL AND due_date < ?`, t0)) {
     if (!await once(t.id, t.due_date, 'overdue')) continue;
-    if (t.owner_id) await notify(ctx, t.workspace_id, { userId: t.owner_id, kind: 'deadline', title: `“${t.title}” is overdue`, body: `It was due ${t.due_date}.`, link: `/tasks/${t.id}` });
+    if (t.owner_id) await notify(ctx, t.workspace_id, { userId: t.owner_id, kind: 'deadline', title: `“${t.title}” is overdue`, body: `It was due ${friendlyDate(t.due_date)}.`, link: `/tasks/${t.id}` });
     await runAutomations(ctx, 'task.overdue', t);
     sent += 1;
   }

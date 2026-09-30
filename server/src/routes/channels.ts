@@ -196,7 +196,7 @@ async function channelList(db: Database, auth: Auth) {
             )
           : undefined;
       const lastMessage = await db.get(
-        `SELECT created_at FROM messages WHERE channel_id = ? AND deleted_at IS NULL ORDER BY created_at DESC LIMIT 1`,
+        `SELECT created_at, body, user_id FROM messages WHERE channel_id = ? AND deleted_at IS NULL AND parent_id IS NULL ORDER BY created_at DESC LIMIT 1`,
         c.id,
       );
       return {
@@ -213,6 +213,9 @@ async function channelList(db: Database, auth: Auth) {
         mentions: c.kind === 'dm' ? unread : mentions,
         members,
         last_message_at: lastMessage?.created_at ?? null,
+        // A preview for the Chats list; channels show their name and topic instead.
+        last_message:
+          c.kind === 'dm' && lastMessage ? { text: String(lastMessage.body ?? '').slice(0, 160), mine: lastMessage.user_id === auth.userId } : undefined,
       };
     })));
 }

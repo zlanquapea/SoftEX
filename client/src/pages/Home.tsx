@@ -12,6 +12,8 @@ import { useSession } from '../session';
 
 interface HomeData {
   since: string;
+  first_visit?: boolean;
+  setup?: { id: SetupStepId; done: boolean }[] | null;
   focus: Task[];
   up_next: Task[];
   blocked: Task[];
@@ -139,6 +141,8 @@ export function Home() {
           </Link>
         ))}
       </div>
+
+      {data.setup && <SetupGuide steps={data.setup} />}
 
       <div className="dashboard-grid">
         <div className="main-column">
@@ -333,7 +337,7 @@ export function Home() {
               <div className="section-heading compact">
                 <div>
                   <h2>What changed</h2>
-                  <p>Since you last checked · {timeAgo(data.since)}</p>
+                  <p>{data.first_visit ? 'Recent activity in your workspace' : `Since you last checked · ${timeAgo(data.since)}`}</p>
                 </div>
               </div>
               {data.changes.map((a) => (
@@ -415,5 +419,94 @@ export function CheckinModal({ open, onClose, onDone, projectId }: { open: boole
         </div>
       </form>
     </Modal>
+  );
+}
+
+// ======================= Getting started =======================
+
+type SetupStepId = 'verify' | 'invite' | 'project' | 'message' | 'page' | 'meeting';
+
+const SETUP_STEPS: Record<SetupStepId, { title: string; text: string; cta: string; to?: string; create?: 'project' | 'page' | 'meeting' }> = {
+  verify: { title: 'Confirm your email address', text: 'Use the link we emailed you, so you can invite people and choose a plan.', cta: 'Resend link' },
+  invite: { title: 'Invite your team', text: 'Küü is better together. Add colleagues by email, or invite partners as guests.', cta: 'Invite people', to: '/admin?tab=invitations' },
+  project: { title: 'Create your first project', text: 'Give one real piece of work a home: its tasks, chat and documents together.', cta: 'New project', create: 'project' },
+  message: { title: 'Say hello in a channel', text: 'Post the first message so your team finds a conversation when they arrive.', cta: 'Open channels', to: '/channels' },
+  page: { title: 'Write down how you work', text: 'Start the knowledge base with one page: a policy, a how-to or a welcome note.', cta: 'New page', create: 'page' },
+  meeting: { title: 'Schedule a meeting', text: 'Add an agenda and capture decisions and follow-ups as you talk.', cta: 'New meeting', create: 'meeting' },
+};
+
+/** A checklist that helps whoever set up the workspace get their team going; it disappears once everything is done. */
+function SetupGuide({ steps }: { steps: { id: SetupStepId; done: boolean }[] }) {
+  const { me } = useSession();
+  const { openCreate } = useShell();
+  const act = useAction();
+  const key = `kuu:setup-hidden:${me?.workspace.id}`;
+  const [hidden, setHidden] = useState(() => {
+    try {
+      return localStorage.getItem(key) === '1';
+    } catch {
+      return false;
+    }
+  });
+  if (hidden) return null;
+  const done = steps.filter((s) => s.done).length;
+  const next = steps.find((s) => !s.done)?.id;
+  const hide = () => {
+    try {
+      localStorage.setItem(key, '1');
+    } catch {
+      /* private browsing: hide for this visit only */
+    }
+    setHidden(true);
+  };
+  return (
+    <section className="card setup-guide" aria-label="Get started">
+      <div className="section-heading">
+        <div>
+          <h2>Get {me?.workspace.name} ready</h2>
+          <p>
+            {done} of {steps.length} done — a few minutes now saves your team a lot of time later.
+          </p>
+        </div>
+        <button className="btn sm" onClick={hide}>
+          Hide
+        </button>
+      </div>
+      <div className="setup-progress" role="progressbar" aria-valuemin={0} aria-valuemax={steps.length} aria-valuenow={done} aria-label="Setup progress">
+        <i style={{ width: `${(done / steps.length) * 100}%` }} />
+      </div>
+      <ol className="setup-steps">
+        {steps.map((s) => {
+          const step = SETUP_STEPS[s.id];
+          const primary = s.id === next;
+          return (
+            <li key={s.id} className={s.done ? 'done' : primary ? 'next' : ''}>
+              <span className="setup-check" aria-hidden="true">
+                {s.done ? <Icon name="check" size={14} /> : null}
+              </span>
+              <div className="grow">
+                <strong>{step.title}</strong>
+                {!s.done && <small className="muted">{step.text}</small>}
+              </div>
+              {!s.done &&
+                (step.to ? (
+                  <Link className={`btn sm ${primary ? 'primary' : ''}`} to={step.to}>
+                    {step.cta}
+                  </Link>
+                ) : step.create ? (
+                  <button className={`btn sm ${primary ? 'primary' : ''}`} onClick={() => openCreate(step.create)}>
+                    {step.cta}
+                  </button>
+                ) : (
+                  <button className={`btn sm ${primary ? 'primary' : ''}`} onClick={() => act(() => api.post('/me/verify-email/resend'), 'Confirmation email sent')}>
+                    {step.cta}
+                  </button>
+                ))}
+              <span className="sr-only">{s.done ? 'Done' : 'Not done yet'}</span>
+            </li>
+          );
+        })}
+      </ol>
+    </section>
   );
 }

@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { dateLabel } from '../format';
 import { Link } from 'react-router-dom';
 import { api, type Feature, type PublicPlan } from '../api';
 import { useSession } from '../session';
@@ -101,7 +102,7 @@ export function AccountBanners() {
     if (plan.status === 'grace') {
       banners.push(
         <div className="banner warn" key="grace">
-          <Icon name="alert" size={15} /> Your {plan.name} plan ended on {plan.paid_through?.slice(0, 10)}. Renew within a few days to keep paid features.
+          <Icon name="alert" size={15} /> Your {plan.name} plan ended on {dateLabel(plan.paid_through)}. Renew within a few days to keep paid features.
           <Link to="/admin?tab=billing">Renew</Link>
         </div>,
       );

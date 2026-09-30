@@ -110,7 +110,15 @@ export function Dashboards() {
       ) : !data ? (
         <Loading />
       ) : !data.length ? (
-        <Empty icon="chart" title="No dashboards yet">
+        <Empty
+          icon="chart"
+          title="No dashboards yet"
+          action={
+            <button className="btn primary" onClick={() => setCreating(true)}>
+              <Icon name="plus" size={16} /> New dashboard
+            </button>
+          }
+        >
           Create one to see open work, overdue tasks, progress and trends at a glance. It starts with useful charts you can change.
         </Empty>
       ) : (

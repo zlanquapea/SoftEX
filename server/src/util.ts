@@ -6,6 +6,27 @@ export const newId = () => randomUUID();
 export const now = () => new Date().toISOString();
 export const today = () => new Date().toISOString().slice(0, 10);
 
+/** A due date for people to read: "Wed, Sep 30" (with the year when it isn't this year). Takes "YYYY-MM-DD". */
+export function friendlyDate(day: string | null | undefined) {
+  if (!day) return '';
+  const d = new Date(`${day.slice(0, 10)}T12:00:00Z`);
+  if (Number.isNaN(d.getTime())) return day;
+  const year = d.getUTCFullYear() === new Date().getUTCFullYear() ? undefined : 'numeric';
+  return d.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', year, timeZone: 'UTC' });
+}
+
+/** A moment in someone's own time zone: "Thu, Oct 1, 2:00 PM (Europe/London)". Falls back to UTC. */
+export function friendlyTime(iso: string, timeZone?: string | null) {
+  const d = new Date(iso);
+  const opts: Intl.DateTimeFormatOptions = { weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' };
+  try {
+    if (timeZone) return `${d.toLocaleString('en-US', { ...opts, timeZone })} (${timeZone})`;
+  } catch {
+    /* unknown zone: fall through to UTC */
+  }
+  return `${d.toLocaleString('en-US', { ...opts, timeZone: 'UTC' })} UTC`;
+}
+
 export class HttpError extends Error {
   constructor(public status: number, message: string, public details?: unknown) {
     super(message);

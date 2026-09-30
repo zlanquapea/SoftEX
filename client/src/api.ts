@@ -145,6 +145,7 @@ export interface Channel {
   mentions: number;
   members?: (UserRef & { status: string })[];
   last_message_at: string | null;
+  last_message?: { text: string; mine: boolean };
 }
 
 export interface Message {

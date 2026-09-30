@@ -1,7 +1,7 @@
 import { useState, type FormEvent, type ReactNode } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { api, ApiError, type Me } from '../api';
-import { Field, Loading } from '../components/ui';
+import { Field, Loading, PasswordInput } from '../components/ui';
 import { useApi } from '../hooks';
 import { useSession } from '../session';
 import { ROLE_LABEL } from '../format';
@@ -12,9 +12,9 @@ function AuthFrame({ title, subtitle, children }: { title: string; subtitle?: Re
   return (
     <div className="auth">
       <div className="auth-card">
-        <div className="brand dark">
+        <Link to="/" className="brand dark" aria-label="Küü home">
           <Logo height={34} />
-        </div>
+        </Link>
         <h1>{title}</h1>
         {subtitle && <p className="muted">{subtitle}</p>}
         {children}
@@ -69,7 +69,7 @@ export function Login() {
         </Field>
         {!ssoMode && (
           <Field label="Password">
-            <input type="password" autoComplete="current-password" required value={password} onChange={(e) => setPassword(e.target.value)} />
+            <PasswordInput autoComplete="current-password" required value={password} onChange={(e) => setPassword(e.target.value)} />
           </Field>
         )}
         {needCode && (
@@ -169,7 +169,7 @@ export function Register() {
           <input type="email" required autoComplete="email" value={form.email} onChange={set('email')} />
         </Field>
         <Field label="Password" hint="At least 8 characters.">
-          <input type="password" required minLength={8} autoComplete="new-password" value={form.password} onChange={set('password')} />
+          <PasswordInput required minLength={8} autoComplete="new-password" value={form.password} onChange={set('password')} />
         </Field>
         <Field label="Workspace name">
           <input required minLength={2} placeholder="e.g. Acme Studio" value={form.workspaceName} onChange={set('workspaceName')} />
@@ -235,7 +235,7 @@ export function AcceptInvite() {
           </Field>
         )}
         <Field label={invite.existing_account ? 'Your Küü password' : 'Choose a password'} hint={invite.existing_account ? undefined : 'At least 8 characters.'}>
-          <input type="password" required minLength={invite.existing_account ? 1 : 8} value={password} onChange={(e) => setPassword(e.target.value)} />
+          <PasswordInput required minLength={invite.existing_account ? 1 : 8} value={password} onChange={(e) => setPassword(e.target.value)} />
         </Field>
         {!invite.existing_account && pricing?.mode === 'saas' && <TermsCheckbox checked={acceptTerms} onChange={setAcceptTerms} />}
         <button className="btn primary block">Accept invitation</button>
@@ -373,10 +373,10 @@ export function ResetPassword() {
         >
           {error && <p className="form-error" role="alert">{error}</p>}
           <Field label="New password" hint="At least 8 characters.">
-            <input type="password" required minLength={8} autoComplete="new-password" autoFocus value={password} onChange={(e) => setPassword(e.target.value)} />
+            <PasswordInput required minLength={8} autoComplete="new-password" autoFocus value={password} onChange={(e) => setPassword(e.target.value)} />
           </Field>
           <Field label="Repeat new password">
-            <input type="password" required minLength={8} autoComplete="new-password" value={confirm} onChange={(e) => setConfirm(e.target.value)} />
+            <PasswordInput required minLength={8} autoComplete="new-password" value={confirm} onChange={(e) => setConfirm(e.target.value)} />
           </Field>
           <button className="btn primary block">Change password</button>
         </form>
