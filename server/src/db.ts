@@ -601,6 +601,16 @@ CREATE TABLE IF NOT EXISTS payments (
 );
 CREATE INDEX IF NOT EXISTS idx_payments_status ON payments(status, created_at);
 
+-- Each time a plan stopped someone (a feature or a limit): upgrade signals for the workspace and the operator.
+CREATE TABLE IF NOT EXISTS plan_denials (
+  id TEXT PRIMARY KEY,
+  workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+  user_id TEXT,
+  key TEXT NOT NULL,                                 -- a feature (goals, ai…) or limit:members, limit:storage…
+  created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_plan_denials ON plan_denials(workspace_id, created_at);
+
 CREATE TABLE IF NOT EXISTS billing_notices (
   workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
   kind TEXT NOT NULL,
@@ -934,6 +944,8 @@ const ADDED_COLUMNS: [table: string, column: string, definition: string, backfil
   ['pages', 'public_token', 'TEXT'],
   ['tasks', 'form_id', 'TEXT'],
   ['messages', 'forwarded_from', 'TEXT'],
+  // Per-workspace entitlement overrides set by an operator: custom deals, add-ons and comps.
+  ['workspaces', 'entitlement_overrides', 'TEXT'],
 ];
 
 /** Idempotent data fixes run on every start-up, after the columns above exist. */

@@ -127,7 +127,8 @@ describe('plan limits', () => {
       ['retention', () => owner.agent.patch('/api/admin/workspace').send({ retentionDays: 90 })],
       ['scim', () => owner.agent.post('/api/admin/scim/token')],
       ['fields', () => owner.agent.post(`/api/projects/${project.id}/fields`).send({ name: 'Cost', type: 'number' })],
-      ['goals', () => owner.agent.get('/api/goals')],
+      // Reading goals is allowed (downgraded workspaces keep read-only access); creating one is not.
+      ['goals', () => owner.agent.post('/api/goals').send({ title: 'Grow' })],
       ['insights', () => owner.agent.post('/api/dashboards').send({ name: 'Ops' })],
       ['recordings', async () => owner.agent.post(`/api/meetings/${(await owner.agent.post('/api/meetings').send({ title: 'Sync', startsAt: new Date(Date.now() + 3_600_000).toISOString() })).body.id}/recordings`).send({ consent: true })],
       ['goals', () => owner.agent.post(`/api/projects/${project.id}/forms`).send({ title: 'Requests', questions: [{ id: 'q1', label: 'What?', type: 'short' }] })],

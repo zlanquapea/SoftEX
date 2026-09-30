@@ -10,6 +10,11 @@ import {
   activeGuestCount,
   activeMemberCount,
   aiUsedThisMonth,
+  denialLabel,
+  EntitlementOverrides,
+  FEATURE_LABEL,
+  planDenials,
+  readOverrides,
   effectivePlan,
   isOperator,
   isSaas,
@@ -114,6 +119,8 @@ async function usage(ctx: Ctx, workspaceId: string) {
     ai_limit: plan.features.includes('ai') ? plan.ai_limit : 0,
     recording_seconds: await recordingSecondsThisMonth(ctx.db, workspaceId),
     recording_hours: plan.features.includes('recordings') ? plan.recording_hours : 0,
+    // What people tried and the plan stopped, over the last 30 days.
+    blocked: (await planDenials(ctx.db, workspaceId, new Date(Date.now() - 30 * 86_400_000).toISOString())).map((d) => ({ ...d, label: denialLabel(d.key) })),
   };
 }
 
@@ -278,11 +285,13 @@ export function operatorRouter(ctx: Ctx) {
       created_at: ws.created_at,
       suspended_at: ws.suspended_at,
       suspended_reason: ws.suspended_reason,
-      plan: { id: plan.id, name: plan.name, status: plan.status, purchased: plan.purchased, trial_ends_at: plan.trial_ends_at, paid_through: plan.paid_through },
+      plan: { id: plan.id, name: plan.name, status: plan.status, purchased: plan.purchased, trial_ends_at: plan.trial_ends_at, paid_through: plan.paid_through, custom: plan.custom },
+      overrides: readOverrides(ws.entitlement_overrides),
       owners,
       usage: await usage(ctx, ws.id),
       last_active_at: (await db.get('SELECT MAX(created_at) AS t FROM sessions WHERE workspace_id = ?', ws.id))!.t ?? null,
       pending_payments: (await db.get(`SELECT COUNT(*) AS n FROM payments WHERE workspace_id = ? AND status = 'pending'`, ws.id))!.n,
+      upgrade_signals: (await planDenials(db, ws.id, new Date(Date.now() - 30 * 86_400_000).toISOString())).map((d) => ({ ...d, label: denialLabel(d.key) })),
     };
   };
 
@@ -346,9 +355,14 @@ export function operatorRouter(ctx: Ctx) {
         trialEndsAt: z.string().datetime().nullable().optional(),
         suspended: z.boolean().optional(),
         reason: z.string().trim().max(300).optional(),
+        overrides: EntitlementOverrides.nullable().optional(),
       }),
       req.body,
     );
+    if (body.overrides) {
+      const unknown = [...body.overrides.grant, ...body.overrides.revoke].filter((f) => !(f in FEATURE_LABEL));
+      if (unknown.length) throw badRequest(`Unknown feature: ${unknown.join(', ')}`);
+    }
     if (body.suspended && !body.reason) throw badRequest('Give a reason for suspending the workspace');
     await db.update('workspaces', ws.id, {
       plan: body.plan,
@@ -356,6 +370,7 @@ export function operatorRouter(ctx: Ctx) {
       trial_ends_at: body.trialEndsAt,
       suspended_at: body.suspended === undefined ? undefined : body.suspended ? now() : null,
       suspended_reason: body.suspended === undefined ? undefined : body.suspended ? body.reason : null,
+      entitlement_overrides: body.overrides === undefined ? undefined : body.overrides === null ? null : JSON.stringify(body.overrides),
     });
     if (body.suspended) {
       for (const m of await db.all('SELECT user_id FROM memberships WHERE workspace_id = ?', ws.id)) ctx.hub.disconnect(ws.id, m.user_id);
@@ -510,10 +525,57 @@ export async function processBillingNotices(ctx: Ctx, at = new Date()) {
       if (left <= 7) await notice('renew_7', ws.paid_through, `Time to renew Küü for ${ws.name}`, `${ws.name}'s ${plan.name} plan is paid until ${friendlyDate(ws.paid_through)}. Renew from Administration → Billing to avoid interruption.`);
     } else if (plan.status === 'grace' && ws.paid_through) {
       await notice('overdue', ws.paid_through, `Payment overdue for ${ws.name}`, `${ws.name}'s ${plan.name} plan ended on ${friendlyDate(ws.paid_through)}. Paid features keep working for ${GRACE_DAYS} days; after that the workspace moves to the Free plan. Nothing is deleted.`);
-    } else if (plan.status === 'free') {
+    }
+    await usageAlerts(ctx, ws, plan, notice);
+    if (plan.status === 'free') {
       const endedAt = [ws.trial_ends_at, ws.paid_through].filter((x): x is string => !!x && x < at.toISOString()).sort().pop();
       if (endedAt) await notice('moved_to_free', endedAt, `${ws.name} is now on the Free plan`, `${ws.name} has moved to the Free plan. Your data is safe. Paid features are paused until you choose a plan under Administration → Billing.`);
     }
   }
   return sent;
+}
+
+/**
+ * Warn owners and admins at 80% and again at 100% of each limit, once per limit (or per
+ * month for monthly allowances), so nobody meets a limit by surprise.
+ */
+async function usageAlerts(
+  ctx: Ctx,
+  ws: Row,
+  plan: Awaited<ReturnType<typeof effectivePlan>>,
+  notice: (kind: string, ref: string, subject: string, text: string) => Promise<void>,
+) {
+  const month = monthStart().slice(0, 7);
+  const gb = (bytes: number) => `${Math.round((bytes / 1024 ** 3) * 10) / 10} GB`;
+  const checks: { key: string; used: number; limit: number | null; ref: string; what: string; show: (n: number) => string; resets: boolean }[] = [
+    { key: 'members', used: await activeMemberCount(ctx.db, ws.id), limit: plan.member_limit, ref: String(plan.member_limit), what: 'member limit', show: String, resets: false },
+    { key: 'storage', used: await storageUsed(ctx.db, ws.id), limit: plan.storage_limit, ref: String(plan.storage_limit), what: 'file storage', show: gb, resets: false },
+  ];
+  if (plan.features.includes('ai') && plan.status !== 'trial') {
+    checks.push({ key: 'ai', used: await aiUsedThisMonth(ctx.db, ws.id), limit: plan.ai_limit, ref: month, what: 'AI requests for this month', show: String, resets: true });
+  }
+  if (plan.features.includes('recordings') && plan.recording_hours != null) {
+    checks.push({
+      key: 'recordings',
+      used: (await recordingSecondsThisMonth(ctx.db, ws.id)) / 3600,
+      limit: plan.recording_hours,
+      ref: month,
+      what: 'meeting recording hours for this month',
+      show: (h) => `${Math.round(h * 10) / 10} h`,
+      resets: true,
+    });
+  }
+  for (const c of checks) {
+    if (c.limit == null || c.limit <= 0) continue;
+    const share = c.used / c.limit;
+    const level = share >= 1 ? 100 : share >= 0.8 ? 80 : null;
+    if (!level) continue;
+    const after = c.resets ? ' The allowance resets on the 1st of next month.' : '';
+    await notice(
+      `usage_${c.key}_${level}`,
+      c.ref,
+      level === 100 ? `${ws.name} has reached its ${c.what}` : `${ws.name} has used ${Math.round(share * 100)}% of its ${c.what}`,
+      `${ws.name} is using ${c.show(c.used)} of ${c.show(c.limit)} on the ${plan.name} plan.${after} To raise the limit, choose a larger plan under Administration → Billing.`,
+    );
+  }
 }

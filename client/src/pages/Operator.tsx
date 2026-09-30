@@ -1,8 +1,8 @@
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
-import { api, qs } from '../api';
+import { api, qs, type Feature } from '../api';
 import { Icon } from '../components/Icon';
-import { daysUntil, usd } from '../components/Plan';
+import { daysUntil, FEATURE_LABEL, FEATURE_ORDER, usd } from '../components/Plan';
 import { Empty, ErrorState, Field, Loading, Modal, Tabs, useAction } from '../components/ui';
 import { bytes, dateTime, timeAgo } from '../format';
 import { useApi, useDebounced } from '../hooks';
@@ -41,7 +41,9 @@ interface OpWorkspace {
   created_at: string;
   suspended_at: string | null;
   suspended_reason: string | null;
-  plan: { id: string; name: string; status: string; purchased: string; trial_ends_at: string | null; paid_through: string | null };
+  plan: { id: string; name: string; status: string; purchased: string; trial_ends_at: string | null; paid_through: string | null; custom?: boolean };
+  overrides?: Overrides;
+  upgrade_signals?: { key: string; label: string; count: number }[];
   owners: { name: string; email: string }[];
   usage: { members: number; guests: number; storage_bytes: number; storage_limit: number | null; ai_used: number; ai_limit: number | null };
   last_active_at: string | null;
@@ -345,7 +347,13 @@ function WorkspaceDetail({ id, onChange }: { id: string; onChange: () => void })
           {data.plan.status === 'trial' && ` — ${daysUntil(data.plan.trial_ends_at)} days left`}
           {data.plan.paid_through && ` · paid through ${data.plan.paid_through.slice(0, 10)}`} · {data.usage.members} members, {data.usage.guests} guests ·{' '}
           {bytes(data.usage.storage_bytes)} stored · {data.usage.ai_used} AI requests
+          {data.plan.custom && ' · custom terms'}
         </p>
+        {!!data.upgrade_signals?.length && (
+          <p className="muted small">
+            <strong>Upgrade signals (30 days):</strong> {data.upgrade_signals.map((s) => `${s.label} ×${s.count}`).join(' · ')}
+          </p>
+        )}
       </div>
 
       <form
@@ -380,6 +388,8 @@ function WorkspaceDetail({ id, onChange }: { id: string; onChange: () => void })
           </button>
         </div>
       </form>
+
+      <EntitlementsEditor key={JSON.stringify(data.overrides ?? {})} initial={data.overrides} onSave={(overrides, message) => save({ overrides }, message)} />
 
       <div className="card form danger-zone">
         <h3>{data.suspended_at ? 'Suspended' : 'Suspend workspace'}</h3>
@@ -569,5 +579,109 @@ function Backups() {
         </div>
       )}
     </>
+  );
+}
+
+// ======================= Entitlement overrides =======================
+
+interface Overrides {
+  grant: Feature[];
+  revoke: Feature[];
+  members?: number | null;
+  storage_gb?: number | null;
+  ai_per_month?: number | null;
+  recording_hours?: number | null;
+  note: string;
+}
+
+const LIMITS: { key: 'members' | 'storage_gb' | 'ai_per_month' | 'recording_hours'; label: string }[] = [
+  { key: 'members', label: 'Members' },
+  { key: 'storage_gb', label: 'Storage (GB)' },
+  { key: 'ai_per_month', label: 'AI requests / month' },
+  { key: 'recording_hours', label: 'Recording hours / month' },
+];
+
+/**
+ * Custom deals, add-ons and comps for one workspace, on top of whatever plan it is on:
+ * switch single features on or off, and raise or lower limits.
+ */
+function EntitlementsEditor({ initial, onSave }: { initial?: Overrides; onSave: (o: Overrides | null, message: string) => void }) {
+  const start = initial ?? { grant: [], revoke: [], note: '' };
+  const [mode, setMode] = useState<Record<string, 'plan' | 'on' | 'off'>>(() =>
+    Object.fromEntries(FEATURE_ORDER.map((f) => [f, start.grant.includes(f) ? 'on' : start.revoke.includes(f) ? 'off' : 'plan'])),
+  );
+  const [limits, setLimits] = useState<Record<string, string>>(() =>
+    Object.fromEntries(LIMITS.map(({ key }) => [key, key in start && start[key] !== undefined ? (start[key] === null ? 'unlimited' : String(start[key])) : ''])),
+  );
+  const [note, setNote] = useState(start.note ?? '');
+  const [error, setError] = useState('');
+  const build = (): Overrides | null => {
+    const o: Overrides = {
+      grant: FEATURE_ORDER.filter((f) => mode[f] === 'on'),
+      revoke: FEATURE_ORDER.filter((f) => mode[f] === 'off'),
+      note: note.trim(),
+    };
+    for (const { key, label } of LIMITS) {
+      const v = limits[key].trim().toLowerCase();
+      if (!v) continue;
+      if (v === 'unlimited') o[key] = null;
+      else if (Number.isFinite(Number(v)) && Number(v) >= 0) o[key] = Number(v);
+      else throw new Error(`${label}: enter a number, “unlimited”, or leave it empty for the plan’s limit`);
+    }
+    return o;
+  };
+  const touched = FEATURE_ORDER.some((f) => mode[f] !== 'plan') || Object.values(limits).some((v) => v.trim()) || note.trim();
+  return (
+    <form
+      className="card form"
+      onSubmit={(e) => {
+        e.preventDefault();
+        setError('');
+        try {
+          onSave(build(), 'Custom terms saved');
+        } catch (err) {
+          setError((err as Error).message);
+        }
+      }}
+    >
+      <h3>Custom terms</h3>
+      <p className="muted small">
+        For negotiated deals, add-ons and comps. These apply on top of the plan and stay when the plan changes. Leave everything on “Plan” and empty to follow the
+        plan exactly.
+      </p>
+      <div className="entitlement-grid">
+        {FEATURE_ORDER.map((f) => (
+          <label key={f} className="entitlement-row">
+            <span className="grow">{FEATURE_LABEL[f]}</span>
+            <select value={mode[f]} onChange={(e) => setMode({ ...mode, [f]: e.target.value as 'plan' | 'on' | 'off' })} aria-label={FEATURE_LABEL[f]}>
+              <option value="plan">Plan</option>
+              <option value="on">Always on</option>
+              <option value="off">Off</option>
+            </select>
+          </label>
+        ))}
+      </div>
+      <div className="form-row">
+        {LIMITS.map(({ key, label }) => (
+          <Field key={key} label={label}>
+            <input value={limits[key]} onChange={(e) => setLimits({ ...limits, [key]: e.target.value })} placeholder="Plan limit" />
+          </Field>
+        ))}
+      </div>
+      <Field label="Note (why, and until when)">
+        <input value={note} onChange={(e) => setNote(e.target.value)} maxLength={300} placeholder="e.g. Pilot: AI on for 3 months, agreed with finance" />
+      </Field>
+      {error && <p className="error">{error}</p>}
+      <div className="form-actions">
+        {initial && (initial.grant.length || initial.revoke.length || LIMITS.some(({ key }) => key in initial)) ? (
+          <button type="button" className="btn" onClick={() => onSave(null, 'Custom terms removed')}>
+            Remove custom terms
+          </button>
+        ) : null}
+        <button className="btn primary" disabled={!touched && !initial}>
+          Save custom terms
+        </button>
+      </div>
+    </form>
   );
 }

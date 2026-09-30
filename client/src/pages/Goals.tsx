@@ -58,8 +58,10 @@ export function Goals() {
   const plan = usePlan();
   const [tab, setTab] = useState<'active' | 'archived'>('active');
   const [creating, setCreating] = useState(false);
-  const { data, error, reload } = useApi<Goal[]>(plan.has('goals') ? `/goals?archived=${tab === 'archived'}` : null);
-  if (!plan.has('goals')) {
+  const { data, error, reload } = useApi<Goal[]>(`/goals?archived=${tab === 'archived'}`);
+  // Without the feature, goals made earlier (on a trial or a higher plan) stay readable.
+  const readOnly = !plan.has('goals');
+  if (readOnly && data && !data.length && tab === 'active') {
     return (
       <div className="page">
         <h1>Goals</h1>
@@ -101,10 +103,13 @@ export function Goals() {
           <h1>Goals</h1>
           <p className="muted">What the organisation is aiming for this season, how far along it is, and the projects that get it there.</p>
         </div>
-        <button className="btn primary" onClick={() => setCreating(true)}>
-          <Icon name="plus" size={16} /> New goal
-        </button>
+        {!readOnly && (
+          <button className="btn primary" onClick={() => setCreating(true)}>
+            <Icon name="plus" size={16} /> New goal
+          </button>
+        )}
       </div>
+      {readOnly && <UpgradeNotice feature="goals" compact readOnly />}
       <Tabs
         value={tab}
         onChange={setTab}
@@ -122,7 +127,8 @@ export function Goals() {
           icon="target"
           title={tab === 'active' ? 'No goals yet' : 'Nothing archived'}
           action={
-            tab === 'active' && (
+            tab === 'active' &&
+            !readOnly && (
               <button className="btn primary" onClick={() => setCreating(true)}>
                 <Icon name="plus" size={16} /> New goal
               </button>

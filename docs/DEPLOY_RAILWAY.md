@@ -172,9 +172,19 @@ New workspaces get a 14-day Organization trial (`SOFTEX_TRIAL_DAYS`). When a tri
 **Other operator tools**
 
 - **Workspaces:** search by name or owner email. You can extend a trial, grant or correct a plan by hand (discounts, partners, refunds), or suspend a workspace that breaks your terms. Suspension signs everyone out until you restore it.
+- **Custom terms:** on a workspace, switch single features on or off and raise or lower its limits (members, storage, AI requests, recording hours), with a note saying why. Use it for negotiated Enterprise deals, add-ons ("Team plus AI"), pilots and comps. Custom terms sit on top of the plan and stay when the plan changes; *Remove custom terms* puts the workspace back on the plan exactly. Customers see "Custom terms apply" on their billing page.
+- **Upgrade signals:** each workspace shows what its people tried in the last 30 days that the plan stopped (for example "Goals and intake forms ×3"). It's the best list of who to talk to about upgrading.
 - **Activity log:** a permanent record of payments, plan changes, suspensions and deleted workspaces.
 
 You see sizes, dates and counts only. The console never shows customers' messages, files or tasks.
+
+**How plan limits are enforced.** Küü follows the usual entitlements pattern:
+
+- Each plan is a set of *entitlements*: feature switches (goals, automations, AI…) and limits (members, storage, AI requests, recording hours). The code checks entitlements, never plan names, so changing what a plan includes is a one-line change in `server/src/plans.ts`.
+- The server works out a workspace's entitlements on every request, from its plan, paid-through date, trial and any custom terms. There is no separate on/off switch that can drift: when a trial or payment ends, features stop on the next request.
+- The server is the authority. The web app hides what isn't included and shows an upgrade prompt, but calling the API directly gets the same refusal (HTTP 402 with the reason).
+- Nothing is deleted on a downgrade. Goals, dashboards and logged time made earlier stay readable (and can be deleted), but can't be created or changed; automations stop running without being removed; a workspace over its member limit keeps everyone but can't add more.
+- Owners and admins get an email and a notification at 80% and at 100% of each limit, once per limit (monthly allowances once per month).
 
 **Customers leaving.** Owners can delete their workspace (Administration → Workspace → Delete workspace), and anyone can delete their own account (Settings → Security). Both are permanent and recorded in the activity log.
 

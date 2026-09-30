@@ -34,7 +34,10 @@ export function Timesheet() {
     window.addEventListener('kuu:time', reload);
     return () => window.removeEventListener('kuu:time', reload);
   }, [reload]);
-  if (!plan.has('fields')) {
+  if (error) return <ErrorState error={error} retry={reload} />;
+  if (!data) return <Loading />;
+  // Without the feature, time logged earlier stays readable; logging more needs the plan.
+  if (!plan.has('fields') && !data.days.some((d) => d.minutes > 0)) {
     return (
       <div className="page">
         <h1>Timesheet</h1>
@@ -42,8 +45,6 @@ export function Timesheet() {
       </div>
     );
   }
-  if (error) return <ErrorState error={error} retry={reload} />;
-  if (!data) return <Loading />;
   const max = Math.max(...data.days.map((d) => d.minutes), 60);
   const today = new Date().toISOString().slice(0, 10);
 
@@ -69,6 +70,7 @@ export function Timesheet() {
           )}
         </div>
       </div>
+      {!plan.has('fields') && <UpgradeNotice feature="fields" compact readOnly />}
 
       {data.running && (
         <div className="card pad row-gap timer-banner">

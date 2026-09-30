@@ -82,11 +82,13 @@ export function Dashboards() {
   const plan = usePlan();
   const navigate = useNavigate();
   const act = useAction();
-  const { data, error, reload } = useApi<(Omit<Dashboard, 'widgets' | 'owner'> & { owner_name: string })[]>(plan.has('insights') ? '/dashboards' : null);
+  const { data, error, reload } = useApi<(Omit<Dashboard, 'widgets' | 'owner'> & { owner_name: string })[]>('/dashboards');
+  // Without the feature, dashboards made earlier stay viewable.
+  const readOnly = !plan.has('insights');
   const [creating, setCreating] = useState(false);
   const [name, setName] = useState('');
   const [visibility, setVisibility] = useState<'workspace' | 'private'>('workspace');
-  if (!plan.has('insights')) {
+  if (readOnly && data && !data.length) {
     return (
       <div className="page">
         <h1>Dashboards</h1>
@@ -101,10 +103,13 @@ export function Dashboards() {
           <h1>Dashboards</h1>
           <p className="muted">Charts over tasks, time and goals. Everyone sees numbers from the projects they can open, so sharing a dashboard never shares private work.</p>
         </div>
-        <button className="btn primary" onClick={() => setCreating(true)}>
-          <Icon name="plus" size={16} /> New dashboard
-        </button>
+        {!readOnly && (
+          <button className="btn primary" onClick={() => setCreating(true)}>
+            <Icon name="plus" size={16} /> New dashboard
+          </button>
+        )}
       </div>
+      {readOnly && <UpgradeNotice feature="insights" compact readOnly />}
       {error ? (
         <ErrorState error={error} retry={reload} />
       ) : !data ? (

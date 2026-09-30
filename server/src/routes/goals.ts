@@ -3,7 +3,7 @@ import { z } from 'zod';
 import { accessibleProjectIds, isAdmin, isActiveMember, isGuest, type Auth } from '../access.js';
 import { authOf, notify, recordActivity, type Ctx } from '../context.js';
 import type { Database, Row } from '../db.js';
-import { requireFeature } from '../plans.js';
+import { requireFeature, hasFeature } from '../plans.js';
 import { badRequest, forbidden, newId, notFound, now, parse, parsePatch } from '../util.js';
 
 /**
@@ -95,9 +95,10 @@ export function goalsRouter(ctx: Ctx) {
   const r = Router();
   const { db } = ctx;
 
-  const guard = async (auth: Auth) => {
+  /** Guests never see goals. After a downgrade, existing goals stay readable (and can be deleted); creating and changing them needs the plan. */
+  const guard = async (auth: Auth, changing = true) => {
     if (isGuest(auth)) throw forbidden('Guests cannot see goals');
-    await requireFeature(ctx, auth.workspaceId, 'goals');
+    if (changing) await requireFeature(ctx, auth.workspaceId, 'goals');
   };
 
   const loadGoal = async (auth: Auth, id: string) => {
@@ -110,21 +111,23 @@ export function goalsRouter(ctx: Ctx) {
 
   r.get('/goals', async (req, res) => {
     const auth = authOf(req);
-    await guard(auth);
+    await guard(auth, false);
     const q = parse(z.object({ archived: z.enum(['true', 'false']).default('false') }), req.query);
     const visible = new Set(await accessibleProjectIds(db, auth));
     const rows = await db.all(
       `SELECT * FROM goals WHERE workspace_id = ? AND archived_at IS ${q.archived === 'true' ? 'NOT NULL' : 'NULL'} ORDER BY due_date IS NULL, due_date, created_at`,
       auth.workspaceId,
     );
-    res.json(await Promise.all(rows.map((g) => serialize(auth, g, visible))));
+    const entitled = await hasFeature(ctx, auth.workspaceId, 'goals');
+    res.json((await Promise.all(rows.map((g) => serialize(auth, g, visible)))).map((g) => ({ ...g, can_edit: g.can_edit && entitled })));
   });
 
   r.get('/goals/:id', async (req, res) => {
     const auth = authOf(req);
-    await guard(auth);
+    await guard(auth, false);
     const goal = await loadGoal(auth, req.params.id);
-    res.json(await serialize(auth, goal, new Set(await accessibleProjectIds(db, auth))));
+    const out = await serialize(auth, goal, new Set(await accessibleProjectIds(db, auth)));
+    res.json({ ...out, can_edit: out.can_edit && (await hasFeature(ctx, auth.workspaceId, 'goals')) });
   });
 
   const GoalInput = z.object({
@@ -211,7 +214,7 @@ export function goalsRouter(ctx: Ctx) {
 
   r.delete('/goals/:id', async (req, res) => {
     const auth = authOf(req);
-    await guard(auth);
+    await guard(auth, false);
     const goal = await loadGoal(auth, req.params.id);
     if (!canEditGoal(auth, goal)) throw forbidden('Only the goal’s owner or an admin can delete it');
     await db.run('DELETE FROM goals WHERE id = ?', goal.id);
@@ -283,7 +286,7 @@ export function goalsRouter(ctx: Ctx) {
 
   r.delete('/key-results/:id', async (req, res) => {
     const auth = authOf(req);
-    await guard(auth);
+    await guard(auth, false);
     const { kr, goal } = await loadKr(auth, req.params.id);
     if (!canEditGoal(auth, goal)) throw forbidden('Only the goal’s owner or an admin can change key results');
     await db.run('DELETE FROM key_results WHERE id = ?', kr.id);

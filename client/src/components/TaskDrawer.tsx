@@ -11,6 +11,7 @@ import { Markdown } from './Markdown';
 import { NewTaskForm } from './QuickCreate';
 import { ErrorState, Loading, StatusPill, useAction } from './ui';
 import { LabelChips, LabelPicker, TaskFieldRows, TimeTracker } from './Work';
+import { usePlan } from './Plan';
 
 /** Side drawer wrapper around TaskDetail, opened from any list. */
 export function TaskDrawer({ taskId, onClose }: { taskId: string | null; onClose: () => void }) {
@@ -58,6 +59,7 @@ interface TaskFull extends Task {
 
 export function TaskDetail({ taskId, onDeleted }: { taskId: string; onDeleted?: () => void }) {
   const { people, me } = useSession();
+  const { has: planHas } = usePlan();
   const act = useAction();
   const { data: task, error, reload, setData } = useApi<TaskFull>(`/tasks/${taskId}`);
   const [newItem, setNewItem] = useState('');
@@ -87,6 +89,8 @@ export function TaskDetail({ taskId, onDeleted }: { taskId: string; onDeleted?: 
     if (updated) setData({ ...task, ...updated });
   };
   const disabled = !task.can_edit;
+  // Start dates feed the timeline, a planning feature; existing ones stay visible.
+  const showStart = planHas('planning') || !!task.start_date;
 
   return (
     <div className="task-detail">
@@ -153,17 +157,21 @@ export function TaskDetail({ taskId, onDeleted }: { taskId: string; onDeleted?: 
           <input type="date" value={task.due_date ?? ''} disabled={disabled} onChange={(e) => update({ dueDate: e.target.value || null })} aria-label="Due date" />
           {task.overdue && <span className="due overdue">Overdue</span>}
         </dd>
-        <dt>Start</dt>
-        <dd>
-          <input
-            type="date"
-            value={task.start_date ?? ''}
-            max={task.due_date ?? undefined}
-            disabled={disabled}
-            onChange={(e) => update({ startDate: e.target.value || null })}
-            aria-label="Start date"
-          />
-        </dd>
+        {showStart && (
+          <>
+            <dt>Start</dt>
+            <dd>
+              <input
+                type="date"
+                value={task.start_date ?? ''}
+                max={task.due_date ?? undefined}
+                disabled={disabled || !planHas('planning')}
+                onChange={(e) => update({ startDate: e.target.value || null })}
+                aria-label="Start date"
+              />
+            </dd>
+          </>
+        )}
         <dt>Estimate</dt>
         <dd>
           <input
