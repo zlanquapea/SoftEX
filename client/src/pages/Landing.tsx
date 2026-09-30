@@ -1,241 +1,335 @@
+import { useEffect, useRef, useState, type CSSProperties } from 'react';
 import { Link } from 'react-router-dom';
 import { Icon } from '../components/Icon';
-import { lrd, usd } from '../components/Plan';
+import { usd } from '../components/Plan';
+import { ProductDemo } from '../components/ProductDemo';
 import { PublicPage } from '../components/Public';
+import '../landing.css';
 import { usePublicPricing } from './Pricing';
 
 const FEATURES: { icon: string; title: string; text: string }[] = [
-  { icon: 'chat', title: 'Channels and direct messages', text: 'Team, project and private channels, threads, mentions and announcements that people must acknowledge. Mark a message urgent when it really is.' },
+  { icon: 'chat', title: 'Channels and direct messages', text: 'Team, project and private channels, threads, mentions, polls, voice notes and announcements people must acknowledge.' },
   { icon: 'task', title: 'Tasks with one clear owner', text: 'Turn any message into a task. Every task has an owner, a due date and a status, so nothing falls between people.' },
-  { icon: 'folder', title: 'Projects, timelines and workload', text: 'Boards, milestones, a timeline you can drag, and a workload view that shows who is overloaded before deadlines slip.' },
-  { icon: 'book', title: 'Knowledge that stays current', text: 'Policies, how-tos and files in one searchable place, with owners, approvals, review dates and full version history.' },
-  { icon: 'video', title: 'Meetings that end with decisions', text: 'Agendas, notes, decisions and follow-up tasks captured in the meeting, and a summary sent to everyone afterwards.' },
-  { icon: 'spark', title: 'Ask Küü', text: 'Ask a question and get an answer with links to the messages, pages and decisions it came from — only from what you can already see.' },
-  { icon: 'refresh', title: 'Automations and reminders', text: 'Hand work to the right person when a task moves, get reminded before things are due, and schedule messages for later.' },
+  { icon: 'board', title: 'Projects, timelines and workload', text: 'Boards, tables, calendars and a timeline you can drag, plus a workload view that shows who is overloaded before deadlines slip.' },
+  { icon: 'book', title: 'Docs you write together', text: 'Edit pages live with your team. Owners, approvals, review dates and version history keep knowledge current.' },
+  { icon: 'video', title: 'Meetings that end with decisions', text: 'Agendas, recordings with live captions, searchable transcripts, decisions and follow-up tasks in one place.' },
+  { icon: 'spark', title: 'Ask Küü', text: 'Ask a question and get an answer with links to the messages, pages and decisions it came from — only from what you can see.' },
+  { icon: 'chart', title: 'Dashboards and goals', text: 'Charts of the work across projects, goals with key results, and time tracking that shows where the week went.' },
   { icon: 'shield', title: 'Secure by default', text: 'Two-step sign-in, single sign-on, detailed permissions, guest expiry and an audit log of every important action.' },
 ];
 
+const REPLACES = ['Group chats', 'Email threads', 'Task spreadsheets', 'Shared folders', 'Meeting notes', 'Sticky notes', 'Status calls', 'Lost attachments'];
+
+const HEADLINE_WORDS = ['group chats', 'email threads', 'spreadsheets', 'shared folders', 'sticky notes'];
+
 const FAQ: [string, string][] = [
   ['Do I need a card to start?', 'No. Create a workspace and you get the Organization plan free for 14 days. Afterwards you can stay on the Free plan (up to 5 members) for as long as you like, or choose a paid plan.'],
-  ['How do we pay?', 'An admin chooses a plan in the app, pays with Orange Money, MTN Mobile Money or bank transfer, and enters the transaction ID. Your plan starts as soon as the payment is confirmed.'],
+  ['How do we pay?', 'An admin chooses a plan in the app and pays by mobile money or bank transfer, monthly or yearly. Your plan starts as soon as the payment is confirmed.'],
   ['Does it work on phones and slow connections?', 'Yes. Küü works in any modern browser and installs on Android and iPhone home screens like an app. Pages are kept small, and recently viewed information stays readable when your connection drops.'],
   ['Who owns our data?', 'You do. Admins can export everything at any time, and owners can delete the workspace permanently. See the Privacy Policy for the details.'],
   ['Can we invite people from outside our company?', 'Yes. On the Team plan and above, guests see only the channels and projects you share with them, and their access expires automatically. Guests don’t count toward your member limit.'],
   ['What happens if we stop paying?', 'After a short grace period your workspace moves to the Free plan. Nothing is deleted; paid features pause until you pay again.'],
 ];
 
-/** Screenshot-like illustration of the app, drawn with HTML so it stays sharp and light. */
-function AppPreview() {
+const reducedMotion = () => typeof window !== 'undefined' && !!window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
+
+/**
+ * Fade sections in as they scroll into view. Without JavaScript or with reduced motion, everything is simply visible.
+ * `ready` re-scans the page when content that arrives later (the prices) appears.
+ */
+function useReveal(root: React.RefObject<HTMLElement | null>, ready: unknown) {
+  useEffect(() => {
+    const el = root.current;
+    if (!el || reducedMotion() || typeof IntersectionObserver === 'undefined') return;
+    el.classList.add('reveal-on');
+    const io = new IntersectionObserver(
+      (entries) => {
+        for (const entry of entries) {
+          if (entry.isIntersecting) {
+            entry.target.classList.add('revealed');
+            io.unobserve(entry.target);
+          }
+        }
+      },
+      { threshold: 0.15, rootMargin: '0px 0px -40px 0px' },
+    );
+    el.querySelectorAll('[data-reveal]:not(.revealed)').forEach((node) => io.observe(node));
+    return () => io.disconnect();
+  }, [root, ready]);
+}
+
+/** Counts up to `to` the first time it is seen. */
+function CountUp({ to, suffix = '' }: { to: number; suffix?: string }) {
+  const ref = useRef<HTMLSpanElement>(null);
+  const [value, setValue] = useState(reducedMotion() ? to : 0);
+  useEffect(() => {
+    const el = ref.current;
+    if (!el || reducedMotion() || typeof IntersectionObserver === 'undefined') {
+      setValue(to);
+      return;
+    }
+    let frame = 0;
+    const io = new IntersectionObserver(([entry]) => {
+      if (!entry.isIntersecting) return;
+      io.disconnect();
+      const start = performance.now();
+      const step = (t: number) => {
+        const p = Math.min(1, (t - start) / 1200);
+        setValue(Math.round(to * (1 - Math.pow(1 - p, 3))));
+        if (p < 1) frame = requestAnimationFrame(step);
+      };
+      frame = requestAnimationFrame(step);
+    });
+    io.observe(el);
+    return () => {
+      io.disconnect();
+      cancelAnimationFrame(frame);
+    };
+  }, [to]);
   return (
-    <div className="app-preview" aria-hidden="true">
-      <div className="ap-side">
-        <img className="ap-logo" src="/favicon.svg" alt="" />
-        <i className="active" />
-        <i />
-        <i />
-        <i />
-        <i />
-      </div>
-      <div className="ap-main">
-        <div className="ap-top">
-          <b># launch-team</b>
-          <span className="ap-pill">4 online</span>
-        </div>
-        <div className="ap-msg">
-          <span className="ap-av a">MK</span>
-          <div>
-            <b>Musu</b> <small>9:14</small>
-            <p>Supplier confirmed delivery for Friday. Who can check the stock list?</p>
-            <span className="ap-chip">
-              <Icon name="task" size={12} /> Task · Check stock list · Jallah · due Thu
-            </span>
-          </div>
-        </div>
-        <div className="ap-msg">
-          <span className="ap-av b">JT</span>
-          <div>
-            <b>Jallah</b> <small>9:16</small>
-            <p>On it — I’ll post the list in the project by Thursday.</p>
-          </div>
-        </div>
-        <div className="ap-msg">
-          <span className="ap-av c">AD</span>
-          <div>
-            <b>Aminata</b> <small>9:20</small>
-            <p>Decision: we open the Paynesville branch on the 1st. 🎉</p>
-            <span className="ap-chip green">
-              <Icon name="gavel" size={12} /> Decision recorded
-            </span>
-          </div>
-        </div>
-      </div>
-      <div className="ap-panel">
-        <b>Today</b>
-        <div className="ap-task done">Send price list to Ecobank</div>
-        <div className="ap-task">Check stock list</div>
-        <div className="ap-task late">Renew business registration</div>
-        <b>Next meeting</b>
-        <div className="ap-meet">Weekly review · 10:00</div>
-      </div>
-    </div>
+    <span ref={ref}>
+      {value}
+      {suffix}
+    </span>
   );
 }
+
+/** The scattered tools Küü replaces, crossed out in turn. */
+function RotatingWord() {
+  const [i, setI] = useState(0);
+  useEffect(() => {
+    if (reducedMotion()) return;
+    const timer = window.setInterval(() => setI((n) => (n + 1) % HEADLINE_WORDS.length), 2600);
+    return () => window.clearInterval(timer);
+  }, []);
+  return (
+    <span className="rotator" aria-hidden="true">
+      <span key={i} className="rotator-word">
+        {HEADLINE_WORDS[i]}
+      </span>
+    </span>
+  );
+}
+
+/** Soft spotlight that follows the pointer across a card. */
+const spotlight = (e: React.PointerEvent<HTMLElement>) => {
+  const card = (e.target as HTMLElement).closest<HTMLElement>('.spot');
+  if (!card) return;
+  const r = card.getBoundingClientRect();
+  card.style.setProperty('--mx', `${e.clientX - r.left}px`);
+  card.style.setProperty('--my', `${e.clientY - r.top}px`);
+};
+
+const stagger = (i: number) => ({ '--i': i }) as CSSProperties;
 
 /** Public home page for the hosted service. */
 export function Landing() {
   const { data } = usePublicPricing();
+  const root = useRef<HTMLDivElement>(null);
+  useReveal(root, data);
+  const trialDays = data?.trial_days ?? 14;
   const teaser = (['starter', 'team', 'organization'] as const).map((id) => data?.plans.find((p) => p.id === id));
   return (
     <PublicPage title="Küü — work moves forward together">
-      <section className="hero">
-        <div className="hero-copy">
-          <p className="eyebrow">WORK MOVES FORWARD TOGETHER · MADE FOR LIBERIA</p>
-          <h1>Stop chasing work across WhatsApp, email and spreadsheets.</h1>
+      <div className="landing" ref={root}>
+        <section className="hero2">
+          <div className="hero-glow" aria-hidden="true">
+            <i />
+            <i />
+            <i />
+          </div>
+          <p className="hero-badge">
+            <span>New</span> Live co-editing, whiteboards and meeting transcripts
+          </p>
+          <h1>
+            Stop chasing work across <RotatingWord />
+            <span className="sr-only">group chats, email threads and spreadsheets</span>
+          </h1>
           <p className="hero-sub">
             Küü brings your team’s conversations, tasks, projects, documents and meetings into one calm place — so everyone knows what matters today, who owns
             it, and what was decided.
           </p>
-          <div className="row-gap wrap">
-            <Link className="btn primary lg" to="/register">
-              Start your free {data?.trial_days ?? 14}-day trial
+          <div className="hero-ctas">
+            <Link className="btn primary lg shine" to="/register">
+              Start your free {trialDays}-day trial <Icon name="arrow" size={16} />
             </Link>
-            <Link className="btn lg" to="/pricing">
-              See pricing
-            </Link>
+            <a className="btn lg ghost-lg" href="#tour">
+              <Icon name="play" size={15} /> See it in action
+            </a>
           </div>
           <ul className="hero-points">
             <li>
-              <Icon name="check" size={15} /> Free plan forever for up to 10 people
+              <Icon name="check" size={15} /> Free forever for up to 5 people
             </li>
             <li>
-              <Icon name="check" size={15} /> Pay with Orange Money, MTN MoMo or bank transfer
+              <Icon name="check" size={15} /> No card needed
             </li>
             <li>
               <Icon name="check" size={15} /> Works on phones and slow connections
             </li>
           </ul>
-        </div>
-        <AppPreview />
-      </section>
+        </section>
 
-      <section className="replace-strip" aria-label="What Küü replaces">
-        <p className="muted">One workspace instead of scattered tools</p>
-        <div>
-          {['Group chats', 'Email threads', 'Task spreadsheets', 'Shared folders', 'Meeting notes'].map((t) => (
-            <span key={t}>
-              <Icon name="x" size={13} /> {t}
-            </span>
-          ))}
-        </div>
-      </section>
+        <section id="tour" className="tour" data-reveal>
+          <ProductDemo />
+        </section>
 
-      <section id="features" className="public-section">
-        <p className="eyebrow center">FEATURES</p>
-        <h2 className="center">Everything a busy team needs, in one place</h2>
-        <div className="feature-grid">
-          {FEATURES.map((f) => (
-            <div key={f.title} className="feature-card">
-              <span className="feature-icon">
-                <Icon name={f.icon} size={20} />
-              </span>
-              <h3>{f.title}</h3>
-              <p className="muted">{f.text}</p>
+        <section className="marquee" aria-label="What Küü replaces">
+          <p className="muted">One workspace instead of scattered tools</p>
+          <div className="marquee-track">
+            <div className="marquee-row">
+              {[...REPLACES, ...REPLACES].map((t, i) => (
+                <span key={i} aria-hidden={i >= REPLACES.length}>
+                  <Icon name="x" size={13} /> {t}
+                </span>
+              ))}
             </div>
-          ))}
-        </div>
-      </section>
+          </div>
+        </section>
 
-      <section className="public-section local">
-        <div>
-          <p className="eyebrow">BUILT FOR HOW WE WORK HERE</p>
-          <h2>Priced and designed for Liberian teams</h2>
-          <p className="muted">
-            Global tools are priced for Silicon Valley budgets and need card payments many teams here can’t make. Küü costs a fraction of what they charge, you pay the way
-            you already pay for everything else, and it stays usable when the network doesn’t.
+        <section className="stats" data-reveal>
+          <div>
+            <b>
+              <CountUp to={6} />
+            </b>
+            <span>tools replaced by one workspace</span>
+          </div>
+          <div>
+            <b>
+              <CountUp to={trialDays} />
+            </b>
+            <span>day free trial of every feature</span>
+          </div>
+          <div>
+            <b>
+              <CountUp to={5} />
+            </b>
+            <span>people free, forever</span>
+          </div>
+          <div>
+            <b>
+              <CountUp to={1} />
+            </b>
+            <span>search across chat, tasks, docs and meetings</span>
+          </div>
+        </section>
+
+        <section id="features" className="public-section">
+          <p className="eyebrow center" data-reveal>
+            FEATURES
           </p>
-        </div>
-        <div className="local-grid">
-          <div className="card">
-            <Icon name="flag" size={20} />
-            <h3>Mobile money payments</h3>
-            <p className="muted">Orange Money, MTN Mobile Money or bank transfer. Monthly or yearly, in US dollars{data?.lrd_per_usd ? ', with Liberian-dollar amounts shown' : ''}.</p>
-          </div>
-          <div className="card">
-            <Icon name="download" size={20} />
-            <h3>Light on data</h3>
-            <p className="muted">Compressed pages, an installable app for your phone, and recently viewed information that stays readable offline.</p>
-          </div>
-          <div className="card">
-            <Icon name="users" size={20} />
-            <h3>From 3 people to 300</h3>
-            <p className="muted">Start free with a small team. Add departments, guests from partner organisations, single sign-on and more as you grow.</p>
-          </div>
-        </div>
-      </section>
-
-      <section className="public-section">
-        <p className="eyebrow center">HOW IT WORKS</p>
-        <h2 className="center">Up and running in an afternoon</h2>
-        <ol className="how-steps">
-          <li>
-            <b>1</b>
-            <h3>Create your workspace</h3>
-            <p className="muted">Sign up with your email. You get every Organization feature free for 14 days.</p>
-          </li>
-          <li>
-            <b>2</b>
-            <h3>Invite your team</h3>
-            <p className="muted">Send invitations by email. Channels for general news and announcements are ready from the start.</p>
-          </li>
-          <li>
-            <b>3</b>
-            <h3>Move one project in</h3>
-            <p className="muted">Start with one real project: its chat, tasks and documents. The rest of the team follows once they see it working.</p>
-          </li>
-        </ol>
-      </section>
-
-      {teaser.every(Boolean) && (
-        <section className="public-section price-teaser">
-          <h2 className="center">One flat price per workspace</h2>
-          <p className="center muted">Free for up to 5 members. New workspaces try every Organization feature free for {data?.trial_days} days.</p>
-          <div className="teaser-grid">
-            {teaser.map((p) => (
-              <div key={p!.id} className={`card ${p!.id === 'team' ? 'featured' : ''}`}>
-                <h3>{p!.name}</h3>
-                <p className="plan-price">
-                  <strong>{usd(p!.price ?? 0)}</strong> <span className="muted">per workspace / month</span>
-                </p>
-                <p className="muted small">
-                  Up to {p!.member_limit} members {lrd(p!.price ?? 0, data?.lrd_per_usd)}
-                </p>
-                <p className="muted">{p!.tagline}</p>
+          <h2 className="center" data-reveal>
+            Everything a busy team needs, in one place
+          </h2>
+          <div className="feature-grid" onPointerMove={spotlight}>
+            {FEATURES.map((f, i) => (
+              <div key={f.title} className="feature-card spot" data-reveal style={stagger(i % 4)}>
+                <span className="feature-icon">
+                  <Icon name={f.icon} size={20} />
+                </span>
+                <h3>{f.title}</h3>
+                <p className="muted">{f.text}</p>
               </div>
             ))}
           </div>
-          <p className="center">
-            More than 50 people? We'll quote for you. <Link to="/pricing">Compare plans in detail →</Link>
-          </p>
         </section>
-      )}
 
-      <section id="faq" className="public-section pricing-faq">
-        <h2>Questions</h2>
-        {FAQ.map(([q, a]) => (
-          <details key={q}>
-            <summary>{q}</summary>
-            <p>{a}</p>
-          </details>
-        ))}
-      </section>
+        <section className="public-section why">
+          <div data-reveal>
+            <p className="eyebrow">MADE FOR REAL-WORLD TEAMS</p>
+            <h2>Fast on any phone, fair on any budget</h2>
+            <p className="muted">
+              Küü costs a fraction of the big global tools, you pay the way you already pay for everything else, and it stays usable when the network doesn’t.
+            </p>
+          </div>
+          <div className="why-grid" onPointerMove={spotlight}>
+            {[
+              ['download', 'Light on data', 'Compressed pages, an installable app for your phone, and recently viewed information that stays readable offline.'],
+              ['send', 'Pay the way you pay', 'Mobile money or bank transfer, monthly or yearly. One flat price per workspace, not per person.'],
+              ['users', 'From 3 people to 300', 'Start free with a small team. Add departments, partner guests, single sign-on and more as you grow.'],
+            ].map(([icon, title, text], i) => (
+              <div key={title} className="card spot" data-reveal style={stagger(i)}>
+                <Icon name={icon} size={20} />
+                <h3>{title}</h3>
+                <p className="muted">{text}</p>
+              </div>
+            ))}
+          </div>
+        </section>
 
-      <section className="final-cta">
-        <h2>Give your team one place to work.</h2>
-        <p>Free for {data?.trial_days ?? 14} days. Free forever for teams of up to 5.</p>
-        <Link className="btn lg" to="/register">
-          Create your workspace
-        </Link>
-      </section>
+        <section className="public-section">
+          <p className="eyebrow center" data-reveal>
+            HOW IT WORKS
+          </p>
+          <h2 className="center" data-reveal>
+            Up and running in an afternoon
+          </h2>
+          <ol className="how-steps flow" data-reveal>
+            {[
+              ['Create your workspace', `Sign up with your email. You get every Organization feature free for ${trialDays} days.`],
+              ['Invite your team', 'Send invitations by email. Channels for general news and announcements are ready from the start.'],
+              ['Move one project in', 'Start with one real project: its chat, tasks and documents. The rest of the team follows once they see it working.'],
+            ].map(([title, text], i) => (
+              <li key={title} style={stagger(i)}>
+                <b>{i + 1}</b>
+                <h3>{title}</h3>
+                <p className="muted">{text}</p>
+              </li>
+            ))}
+          </ol>
+        </section>
+
+        {teaser.every(Boolean) && (
+          <section className="public-section price-teaser">
+            <h2 className="center" data-reveal>
+              One flat price per workspace
+            </h2>
+            <p className="center muted" data-reveal>
+              Free for up to 5 members. New workspaces try every Organization feature free for {trialDays} days.
+            </p>
+            <div className="teaser-grid" onPointerMove={spotlight}>
+              {teaser.map((p, i) => (
+                <div key={p!.id} className={`card spot lift ${p!.id === 'team' ? 'featured' : ''}`} data-reveal style={stagger(i)}>
+                  <h3>{p!.name}</h3>
+                  <p className="plan-price">
+                    <strong>{usd(p!.price ?? 0)}</strong> <span className="muted">per workspace / month</span>
+                  </p>
+                  <p className="muted small">Up to {p!.member_limit} members</p>
+                  <p className="muted">{p!.tagline}</p>
+                </div>
+              ))}
+            </div>
+            <p className="center">
+              More than 50 people? We'll quote for you. <Link to="/pricing">Compare plans in detail →</Link>
+            </p>
+          </section>
+        )}
+
+        <section id="faq" className="public-section pricing-faq faq-anim" data-reveal>
+          <h2>Questions</h2>
+          {FAQ.map(([q, a]) => (
+            <details key={q}>
+              <summary>
+                {q}
+                <Icon name="plus" size={16} />
+              </summary>
+              <p>{a}</p>
+            </details>
+          ))}
+        </section>
+
+        <section className="final-cta final-anim" data-reveal>
+          <div className="cta-orbs" aria-hidden="true">
+            <i />
+            <i />
+          </div>
+          <h2>Give your team one place to work.</h2>
+          <p>Free for {trialDays} days. Free forever for teams of up to 5.</p>
+          <Link className="btn lg shine" to="/register">
+            Create your workspace <Icon name="arrow" size={16} />
+          </Link>
+        </section>
+      </div>
     </PublicPage>
   );
 }

@@ -170,7 +170,7 @@ function GoalForm({ goal, goals, onClose, onSaved }: { goal?: Goal; goals: Goal[
         }}
       >
         <Field label="Goal">
-          <input value={title} onChange={(e) => setTitle(e.target.value)} required maxLength={200} placeholder="Reach 5,000 active customers in Monrovia" autoFocus />
+          <input value={title} onChange={(e) => setTitle(e.target.value)} required maxLength={200} placeholder="Reach 5,000 active customers this year" autoFocus />
         </Field>
         <Field label="Why it matters">
           <textarea rows={3} value={description} onChange={(e) => setDescription(e.target.value)} maxLength={5000} />
