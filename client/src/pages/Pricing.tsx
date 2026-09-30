@@ -33,10 +33,10 @@ export function Pricing() {
     <>
       <section className="pricing-hero">
         <p className="eyebrow">PRICING</p>
-        <h1>Everything your team needs, priced for Liberia</h1>
+        <h1>Everything your team needs, one simple price</h1>
         <p className="muted">
           Chat, projects, knowledge and meetings in one place. One flat price per workspace, not per person. Start with a {data.trial_days}-day free trial of Organization — no payment
-          needed — and keep a free plan for up to 5 members forever. Pay monthly or yearly with Orange Money, MTN Mobile Money or bank transfer.
+          needed — and keep a free plan for up to 5 members forever. Pay monthly or yearly by mobile money or bank transfer.
         </p>
       </section>
       <div className="plan-grid">
@@ -77,7 +77,7 @@ export function Pricing() {
         <details>
           <summary>How do I pay?</summary>
           <p>
-            An admin chooses a plan under Administration → Billing, pays with Orange Money, MTN Mobile Money or bank transfer, and enters the transaction ID. We confirm it
+            An admin chooses a plan under Administration → Billing, pays by mobile money or bank transfer, and enters the transaction ID. We confirm it
             and your plan starts — usually within one business day.
           </p>
         </details>

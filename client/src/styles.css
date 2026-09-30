@@ -4234,6 +4234,21 @@ button.tl-label:hover {
   gap: 16px;
   padding: 8px 0 24px;
 }
+/* The website header stays in reach while scrolling. */
+.public-site .public-head {
+  position: sticky;
+  top: 0;
+  z-index: 20;
+  margin: 0 -16px;
+  padding: 12px 16px;
+  background: color-mix(in srgb, var(--canvas) 96%, transparent);
+  /* Paint the bar edge to edge, beyond the page's width. */
+  box-shadow: 0 0 0 100vmax color-mix(in srgb, var(--canvas) 96%, transparent);
+  clip-path: inset(0 -100vmax);
+  backdrop-filter: saturate(1.4) blur(14px);
+  -webkit-backdrop-filter: saturate(1.4) blur(14px);
+}
+
 .public-head .brand {
   text-decoration: none;
 }

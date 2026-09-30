@@ -11,7 +11,7 @@ test('sign up on a hosted server: trial, pricing and billing', async ({ page }) 
   await page.getByRole('link', { name: 'Privacy Policy' }).first().click();
   await expect(page.getByRole('heading', { level: 1, name: 'Privacy Policy' })).toBeVisible();
   await page.goto('/pricing');
-  await expect(page.getByRole('heading', { name: /priced for Liberia/ })).toBeVisible();
+  await expect(page.getByRole('heading', { name: /one simple price/ })).toBeVisible();
   // One flat price per workspace; larger organisations get a quote.
   await expect(page.getByText('$25', { exact: true })).toBeVisible();
   await expect(page.getByText('Custom quote', { exact: true })).toBeVisible();
