@@ -1,6 +1,7 @@
 import type { Ctx } from './context.js';
 import type { Database, Row } from './db.js';
-import { HttpError } from './util.js';
+import { z } from 'zod';
+import { HttpError, newId, now, parseJson } from './util.js';
 
 /**
  * Plans, trials and usage limits for hosted (SaaS) deployments.
@@ -19,6 +20,18 @@ import { HttpError } from './util.js';
  *
  * New workspaces start with an Organization trial. When a trial or paid period
  * ends the workspace falls back to Free: nothing is deleted, but Free limits apply.
+ *
+ * Enforcement follows the usual entitlements pattern:
+ * - The plan catalog maps each plan to entitlements: feature flags and numeric limits.
+ *   Code checks entitlements (`requireFeature(…, 'goals')`), never plan names.
+ * - An operator can override entitlements for one workspace (custom deals, add-ons,
+ *   comps); overrides sit on top of whatever plan the workspace is on.
+ * - The server decides, on every request, from the workspace's billing state; the web
+ *   app only mirrors the result to show upgrade prompts.
+ * - A refusal is a 402 with a machine-readable reason, and is recorded as an upgrade
+ *   signal. Admins are warned before a limit is reached.
+ * - Downgrading never deletes data: premium content stays readable, but can't be
+ *   created or changed until the workspace upgrades again.
  */
 
 /** Bump when the terms of service or privacy policy change materially; recorded on each acceptance. */
@@ -175,7 +188,37 @@ export interface EffectivePlan {
   /** Hours of meeting recording per month; null means unlimited. */
   recording_hours: number | null;
   priority_support: boolean;
+  /** Operator overrides apply to this workspace (a custom deal, add-on or comp). */
+  custom: boolean;
 }
+
+/**
+ * Per-workspace changes to what the plan includes. A missing key means "as the plan
+ * says"; a limit of null means unlimited.
+ */
+export const EntitlementOverrides = z
+  .object({
+    grant: z.array(z.string()).max(20).default([]),
+    revoke: z.array(z.string()).max(20).default([]),
+    members: z.number().int().min(1).max(100_000).nullable().optional(),
+    storage_gb: z.number().min(1).max(100_000).nullable().optional(),
+    ai_per_month: z.number().int().min(0).max(1_000_000).nullable().optional(),
+    recording_hours: z.number().min(0).max(100_000).nullable().optional(),
+    note: z.string().trim().max(300).default(''),
+  })
+  .strict();
+export type EntitlementOverrides = z.infer<typeof EntitlementOverrides>;
+
+const isFeature = (f: string): f is Feature => f in FEATURE_LABEL;
+
+export function readOverrides(raw: string | null | undefined): EntitlementOverrides {
+  const parsed = EntitlementOverrides.safeParse(parseJson(raw, {}));
+  if (!parsed.success) return { grant: [], revoke: [], note: '' };
+  return { ...parsed.data, grant: parsed.data.grant.filter(isFeature), revoke: parsed.data.revoke.filter(isFeature) };
+}
+
+const hasOverrides = (o: EntitlementOverrides) =>
+  o.grant.length > 0 || o.revoke.length > 0 || ['members', 'storage_gb', 'ai_per_month', 'recording_hours'].some((k) => k in o);
 
 /** Days after a paid period ends during which paid features keep working. */
 export const GRACE_DAYS = 7;
@@ -230,6 +273,7 @@ export async function effectivePlan(ctx: Ctx, workspace: Row | string, at = new 
       ai_limit: null,
       recording_hours: null,
       priority_support: false,
+      custom: false,
     };
   }
   const catalog = planCatalog(ctx.config.billing);
@@ -249,6 +293,10 @@ export async function effectivePlan(ctx: Ctx, workspace: Row | string, at = new 
     id = 'organization';
   }
   const plan = catalog[id];
+  const o = readOverrides(ws.entitlement_overrides);
+  const features = ALL_FEATURES.filter((f) => (plan.features.includes(f) || o.grant.includes(f)) && !o.revoke.includes(f));
+  const pick = <T>(key: keyof EntitlementOverrides, fallback: T, map: (v: number) => T = (v) => v as T): T =>
+    key in o && o[key] !== undefined ? (o[key] === null ? (null as T) : map(o[key] as number)) : fallback;
   return {
     id,
     name: status === 'trial' ? `${plan.name} trial` : plan.name,
@@ -256,14 +304,39 @@ export async function effectivePlan(ctx: Ctx, workspace: Row | string, at = new 
     purchased,
     trial_ends_at: ws.trial_ends_at ?? null,
     paid_through: ws.paid_through ?? null,
-    features: plan.features,
-    member_limit: plan.memberLimit,
-    storage_limit: plan.storage,
-    ai_limit: status === 'trial' ? ctx.config.billing.trialAiRequests : plan.aiPerMonth,
-    recording_hours: plan.recordingHours,
+    features,
+    member_limit: pick('members', plan.memberLimit),
+    storage_limit: pick('storage_gb', plan.storage as number | null, (gb) => gb * GB),
+    ai_limit: pick('ai_per_month', status === 'trial' ? ctx.config.billing.trialAiRequests : plan.aiPerMonth as number | null),
+    recording_hours: pick('recording_hours', plan.recordingHours),
     priority_support: plan.prioritySupport,
+    custom: hasOverrides(o),
   };
 }
+
+/** Remember that the plan stopped someone. These are the clearest signals of what a workspace would pay for. */
+export async function recordDenial(ctx: Ctx, workspaceId: string, key: string) {
+  try {
+    await ctx.db.insert('plan_denials', { id: newId(), workspace_id: workspaceId, key, created_at: now() });
+  } catch (error) {
+    console.error('Could not record a plan denial', error);
+  }
+}
+
+/** Denials since a date, most frequent first: [{ key, count }]. */
+export async function planDenials(db: Database, workspaceId: string, since: string) {
+  return (await db.all(
+    `SELECT key, COUNT(*) AS count FROM plan_denials WHERE workspace_id = ? AND created_at >= ? GROUP BY key ORDER BY count DESC, key`,
+    workspaceId,
+    since,
+  )).map((r) => ({ key: String(r.key), count: Number(r.count) }));
+}
+
+/** A readable name for a denial key: a feature, or one of the limits. */
+export const denialLabel = (key: string) =>
+  isFeature(key)
+    ? FEATURE_LABEL[key]
+    : ({ 'limit:members': 'Adding members', 'limit:storage': 'Uploading files', 'limit:ai': 'AI requests', 'limit:recordings': 'Recording meetings' } as Record<string, string>)[key] ?? key;
 
 export async function hasFeature(ctx: Ctx, workspaceId: string, feature: Feature) {
   return (await effectivePlan(ctx, workspaceId)).features.includes(feature);
@@ -278,6 +351,7 @@ export async function requireFeature(ctx: Ctx, workspaceId: string, feature: Fea
   const plan = await effectivePlan(ctx, workspaceId);
   if (!plan.features.includes(feature)) {
     const needed = planWith(ctx.config.billing, feature);
+    await recordDenial(ctx, workspaceId, feature);
     throw planError(`${FEATURE_LABEL[feature]} is available on the ${needed} plan. An admin can upgrade under Administration → Billing.`, {
       feature,
       plan: plan.id,
@@ -293,6 +367,7 @@ export async function requireMemberCapacity(ctx: Ctx, workspaceId: string, addin
     return;
   }
   if (plan.member_limit != null && await activeMemberCount(ctx.db, workspaceId) + adding > plan.member_limit) {
+    await recordDenial(ctx, workspaceId, 'limit:members');
     throw planError(`The ${plan.name} plan allows up to ${plan.member_limit} members. An admin can upgrade under Administration → Billing.`, {
       limit: 'members',
       plan: plan.id,
@@ -310,6 +385,7 @@ export async function requireRecordingAllowance(ctx: Ctx, workspaceId: string) {
   const plan = await effectivePlan(ctx, workspaceId);
   if (plan.recording_hours == null) return;
   if (await recordingSecondsThisMonth(ctx.db, workspaceId) >= plan.recording_hours * 3600) {
+    await recordDenial(ctx, workspaceId, 'limit:recordings');
     throw planError(
       `This workspace has used its ${plan.recording_hours} hours of meeting recording for this month. The allowance resets on the 1st, or an admin can upgrade under Administration → Billing.`,
       { limit: 'recordings', plan: plan.id },
@@ -320,6 +396,7 @@ export async function requireRecordingAllowance(ctx: Ctx, workspaceId: string) {
 export async function requireStorage(ctx: Ctx, workspaceId: string, bytes: number) {
   const plan = await effectivePlan(ctx, workspaceId);
   if (plan.storage_limit != null && await storageUsed(ctx.db, workspaceId) + bytes > plan.storage_limit) {
+    await recordDenial(ctx, workspaceId, 'limit:storage');
     throw planError('This workspace has used all of its file storage. Delete old files or upgrade under Administration → Billing.', {
       limit: 'storage',
       plan: plan.id,
@@ -333,6 +410,7 @@ export async function requireAiQuota(ctx: Ctx, workspaceId: string) {
   if (plan.ai_limit == null) return;
   const since = plan.status === 'trial' ? new Date(0).toISOString() : monthStart();
   if (await aiUsedThisMonth(ctx.db, workspaceId, since) >= plan.ai_limit) {
+    await recordDenial(ctx, workspaceId, 'limit:ai');
     throw planError(
       plan.status === 'trial'
         ? 'This workspace has used all AI requests included in the trial. Choose a plan under Administration → Billing to continue.'

@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { dateLabel } from '../format';
 import { Link } from 'react-router-dom';
 import { api, type Feature, type PublicPlan } from '../api';
@@ -21,7 +21,22 @@ export const FEATURE_LABEL: Record<Feature, string> = {
   recordings: 'Meeting recordings and transcripts',
 };
 
-const ORGANIZATION_ONLY: Feature[] = ['ai', 'sso', 'scim', 'retention'];
+/** The plan catalog is the single source of truth for which plan unlocks a feature; fetched once per page load. */
+let catalog: Promise<PublicPlan[]> | null = null;
+const loadCatalog = () => (catalog ??= api.get<{ plans: PublicPlan[] }>('/public/plans').then((r) => r.plans).catch(() => ((catalog = null), [])));
+
+/** The cheapest plan an admin can buy that includes a feature, e.g. "Team". */
+export function useUpgradePlan(feature: Feature) {
+  const [name, setName] = useState<string | null>(null);
+  useEffect(() => {
+    let live = true;
+    loadCatalog().then((plans) => live && setName(plans.find((p) => p.self_serve && p.features.includes(feature))?.name ?? null));
+    return () => {
+      live = false;
+    };
+  }, [feature]);
+  return name;
+}
 
 /** Plan helpers: which features this workspace has, and whether plans apply at all. */
 export function usePlan() {
@@ -41,19 +56,28 @@ export const usd = (n: number) => `$${n.toFixed(n % 1 ? 2 : 0)}`;
 /** Friendly Liberian-dollar equivalent when the operator has set an exchange rate. */
 export const lrd = (n: number, rate: number | null | undefined) => (rate ? `≈ L$${Math.round(n * rate).toLocaleString()}` : '');
 
-/** Shown in place of a feature the workspace's plan doesn't include. */
-export function UpgradeNotice({ feature, compact = false }: { feature: Feature; compact?: boolean }) {
+/**
+ * Shown in place of a feature the workspace's plan doesn't include. With `readOnly`, it sits above
+ * existing content that stays viewable after a downgrade.
+ */
+export function UpgradeNotice({ feature, compact = false, readOnly = false }: { feature: Feature; compact?: boolean; readOnly?: boolean }) {
   const { can } = useSession();
-  const plan = ORGANIZATION_ONLY.includes(feature) ? 'Organization' : 'Team';
+  const plan = useUpgradePlan(feature);
   return (
     <div className={`upgrade-notice ${compact ? 'compact' : ''}`} role="note">
       <span className="upgrade-icon">
         <Icon name="spark" size={compact ? 16 : 22} />
       </span>
       <div className="grow">
-        <strong>{FEATURE_LABEL[feature]} is part of the {plan} plan</strong>
+        <strong>
+          {readOnly ? `${FEATURE_LABEL[feature]} are read-only on your plan` : `${FEATURE_LABEL[feature]} is part of the ${plan ?? 'paid'} plan${plan ? '' : 's'}`}
+        </strong>
         <p className="muted">
-          {can('admin') ? 'Upgrade to unlock it for your whole team. Nothing you already have changes.' : 'Ask a workspace admin to upgrade to unlock it.'}
+          {readOnly
+            ? `Everything already here stays readable. ${can('admin') ? `Upgrade${plan ? ` to ${plan}` : ''} to create and change them again.` : 'Ask a workspace admin to upgrade to make changes.'}`
+            : can('admin')
+              ? 'Upgrade to unlock it for your whole team. Nothing you already have changes.'
+              : 'Ask a workspace admin to upgrade to unlock it.'}
         </p>
       </div>
       {can('admin') && (

@@ -21,6 +21,7 @@ import { emitEvent } from '../webhooks.js';
 import { runAutomations } from '../automations.js';
 import { badRequest, forbidden, friendlyDate, newId, notFound, now, parse, today, filterAsync } from '../util.js';
 import { parseCsv, parseLooseDate } from '../csv.js';
+import { hasFeature, requireFeature } from '../plans.js';
 import { taskExtras } from './work.js';
 
 const DateStr = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'use YYYY-MM-DD');
@@ -142,6 +143,8 @@ export function tasksRouter(ctx: Ctx) {
 
   /** Create a task. `quiet` (used by imports) skips per-task notifications, activity and automations. */
   const createTask = async (auth: Auth, body: z.infer<typeof TaskInput>, quiet = false) => {
+    // Start dates drive the timeline, which is part of planning.
+    if (body.startDate) await requireFeature(ctx, auth.workspaceId, 'planning');
     let project: Row | null = null;
     if (body.parentId) {
       const parent = await loadTask(db, auth, body.parentId);
@@ -346,6 +349,7 @@ export function tasksRouter(ctx: Ctx) {
     };
     if (cols.title === null) throw badRequest('Couldn’t find a title column. Name it “Title”, “Name” or “Task”.');
 
+    const planning = await hasFeature(ctx, auth.workspaceId, 'planning');
     const members = await db.all(
       `SELECT u.id, u.name, u.email, m.role FROM memberships m JOIN users u ON u.id = m.user_id
         WHERE m.workspace_id = ? AND m.deactivated_at IS NULL`,
@@ -394,7 +398,11 @@ export function tasksRouter(ctx: Ctx) {
         return d;
       };
       const dueDate = dateOf(cols.due, 'due date');
-      const startDate = dateOf(cols.start, 'start date');
+      let startDate = dateOf(cols.start, 'start date');
+      if (startDate && !planning) {
+        startDate = null;
+        warnings.push('Start dates need timeline planning on your plan; left empty');
+      }
       const estimateRaw = cell(row, cols.estimate);
       const estimate = estimateRaw ? Number.parseFloat(estimateRaw.replace(',', '.')) : null;
       if (estimateRaw && (estimate === null || !Number.isFinite(estimate) || estimate < 0 || estimate > 1000)) warnings.push(`Couldn’t read the estimate “${estimateRaw}”`);
@@ -583,6 +591,7 @@ export function tasksRouter(ctx: Ctx) {
     if (body.milestoneId && !await db.get('SELECT 1 FROM milestones WHERE id = ? AND project_id = ?', body.milestoneId, task.project_id ?? '')) {
       throw badRequest('Milestone does not belong to this project');
     }
+    if (body.startDate && body.startDate !== task.start_date) await requireFeature(ctx, auth.workspaceId, 'planning');
     const statusChanged = body.status && body.status !== task.status;
     await db.update('tasks', task.id, {
       title: body.title,

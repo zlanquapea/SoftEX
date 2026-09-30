@@ -3627,6 +3627,34 @@ td input[type='date'] {
 .section-heading > .row-gap {
   flex-wrap: wrap;
 }
+.blocked-signals {
+  margin-top: 14px;
+  padding: 12px 14px;
+  border-radius: 10px;
+  border: 1px solid var(--amber-line, var(--line));
+  background: var(--amber-soft);
+  font-size: 13px;
+}
+.blocked-signals ul {
+  margin: 6px 0 0;
+  padding-left: 18px;
+}
+.entitlement-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: 6px 18px;
+  margin: 10px 0 14px;
+}
+.entitlement-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 13px;
+}
+.entitlement-row select {
+  width: auto;
+  padding: 4px 26px 4px 8px;
+}
 .narrow-input {
   width: 90px;
 }

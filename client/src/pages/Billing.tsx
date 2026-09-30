@@ -33,6 +33,7 @@ interface BillingData {
     trial_ends_at: string | null;
     paid_through: string | null;
     features: Feature[];
+    custom?: boolean;
   };
   usage: {
     members: number;
@@ -44,6 +45,7 @@ interface BillingData {
     ai_limit: number | null;
     recording_seconds: number;
     recording_hours: number | null;
+    blocked: { key: string; label: string; count: number }[];
   };
   plans: PublicPlan[];
   lrd_per_usd: number | null;
@@ -123,6 +125,19 @@ export function BillingSettings() {
           {!!usage.recording_hours && <Meter label="Meeting recording this month" used={usage.recording_seconds} limit={usage.recording_hours * 3600} format={hours} />}
           {!!usage.ai_limit && <Meter label={plan.status === 'trial' ? 'AI requests during trial' : 'AI requests this month'} used={usage.ai_used} limit={usage.ai_limit} />}
         </div>
+        {plan.custom && <p className="muted small">Custom terms apply to this workspace, as agreed with us.</p>}
+        {usage.blocked.length > 0 && (
+          <div className="blocked-signals">
+            <strong>Your team tried to use these in the last 30 days, and your plan stopped them:</strong>
+            <ul>
+              {usage.blocked.map((b) => (
+                <li key={b.key}>
+                  {b.label} <span className="muted">· {b.count} time{b.count === 1 ? '' : 's'}</span>
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
       </div>
 
       <div className="plan-grid">

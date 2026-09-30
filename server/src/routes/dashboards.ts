@@ -272,9 +272,10 @@ export function dashboardsRouter(ctx: Ctx) {
   const r = Router();
   const { db } = ctx;
 
-  const guard = async (auth: Auth) => {
+  /** After a downgrade, existing dashboards stay viewable (and can be deleted); creating and editing them needs the plan. */
+  const guard = async (auth: Auth, changing = true) => {
     if (isGuest(auth)) throw forbidden('Guests cannot use dashboards');
-    await requireFeature(ctx, auth.workspaceId, 'insights');
+    if (changing) await requireFeature(ctx, auth.workspaceId, 'insights');
   };
   const canSee = (auth: Auth, d: Row) => d.visibility === 'workspace' || d.owner_id === auth.userId;
   const canEdit = (auth: Auth, d: Row) => d.owner_id === auth.userId || isAdmin(auth);
@@ -296,14 +297,15 @@ export function dashboardsRouter(ctx: Ctx) {
 
   r.get('/dashboards', async (req, res) => {
     const auth = authOf(req);
-    await guard(auth);
+    await guard(auth, false);
     const rows = await db.all(
       `SELECT d.id, d.name, d.description, d.visibility, d.owner_id, d.updated_at, u.name AS owner_name FROM dashboards d JOIN users u ON u.id = d.owner_id
         WHERE d.workspace_id = ? AND (d.visibility = 'workspace' OR d.owner_id = ?) ORDER BY d.name`,
       auth.workspaceId,
       auth.userId,
     );
-    res.json(rows.map((d) => ({ ...d, can_edit: canEdit(auth, d) })));
+    const entitled = await hasFeature(ctx, auth.workspaceId, 'insights');
+    res.json(rows.map((d) => ({ ...d, can_edit: canEdit(auth, d) && entitled })));
   });
 
   const Body = z.object({
@@ -339,8 +341,9 @@ export function dashboardsRouter(ctx: Ctx) {
 
   r.get('/dashboards/:id', async (req, res) => {
     const auth = authOf(req);
-    await guard(auth);
-    res.json(await serialize(auth, await load(auth, req.params.id)));
+    await guard(auth, false);
+    const out = await serialize(auth, await load(auth, req.params.id));
+    res.json({ ...out, can_edit: out.can_edit && (await hasFeature(ctx, auth.workspaceId, 'insights')) });
   });
 
   r.patch('/dashboards/:id', async (req, res) => {
@@ -362,7 +365,7 @@ export function dashboardsRouter(ctx: Ctx) {
 
   r.delete('/dashboards/:id', async (req, res) => {
     const auth = authOf(req);
-    await guard(auth);
+    await guard(auth, false);
     const d = await load(auth, req.params.id);
     if (!canEdit(auth, d)) throw forbidden('Only the dashboard’s owner or an admin can delete it');
     await db.run('DELETE FROM dashboards WHERE id = ?', d.id);
@@ -373,7 +376,7 @@ export function dashboardsRouter(ctx: Ctx) {
   /** Every widget's numbers, computed from what this viewer can open. */
   r.get('/dashboards/:id/data', async (req, res) => {
     const auth = authOf(req);
-    await guard(auth);
+    await guard(auth, false);
     const d = await load(auth, req.params.id);
     const visible = await accessibleProjectIds(db, auth);
     const cache = new Map<string, Row[]>();
