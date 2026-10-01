@@ -68,7 +68,7 @@ jobs:
           severity: CRITICAL,HIGH
           ignore-unfixed: true
       - name: Upload scan results to the Security tab
-        uses: github/codeql-action/upload-sarif@v3
+        uses: github/codeql-action/upload-sarif@v4
         if: always() && hashFiles('trivy.sarif') != ''
         # Code scanning is not available on every repository plan; the blocking check is the next step.
         continue-on-error: true
