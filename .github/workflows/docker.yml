@@ -127,3 +127,37 @@ jobs:
             exit 0
           fi
           curl -fsS -X POST "$DEPLOY_HOOK_URL" -H 'Content-Type: application/json' -d "{\"image\":\"${{ env.IMAGE }}@${DIGEST}\"}"
+
+  # Google Cloud Run. Inert until the repository variable GCP_PROJECT_ID is set (see docs/DEPLOY_CLOUD_RUN.md).
+  # Authenticates with Workload Identity Federation (no stored keys), copies the exact image that was
+  # scanned and attested into Artifact Registry, and deploys it by digest.
+  deploy-cloud-run:
+    name: Deploy to Cloud Run
+    needs: image
+    if: github.event_name != 'pull_request' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')) && vars.GCP_PROJECT_ID != ''
+    runs-on: ubuntu-latest
+    environment: production
+    permissions:
+      contents: read
+      id-token: write
+      packages: read
+    env:
+      REGION: ${{ vars.GCP_REGION }}
+      SERVICE: ${{ vars.CLOUD_RUN_SERVICE || 'kuu' }}
+      AR_IMAGE: ${{ vars.GCP_REGION }}-docker.pkg.dev/${{ vars.GCP_PROJECT_ID }}/kuu/kuu
+    steps:
+      - uses: google-github-actions/auth@v3
+        with:
+          workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ vars.GCP_DEPLOY_SERVICE_ACCOUNT }}
+      - uses: google-github-actions/setup-gcloud@v3
+      - uses: docker/setup-buildx-action@v4
+      - name: Log in to registries
+        run: |
+          gcloud auth configure-docker "${REGION}-docker.pkg.dev" --quiet
+          echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+      - name: Copy the image to Artifact Registry
+        run: docker buildx imagetools create --tag "${AR_IMAGE}:${GITHUB_SHA::7}" "${{ env.IMAGE }}@${{ needs.image.outputs.digest }}"
+      - name: Deploy the new revision
+        run: |
+          gcloud run deploy "$SERVICE" --region "$REGION" --image "${AR_IMAGE}@${{ needs.image.outputs.digest }}" --quiet

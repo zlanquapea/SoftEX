@@ -1,7 +1,7 @@
 import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { afterEach, describe, expect, it } from 'vitest';
-import { S3FileStore } from '../src/storage.js';
+import { GcsFileStore, S3FileStore } from '../src/storage.js';
 import { createBackup, listBackups } from '../src/backup.js';
 import { registerOwner, setup, type TestEnv } from './helpers.js';
 
@@ -103,5 +103,71 @@ describe('S3-compatible file storage', () => {
     expect(keys).toHaveLength(2);
     expect(keys.every((k) => k.startsWith('/softex/app/backups/softex-'))).toBe(true);
     expect((await listBackups(env.softex.ctx)).map((b) => b.name)).toEqual(keys.map((k) => k.split('/').pop()).sort().reverse());
+  });
+});
+
+/** Just enough of the Cloud Storage JSON API (media upload, alt=media download, delete, list). */
+function fakeGcs() {
+  const objects = new Map<string, { body: Buffer; type: string }>();
+  const server = createServer((req, res) => {
+    const url = new URL(req.url!, 'http://x');
+    const send = (status: number, body?: unknown) => res.writeHead(status, { 'Content-Type': 'application/json' }).end(body === undefined ? undefined : JSON.stringify(body));
+    if (req.method === 'POST' && url.pathname === '/upload/storage/v1/b/media/o') {
+      const chunks: Buffer[] = [];
+      req.on('data', (c) => chunks.push(c));
+      req.on('end', () => {
+        objects.set(url.searchParams.get('name')!, { body: Buffer.concat(chunks), type: String(req.headers['content-type']) });
+        send(200, {});
+      });
+      return;
+    }
+    if (req.method === 'GET' && url.pathname === '/storage/v1/b/media/o') {
+      const prefix = url.searchParams.get('prefix') ?? '';
+      const items = [...objects].filter(([k]) => k.startsWith(prefix)).map(([name, o]) => ({ name, size: String(o.body.length), updated: '2026-10-01T00:00:00.000Z' }));
+      return send(200, { items });
+    }
+    const name = decodeURIComponent(url.pathname.replace('/storage/v1/b/media/o/', ''));
+    const obj = objects.get(name);
+    if (req.method === 'DELETE') return send(objects.delete(name) ? 204 : 404);
+    if (!obj) return send(404, { error: 'not found' });
+    const range = /bytes=(\d+)-(\d+)/.exec(String(req.headers.range ?? ''));
+    res.writeHead(range ? 206 : 200, { 'Content-Type': obj.type }).end(range ? obj.body.subarray(Number(range[1]), Number(range[2]) + 1) : obj.body);
+  });
+  return { server, objects };
+}
+
+describe('Google Cloud Storage file storage', () => {
+  it('stores, streams (with ranges), lists and deletes files', async () => {
+    const fake = fakeGcs();
+    s3 = fake.server;
+    await new Promise<void>((r) => fake.server.listen(0, '127.0.0.1', r));
+    const endpoint = `http://127.0.0.1:${(fake.server.address() as AddressInfo).port}`;
+    env = setup({ files: new GcsFileStore({ bucket: 'media', endpoint, prefix: 'uploads/' }) });
+    const owner = await registerOwner(env, 'Ada');
+    const file = (await owner.agent.post('/api/files').attach('file', Buffer.from('quarterly numbers'), 'report.txt')).body;
+    expect([...fake.objects.keys()][0]).toMatch(/^uploads\//);
+    expect([...fake.objects.values()][0].body.toString()).toBe('quarterly numbers');
+
+    const read = (path: string) =>
+      owner.agent.get(path).buffer(true).parse((res, cb) => {
+        const chunks: Buffer[] = [];
+        res.on('data', (c: Buffer) => chunks.push(c));
+        res.on('end', () => cb(null, Buffer.concat(chunks)));
+      });
+    expect(((await read(`/api/files/${file.id}/download`)).body as Buffer).toString()).toBe('quarterly numbers');
+
+    const store = env.softex.ctx.files;
+    const key = [...fake.objects.keys()][0].slice('uploads/'.length);
+    expect((await store.list('')).map((f) => f.key)).toEqual([key]);
+    const part = await store.open(key, { start: 0, end: 8 });
+    const bytes: Buffer[] = [];
+    for await (const chunk of part!) bytes.push(chunk as Buffer);
+    expect(Buffer.concat(bytes).toString()).toBe('quarterly');
+    expect(await store.open('missing')).toBeNull();
+
+    await store.remove(key);
+    await store.remove(key); // already gone is fine
+    expect(fake.objects.size).toBe(0);
+    expect((await owner.agent.get(`/api/files/${file.id}/download`)).status).toBe(410);
   });
 });

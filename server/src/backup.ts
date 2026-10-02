@@ -32,8 +32,8 @@ export interface BackupInfo {
 const NAME = /^softex-\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}(-\d{3})?Z\.db\.gz$/;
 export const isBackupName = (name: string) => NAME.test(name);
 
-function target(ctx: Ctx): { store: FileStore; prefix: string; location: 's3' | 'local' } {
-  if (ctx.files.kind === 's3') return { store: ctx.files, prefix: 'backups/', location: 's3' };
+function target(ctx: Ctx): { store: FileStore; prefix: string; location: 's3' | 'gcs' | 'local' } {
+  if (ctx.files.kind !== 'local') return { store: ctx.files, prefix: 'backups/', location: ctx.files.kind };
   return { store: new LocalFileStore(ctx.config.backups.dir), prefix: '', location: 'local' };
 }
 
@@ -160,7 +160,7 @@ export async function restoreOnStartup(options: { dbPath: string; backupName: st
   }
   const incoming = `${dbPath}.restoring`;
   try {
-    const source = files.kind === 's3' ? await files.open(`backups/${backupName}`) : await openLocal(join(backupDir, backupName));
+    const source = files.kind !== 'local' ? await files.open(`backups/${backupName}`) : await openLocal(join(backupDir, backupName));
     if (!source) throw new Error(`Backup ${backupName} was not found`);
     await pipeline(source, createGunzip(), createWriteStream(incoming));
     verifySnapshot(incoming);

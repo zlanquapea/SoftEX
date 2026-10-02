@@ -1,0 +1,18 @@
+project_id      = "kuu-prod"
+region          = "europe-west1"
+domain          = "app.example.com"
+billing_account = "000000-000000-000000"
+github_repo     = "zlanquapea/softex"
+
+# Keep "first" until launch, then change to "open" and apply.
+registration    = "first"
+operator_emails = "you@example.com"
+
+# Set false until the domain is verified for your Google account.
+create_domain_mapping = true
+
+extra_env = {
+  SOFTEX_COMPANY_NAME  = "Your Company"
+  SOFTEX_SUPPORT_EMAIL = "support@example.com"
+  SOFTEX_MAIL_FROM     = "Küü <no-reply@example.com>"
+}

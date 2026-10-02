@@ -3,7 +3,12 @@ import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createApp } from './app.js';
 import { restoreOnStartup } from './backup.js';
-import { LocalFileStore, S3FileStore, type S3Settings } from './storage.js';
+import { useJsonLogs } from './logging.js';
+import { GcsFileStore, LocalFileStore, S3FileStore, type FileStore, type S3Settings } from './storage.js';
+
+// Cloud Run sets K_SERVICE. There, structured logs are the default so Cloud Logging shows real severities.
+const onCloudRun = !!process.env.K_SERVICE;
+if ((process.env.SOFTEX_LOG_FORMAT ?? (onCloudRun ? 'json' : 'text')) === 'json') useJsonLogs();
 
 const here = dirname(fileURLToPath(import.meta.url));
 const root = resolve(here, '..');
@@ -81,6 +86,13 @@ const s3: S3Settings | undefined = process.env.SOFTEX_S3_BUCKET
       prefix: process.env.SOFTEX_S3_PREFIX || undefined,
     }
   : undefined;
+const gcsBucket = process.env.SOFTEX_GCS_BUCKET || undefined;
+if (gcsBucket && s3) throw new Error('Set either SOFTEX_GCS_BUCKET or SOFTEX_S3_BUCKET, not both');
+const files: FileStore = gcsBucket
+  ? new GcsFileStore({ bucket: gcsBucket, prefix: process.env.SOFTEX_GCS_PREFIX || undefined, endpoint: process.env.SOFTEX_GCS_ENDPOINT || undefined })
+  : s3
+    ? new S3FileStore(s3)
+    : new LocalFileStore(join(dataDir, 'uploads'));
 const dbPath = process.env.SOFTEX_DB ?? join(dataDir, 'softex.db');
 const databaseUrl = process.env.SOFTEX_DATABASE_URL || undefined;
 const backupDir = process.env.SOFTEX_BACKUP_DIR || join(dataDir, 'backups');
@@ -92,17 +104,32 @@ if (process.env.SOFTEX_RESTORE_BACKUP) {
     process.exit(1);
   }
   try {
-    await restoreOnStartup({ dbPath, backupName: process.env.SOFTEX_RESTORE_BACKUP, files: s3 ? new S3FileStore(s3) : new LocalFileStore(join(dataDir, 'uploads')), backupDir });
+    await restoreOnStartup({ dbPath, backupName: process.env.SOFTEX_RESTORE_BACKUP, files, backupDir });
   } catch (error) {
     console.error(`Küü could not restore the backup: ${(error as Error).message}`);
     process.exit(1);
   }
 }
 
-const { server, ready } = createApp({
+// Cloud Run instances have no durable disk: a SQLite file or local uploads would silently vanish on the next restart.
+if (onCloudRun) {
+  const problems = [
+    !databaseUrl && 'SOFTEX_DATABASE_URL (PostgreSQL) is required',
+    files.kind === 'local' && 'SOFTEX_GCS_BUCKET (or SOFTEX_S3_BUCKET) is required for uploaded files',
+    !process.env.SOFTEX_PUBLIC_URL?.startsWith('https://') && 'SOFTEX_PUBLIC_URL must be the https:// address users visit',
+    process.env.SOFTEX_SECURE_COOKIES !== 'true' && 'SOFTEX_SECURE_COOKIES must be true',
+    mode === 'saas' && !process.env.SOFTEX_SECRET_KEY && 'SOFTEX_SECRET_KEY is required in saas mode',
+  ].filter(Boolean);
+  if (problems.length) {
+    console.error(`Küü is not configured for Cloud Run:\n- ${problems.join('\n- ')}`);
+    process.exit(1);
+  }
+}
+
+const { server, ready, close } = createApp({
   dbPath,
   databaseUrl,
-  s3,
+  files,
   uploadDir: join(dataDir, 'uploads'),
   backups: {
     enabled: process.env.SOFTEX_BACKUPS !== 'off',
@@ -161,3 +188,22 @@ try {
 server.listen(port, () => {
   console.log(`Küü server listening on http://localhost:${port}`);
 });
+
+// Cloud Run sends SIGTERM on deploys and scale-in and kills the container ~10 s later:
+// stop taking new work, tell websocket clients to reconnect, and let the database pool drain.
+let stopping = false;
+for (const signal of ['SIGTERM', 'SIGINT'] as const) {
+  process.on(signal, () => {
+    if (stopping) return;
+    stopping = true;
+    console.log(`${signal} received, shutting down`);
+    setTimeout(() => process.exit(1), 8_000).unref();
+    close().then(
+      () => process.exit(0),
+      (error) => {
+        console.error('Shutdown failed', error);
+        process.exit(1);
+      },
+    );
+  });
+}

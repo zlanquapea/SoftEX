@@ -1,3 +1,5 @@
+import type { AddressInfo } from 'node:net';
+import WebSocket from 'ws';
 import { afterEach, describe, expect, it } from 'vitest';
 import { invite, registerOwner, setup, type TestEnv } from './helpers.js';
 
@@ -51,5 +53,44 @@ describe('behind a hosting proxy', () => {
     for (let i = 0; i < 10; i++) expect((await login('wrong-password')).status).toBe(401);
     // Locked now, even with the right password.
     expect((await login('password123')).status).toBe(429);
+  });
+});
+
+describe('production headers and limits', () => {
+  it('sends HSTS and a locked-down policy on API responses over HTTPS', async () => {
+    env = setup({ secureCookies: true });
+    const res = await env.agent().get('/api/health');
+    expect(res.headers['strict-transport-security']).toMatch(/max-age=31536000/);
+    expect(res.headers['content-security-policy']).toBe("default-src 'none'; frame-ancestors 'none'");
+  });
+
+  it('does not send HSTS when not served over HTTPS', async () => {
+    env = setup();
+    expect((await env.agent().get('/api/health')).headers['strict-transport-security']).toBeUndefined();
+  });
+
+  it('refuses uploads over the 25 MB default and accepts ones under it', async () => {
+    env = setup();
+    const owner = await registerOwner(env);
+    expect(env.softex.ctx.config.maxUploadBytes).toBe(25 * 1024 * 1024);
+    const big = await owner.agent.post('/api/files').attach('file', Buffer.alloc(25 * 1024 * 1024 + 1024), 'big.bin');
+    expect(big.status).toBe(413);
+    const ok = await owner.agent.post('/api/files').attach('file', Buffer.alloc(1024 * 1024), 'ok.bin');
+    expect(ok.status).toBe(201);
+  });
+
+  it('tells websocket clients to reconnect when it shuts down', async () => {
+    env = setup();
+    const signedUp = await signUp(env, 5);
+    const cookie = String(signedUp.headers['set-cookie']?.[0] ?? '').split(';')[0];
+    await new Promise<void>((r) => env.softex.server.listen(0, '127.0.0.1', r));
+    const { port } = env.softex.server.address() as AddressInfo;
+    const socket = new WebSocket(`ws://127.0.0.1:${port}/ws`, { headers: { cookie } });
+    await new Promise((r) => socket.once('open', r));
+    const closed = new Promise<number>((r) => socket.once('close', (code) => r(code)));
+    const started = Date.now();
+    await env.softex.close();
+    expect(await closed).toBe(1001);
+    expect(Date.now() - started).toBeLessThan(3_000);
   });
 });

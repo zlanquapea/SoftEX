@@ -86,7 +86,7 @@ export function createApp(options: AppOptions = {}): SoftexApp {
   const config: Config = {
     uploadDir: options.uploadDir ?? join(process.cwd(), 'data', 'uploads'),
     meetingBaseUrl: options.meetingBaseUrl ?? 'https://meet.jit.si',
-    maxUploadBytes: options.maxUploadBytes ?? 100 * 1024 * 1024,
+    maxUploadBytes: options.maxUploadBytes ?? 25 * 1024 * 1024,
     secureCookies: options.secureCookies ?? false,
     publicUrl: (options.publicUrl ?? 'http://localhost:4000').replace(/\/$/, ''),
     allowedOrigins: options.allowedOrigins ?? [],
@@ -144,6 +144,10 @@ export function createApp(options: AppOptions = {}): SoftexApp {
     res.setHeader('X-Frame-Options', 'DENY');
     // Küü itself may use the microphone and screen sharing (voice notes, meeting recordings); nothing embedded may.
     res.setHeader('Permissions-Policy', 'camera=(), microphone=(self), display-capture=(self), geolocation=()');
+    // Over HTTPS, tell browsers never to fall back to plain HTTP for this site.
+    if (config.secureCookies) res.setHeader('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
+    // Nothing the API returns is a page: a baseline that blocks everything. Routes that serve user files set their own, stricter-for-content policy.
+    if (req.path.startsWith('/api') || req.path.startsWith('/scim')) res.setHeader('Content-Security-Policy', "default-src 'none'; frame-ancestors 'none'");
     // Cookie sessions + mutating requests: reject cross-origin browser requests (CSRF defence in depth).
     // Allowed: the address the request came in on (directly or via a proxy's X-Forwarded-Host),
     // the configured public address, and any extra origins (dev tunnels such as Codespaces).
@@ -220,6 +224,10 @@ export function createApp(options: AppOptions = {}): SoftexApp {
   app.use('/api', api);
   app.use('/api', (_req, _res, next) => next(new HttpError(404, 'Not found')));
 
+  // Live updates connect back to the public address; spelled out so the policy does not allow any other websocket host.
+  const publicOrigin = new URL(config.publicUrl);
+  const socketOrigin = `${publicOrigin.protocol === 'https:' ? 'wss' : 'ws'}://${publicOrigin.host}`;
+  const connectSrc = config.secureCookies ? `'self' ${socketOrigin}` : "'self' ws: wss:";
   const staticDir = options.staticDir;
   let indexHtml: string | undefined;
   if (staticDir && existsSync(join(staticDir, 'index.html'))) {
@@ -245,7 +253,7 @@ export function createApp(options: AppOptions = {}): SoftexApp {
           'frame-src https://www.youtube-nocookie.com https://player.vimeo.com https://www.loom.com https://www.tiktok.com https://www.facebook.com',
           "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
           "font-src 'self' https://fonts.gstatic.com",
-          "connect-src 'self' ws: wss:",
+          `connect-src ${connectSrc}`,
           "worker-src 'self'",
           "manifest-src 'self'",
           "frame-ancestors 'none'",
@@ -302,17 +310,22 @@ export function createApp(options: AppOptions = {}): SoftexApp {
   const server = createServer(app);
   hub.attach(server, (req) => authenticate(ctx, req));
 
-  return {
-    app,
-    server,
-    ctx,
-    ready,
-    close: async () => {
-      stopJobs();
-      await ready.catch(() => {});
-      await hub.close();
-      server.close();
-      await db.close();
-    },
-  };
+  let closing: Promise<void> | undefined;
+  const close = () => (closing ??= (async () => {
+    stopJobs();
+    await ready.catch(() => {});
+    await hub.close();
+    server.closeIdleConnections();
+    await new Promise<void>((resolve) => {
+      // Give requests already in flight a moment to finish, then drop whatever is left.
+      const force = setTimeout(() => server.closeAllConnections(), 5_000);
+      server.close(() => {
+        clearTimeout(force);
+        resolve();
+      });
+    });
+    await db.close();
+  })());
+
+  return { app, server, ctx, ready, close };
 }

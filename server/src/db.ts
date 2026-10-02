@@ -1209,6 +1209,8 @@ class PostgresDatabase extends BaseDatabase {
     this.pool = new pg.Pool({
       connectionString: parsed.toString(),
       max: Number(process.env.SOFTEX_DB_POOL_SIZE ?? 10),
+      // Keep idle connections alive through NAT and proxy timeouts (Cloud SQL, load balancers).
+      keepAlive: true,
       options: schema ? `-c search_path=${schema}` : undefined,
     });
     this.pool.on('error', (error) => console.error('PostgreSQL connection error', error));
@@ -1303,7 +1305,7 @@ class PostgresDatabase extends BaseDatabase {
         let closed = false;
         let delay = 1000;
         const connect = async (): Promise<void> => {
-          const c = new pg.Client({ connectionString: this.url, options });
+          const c = new pg.Client({ connectionString: this.url, options, keepAlive: true });
           client = c;
           c.on('notification', (n) => {
             if (n.channel !== channel || !n.payload) return;

@@ -266,7 +266,10 @@ export class RealtimeHub {
     if (this.heartbeat) clearInterval(this.heartbeat);
     if (this.presenceTimer) clearInterval(this.presenceTimer);
     await this.unsubscribe?.().catch(() => {});
-    for (const client of this.clients) client.socket.terminate();
+    // 1001 "going away": browsers reconnect right away, which is what we want on a deploy or scale-in.
+    for (const client of this.clients) client.socket.close(1001, 'server restarting');
     this.wss?.close();
+    await new Promise((r) => setTimeout(r, 200));
+    for (const client of this.clients) client.socket.terminate();
   }
 }

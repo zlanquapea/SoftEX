@@ -489,7 +489,7 @@ function Events() {
 interface BackupStatus {
   supported: boolean;
   enabled: boolean;
-  location: 's3' | 'local';
+  location: 's3' | 'gcs' | 'local';
   every_hours: number;
   keep: number;
   last: { at: string; ok: boolean; name?: string; error?: string; last_success_at?: string } | null;
@@ -520,7 +520,7 @@ function Backups() {
         <h2>Backups</h2>
         <p className="muted">
           {data.enabled ? `A checked, compressed copy of the whole database is saved every ${data.every_hours} hours` : 'Automatic backups are off (SOFTEX_BACKUPS=off)'}, and the
-          newest {data.keep} are kept {data.location === 's3' ? 'in your S3 bucket under backups/' : 'in the backups folder on the server’s volume'}.
+          newest {data.keep} are kept {data.location !== 'local' ? 'in your storage bucket under backups/' : 'in the backups folder on the server’s volume'}.
           {data.location === 'local' && ' Download one regularly and keep it somewhere else, or set up S3 storage, so a lost volume doesn’t take the backups with it.'}
         </p>
         {data.last && !data.last.ok && <p className="form-error">The last backup failed {timeAgo(data.last.at)}: {data.last.error}</p>}
