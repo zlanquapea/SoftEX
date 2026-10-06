@@ -42,6 +42,17 @@ export async function openStoredFile(id: string, name: string) {
   if (await Sharing.isAvailableAsync()) await Sharing.shareAsync(file.uri, { dialogTitle: name });
 }
 
+/** Download any API resource with this session's credentials and hand it to the share sheet (e.g. an .ics invite). */
+export async function shareApiDownload(path: string, name: string, mimeType?: string) {
+  const url = apiUrl(path);
+  if (Platform.OS === 'web') {
+    globalThis.open?.(url, '_blank', 'noopener');
+    return;
+  }
+  const file = await File.downloadFileAsync(url, new File(Paths.cache, safeName(name)), { headers: authHeaders(), idempotent: true });
+  if (await Sharing.isAvailableAsync()) await Sharing.shareAsync(file.uri, { mimeType, dialogTitle: name });
+}
+
 /** URL + headers for showing a stored image or playing media inline. */
 export const fileSource = (id: string, inline = true) => ({ uri: apiUrl(`/files/${id}/download${inline ? '?inline=1' : ''}`), headers: authHeaders() });
 

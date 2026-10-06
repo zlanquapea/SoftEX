@@ -19,6 +19,7 @@ import {
   type TextInputProps,
   type TextProps,
   type TextStyle,
+  type ViewProps,
   type ViewStyle,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -99,8 +100,12 @@ export function Screen({
   );
 }
 
-export function Row({ children, gap = 8, style, wrap }: { children: ReactNode; gap?: number; style?: StyleProp<ViewStyle>; wrap?: boolean }) {
-  return <View style={[{ flexDirection: 'row', alignItems: 'center', gap, flexWrap: wrap ? 'wrap' : 'nowrap' }, style]}>{children}</View>;
+export function Row({ children, gap = 8, style, wrap, ...rest }: ViewProps & { children: ReactNode; gap?: number; style?: StyleProp<ViewStyle>; wrap?: boolean }) {
+  return (
+    <View {...rest} style={[{ flexDirection: 'row', alignItems: 'center', gap, flexWrap: wrap ? 'wrap' : 'nowrap' }, style]}>
+      {children}
+    </View>
+  );
 }
 
 export function Card({ children, style, onPress, padded = true }: { children: ReactNode; style?: StyleProp<ViewStyle>; onPress?: () => void; padded?: boolean }) {
