@@ -10,7 +10,7 @@ export function trackErrors(page: Page) {
 }
 
 export async function signIn(page: Page, email: string) {
-  await page.goto('/');
+  await page.goto('/login');
   await page.getByLabel('Work email').fill(email);
   await page.getByLabel('Password').fill(PASSWORD);
   await page.getByRole('button', { name: 'Sign in', exact: true }).click();
