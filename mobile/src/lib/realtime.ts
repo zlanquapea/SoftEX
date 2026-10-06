@@ -1,3 +1,4 @@
+import { useSyncExternalStore } from 'react';
 import { AppState } from 'react-native';
 import { authHeaders, session } from './api';
 
@@ -53,7 +54,13 @@ class Realtime {
       try {
         const event = JSON.parse(String(e.data));
         if (event.type === 'hello') this.online = new Set(event.online);
-        if (event.type === 'presence') event.online ? this.online.add(event.userId) : this.online.delete(event.userId);
+        if (event.type === 'presence') {
+          // A new set each time, so hooks reading it see a change.
+          const next = new Set(this.online);
+          if (event.online) next.add(event.userId);
+          else next.delete(event.userId);
+          this.online = next;
+        }
         this.emit(event);
       } catch {
         /* ignore */
@@ -83,3 +90,9 @@ class Realtime {
 }
 
 export const realtime = new Realtime();
+
+const onPresence = (fn: () => void) => realtime.subscribe((e) => (e.type === 'hello' || e.type === 'presence') && fn());
+/** Whether someone is connected right now; re-renders when they come or go. */
+export function useIsOnline(userId: string | undefined) {
+  return useSyncExternalStore(onPresence, () => !!userId && realtime.online.has(userId));
+}

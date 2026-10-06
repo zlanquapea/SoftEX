@@ -2,7 +2,7 @@ import * as Clipboard from 'expo-clipboard';
 import { useEffect, useState } from 'react';
 import { Pressable, View } from 'react-native';
 import { api } from '../lib/api';
-import { useLiveDoc, useYText, type Peer, type SaveStatus } from '../lib/collab';
+import { useLiveDoc, useLiveState, useYText, type Peer, type SaveStatus } from '../lib/collab';
 import { timeAgo } from '../lib/format';
 import { useApi, useRealtime } from '../lib/hooks';
 import { useSession } from '../lib/session';
@@ -230,24 +230,25 @@ export function LiveEditor({ page, onClose, onSaved }: { page: { id: string; tit
   const live = useLiveDoc('page', page.id);
   const title = useYText(live, 'title');
   const body = useYText(live, 'body');
+  const state = useLiveState(live);
   const [mode, setMode] = useState<'write' | 'preview'>('write');
-  if (!live || !live.ready) return <Loading label="Opening the live editor" inline />;
+  if (!live || !state?.ready) return <Loading label="Opening the live editor" inline />;
   const changed = title.value !== page.title || body.value !== page.body;
-  const peers = [...live.peers.values()];
-  const dot = { saved: c.green, saving: c.amber, connecting: c.muted, offline: c.red }[live.status];
+  const peers = state.peers;
+  const dot = { saved: c.green, saving: c.amber, connecting: c.muted, offline: c.red }[state.status];
   return (
     <Card style={{ gap: 12 }}>
       <Row style={{ justifyContent: 'space-between' }} wrap>
         <Row gap={6} accessibilityLiveRegion="polite">
           <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: dot }} />
-          <Muted size={12}>{STATUS_TEXT[live.status]}</Muted>
+          <Muted size={12}>{STATUS_TEXT[state.status]}</Muted>
         </Row>
         <PeerList peers={peers} />
       </Row>
       <Input
         value={title.value}
         onChangeText={title.onChange}
-        editable={live.canEdit}
+        editable={state.canEdit}
         accessibilityLabel="Page title"
         onFocus={() => live.setPresence({ selection: { field: 'title', start: 0, end: 0 } })}
         style={{ fontSize: 20, fontFamily: 'Manrope_700Bold' }}
@@ -267,7 +268,7 @@ export function LiveEditor({ page, onClose, onSaved }: { page: { id: string; tit
           multiline
           value={body.value}
           onChangeText={body.onChange}
-          editable={live.canEdit}
+          editable={state.canEdit}
           accessibilityLabel="Page content"
           onFocus={() => live.setPresence({ selection: { field: 'body', start: 0, end: 0 } })}
           placeholder={'# Heading\n\nWrite with **Markdown**. Link tasks and discussions by pasting their Küü links.\n\n- [ ] Checklists work too'}
@@ -280,7 +281,7 @@ export function LiveEditor({ page, onClose, onSaved }: { page: { id: string; tit
         <Button
           variant="primary"
           title={`Save version ${page.version + (changed ? 1 : 0)}`}
-          disabled={!changed || !title.value.trim() || !live.canEdit}
+          disabled={!changed || !title.value.trim() || !state.canEdit}
           onPress={async () => {
             await live.flush();
             const ok = await act(() => api.patch(`/pages/${page.id}`, { title: title.value.trim(), body: body.value }), 'Page saved');

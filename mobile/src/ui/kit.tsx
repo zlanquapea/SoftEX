@@ -25,7 +25,7 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Svg, { Circle, Path } from 'react-native-svg';
 import { initials } from '../lib/format';
-import { realtime } from '../lib/realtime';
+import { useIsOnline } from '../lib/realtime';
 import { fonts, radius, swatch, useStyles, useTheme, type Palette } from '../lib/theme';
 import { Icon } from './Icon';
 
@@ -432,6 +432,7 @@ export function Avatar({
 }) {
   const { c } = useTheme();
   const px = AVATAR[size];
+  const online = useIsOnline(user?.id);
   if (!user)
     return (
       <View style={{ width: px, height: px, borderRadius: px / 2, backgroundColor: c.line2, alignItems: 'center', justifyContent: 'center' }}>
@@ -440,7 +441,6 @@ export function Avatar({
         </T>
       </View>
     );
-  const online = user.id ? realtime.online.has(user.id) : false;
   return (
     <View style={{ width: px, height: px }} accessibilityLabel={user.name}>
       <View style={{ width: px, height: px, borderRadius: px / 2, backgroundColor: swatch(user.color), alignItems: 'center', justifyContent: 'center' }}>

@@ -20,7 +20,7 @@
     "android": {
       "package": "com.kuu.app",
       "adaptiveIcon": {
-        "backgroundColor": "#FEF6EB",
+        "backgroundColor": "#B5461B",
         "foregroundImage": "./assets/images/android-icon-foreground.png",
         "backgroundImage": "./assets/images/android-icon-background.png",
         "monochromeImage": "./assets/images/android-icon-monochrome.png"
@@ -73,7 +73,8 @@
       ],
       "expo-sharing",
       "expo-font",
-      "expo-video"
+      "expo-video",
+      "expo-asset"
     ],
     "experiments": {
       "reactCompiler": true

@@ -1,15 +1,17 @@
 {
-  "name": "mobile",
+  "name": "kuu-mobile",
   "main": "expo-router/entry",
   "version": "1.0.0",
   "dependencies": {
     "@expo-google-fonts/dm-sans": "^0.4.2",
     "@expo-google-fonts/manrope": "^0.4.2",
     "expo": "~57.0.27",
+    "expo-asset": "~57.0.19",
     "expo-audio": "~57.0.5",
     "expo-clipboard": "~57.0.2",
     "expo-constants": "~57.0.21",
     "expo-crypto": "~57.0.3",
+    "expo-dev-client": "~57.0.19",
     "expo-device": "~57.0.2",
     "expo-document-picker": "~57.0.3",
     "expo-file-system": "~57.0.7",
@@ -45,11 +47,12 @@
   },
   "scripts": {
     "start": "expo start",
-    "reset-project": "node ./scripts/reset-project.js",
     "android": "expo start --android",
     "ios": "expo start --ios",
     "web": "expo start --web",
-    "lint": "expo lint"
+    "typecheck": "tsc --noEmit",
+    "lint": "expo lint",
+    "export:check": "expo export --platform all --output-dir dist"
   },
   "private": true
 }

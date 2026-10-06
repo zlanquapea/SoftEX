@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState, useSyncExternalStore } from 'react';
 import { AppState } from 'react-native';
 import * as Y from 'yjs';
 import { api } from './api';
@@ -32,6 +32,15 @@ export const REMOTE = Symbol('remote');
 export const LOCAL = Symbol('local');
 const PEER_TTL = 30_000;
 
+/** An immutable picture of a live document, replaced on every change so memoised (React Compiler) renders see it. */
+export interface LiveState {
+  doc: Y.Doc;
+  ready: boolean;
+  status: SaveStatus;
+  canEdit: boolean;
+  peers: Peer[];
+}
+
 export class LiveDoc {
   doc = new Y.Doc();
   readonly key: string;
@@ -50,6 +59,7 @@ export class LiveDoc {
   private presenceTimer?: ReturnType<typeof setTimeout>;
   private stopped = false;
   private flushing = false;
+  state: LiveState = { doc: this.doc, ready: false, status: 'connecting', canEdit: false, peers: [] };
 
   constructor(
     readonly kind: DocKind,
@@ -63,6 +73,7 @@ export class LiveDoc {
     return () => void this.listeners.delete(fn);
   }
   private emit() {
+    this.state = { doc: this.doc, ready: this.ready, status: this.status, canEdit: this.canEdit, peers: [...this.peers.values()] };
     this.listeners.forEach((l) => l());
   }
 
@@ -181,27 +192,34 @@ export class LiveDoc {
 /** Open a live document for as long as the screen is mounted; edits are flushed when the app goes to the background. */
 export function useLiveDoc(kind: DocKind, id: string | undefined, enabled = true) {
   const [live, setLive] = useState<LiveDoc | null>(null);
-  const [, bump] = useState(0);
   useEffect(() => {
     if (!id || !enabled) return;
     const d = new LiveDoc(kind, id);
     setLive(d);
-    const off = d.onChange(() => bump((n) => n + 1));
     void d.start();
     const sub = AppState.addEventListener('change', (s) => s !== 'active' && void d.flush());
     return () => {
       sub.remove();
-      off();
       d.stop();
     };
   }, [kind, id, enabled]);
   return live;
 }
 
+const NO_STATE: LiveState | null = null;
+/** Re-render whenever the live document's state changes; read ready, status, peers and the Y.Doc from here, not from the LiveDoc. */
+export function useLiveState(live: LiveDoc | null) {
+  return useSyncExternalStore(
+    useCallback((fn: () => void) => (live ? live.onChange(fn) : () => {}), [live]),
+    () => live?.state ?? NO_STATE,
+    () => live?.state ?? NO_STATE,
+  );
+}
+
 /** Keep a text input in step with a Y.Text: typing becomes minimal inserts and deletes. */
 export function useYText(live: LiveDoc | null, name: string) {
   const [value, setValue] = useState('');
-  const doc = live?.doc;
+  const doc = useLiveState(live)?.doc;
   useEffect(() => {
     if (!doc) return;
     const text = doc.getText(name);

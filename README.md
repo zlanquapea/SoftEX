@@ -35,7 +35,7 @@ Küü is a unified workplace app for team communication, projects, documents, me
 | **Docs & chat extras** | **Nested pages** with breadcrumbs and page icons, **page comments** with @mentions and resolve, **publish to the web** as a read-only link, and **favorites** in the sidebar. In chat: **polls**, **@channel / @here**, **message forwarding** and **voice notes** |
 | **Import** (7) | **Bulk invitations** from a pasted list or a CSV, and **task import** into a project from a Trello, Asana, Jira, Monday or spreadsheet CSV, with a preview first. Assignees get one summary notification |
 | **Backups** (7, 9) | Automatic daily SQLite backups: a consistent snapshot, checked with an integrity check, compressed and kept in S3 storage (or the backup folder); the newest 7 are kept. Operators can back up now, download a backup, and restore one by setting `SOFTEX_RESTORE_BACKUP` |
-| **Clients** (8, 11) | Responsive React web app: sidebar navigation on desktop, bottom navigation on mobile, ⌘K global search, dark mode, keyboard and screen-reader-friendly controls, and an installable web app that works offline: the app shell and recently viewed data stay available read-only on poor connections, and cached data is wiped on sign-out |
+| **Clients** (8, 11) | Responsive React web app: sidebar navigation on desktop, bottom navigation on mobile, ⌘K global search, dark mode, keyboard and screen-reader-friendly controls, and an installable web app that works offline: the app shell and recently viewed data stay available read-only on poor connections, and cached data is wiped on sign-out. **Native iOS and Android apps** ([`mobile/`](mobile/README.md), Expo + React Native) with the same screens and features, native push notifications, and single sign-on through the system browser |
 
 ## Architecture
 
@@ -48,6 +48,7 @@ server/   TypeScript + Express 5 API, SQLite (node:sqlite) or PostgreSQL, WebSoc
   src/routes/*     auth, channels, projects, tasks, knowledge, meetings, workspace, home/search
   test/*           permission, isolation and workflow tests (vitest + supertest)
 client/   React 19 + Vite + React Router single-page app
+mobile/   Expo + React Native app for iOS and Android (its own package; see mobile/README.md)
 prototype/  the original static home-screen prototype
 ```
 
@@ -123,6 +124,8 @@ Every push to `main` publishes an image to `ghcr.io/zlanquapea/softex` (see *CI/
 | `SOFTEX_RESTORE_BACKUP` | *(unset)* | A backup file name to restore on start-up (the current database is kept beside it). Remove it after the restore |
 | `SOFTEX_PUSH` | `on` | `off` turns off push notifications |
 | `SOFTEX_VAPID_PUBLIC_KEY` / `SOFTEX_VAPID_PRIVATE_KEY` / `SOFTEX_VAPID_SUBJECT` | *(generated)* | Web Push keys. Without them, a key pair is generated once and stored in the database (encrypted with `SOFTEX_SECRET_KEY` when set) |
+| `SOFTEX_MOBILE_PUSH` | `on` | `off` turns off push notifications to the iOS and Android apps (sent through Expo's push service) |
+| `EXPO_ACCESS_TOKEN` | *(unset)* | Only needed if *Enhanced security for push notifications* is on in your Expo account |
 
 ### Checks
 
@@ -131,13 +134,14 @@ npm test                # server test suite (permissions, workflows, email, SSO,
 SOFTEX_TEST_DATABASE_URL=postgres://user:pass@localhost:5432/db npm test   # the same suite on PostgreSQL, plus multi-server tests
 npm run typecheck       # server + client
 npm run build && npm run test:e2e   # browser smoke tests (Playwright)
+cd mobile && npm run typecheck && npm run export:check   # the phone app: types, and Metro bundles for iOS, Android and web
 ```
 
 ## CI/CD
 
 GitHub Actions run on every pull request and on `main`:
 
-- **CI** (`.github/workflows/ci.yml`): type checks, server tests on Node 22 and 24, production build, and Playwright browser smoke tests on desktop and mobile.
+- **CI** (`.github/workflows/ci.yml`): type checks, server tests on Node 22 and 24, production build, and Playwright browser smoke tests on desktop and mobile. The **Mobile app** job type-checks the Expo app and bundles it for iOS, Android and web.
 - **Security** (`security.yml`, also weekly):
   - `npm audit` (fails on high or critical advisories in production dependencies)
   - CodeQL static analysis

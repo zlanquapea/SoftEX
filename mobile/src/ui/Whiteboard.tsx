@@ -4,7 +4,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { PanResponder, Platform, Pressable, ScrollView, View, type GestureResponderEvent, type LayoutRectangle } from 'react-native';
 import Svg, { Circle, Defs, Ellipse, G, Line, Marker, Path, Pattern, Rect, Text as SvgText, TSpan } from 'react-native-svg';
 import * as Y from 'yjs';
-import { LOCAL, type LiveDoc } from '../lib/collab';
+import { LOCAL, useLiveState, type LiveDoc } from '../lib/collab';
 import { swatch, useTheme } from '../lib/theme';
 import { Icon } from './Icon';
 import { Button, Input, Muted, Sheet, T, useToast } from './kit';
@@ -164,7 +164,8 @@ type Drag =
 export function Whiteboard({ live, title }: { live: LiveDoc; title: string }) {
   const { c } = useTheme();
   const toast = useToast();
-  const doc = live.doc;
+  const liveState = useLiveState(live)!;
+  const doc = liveState.doc;
   const map = useMemo(() => doc.getMap<El>('elements'), [doc]);
   const undo = useMemo(() => new Y.UndoManager(map, { trackedOrigins: new Set([LOCAL]), captureTimeout: 400 }), [map]);
   const [els, setEls] = useState<El[]>(() => [...map.values()]);
@@ -175,7 +176,7 @@ export function Whiteboard({ live, title }: { live: LiveDoc; title: string }) {
   const [color, setColor] = useState({ sticky: STICKY[0], ink: INK[0] });
   const layout = useRef<LayoutRectangle>({ x: 0, y: 0, width: 360, height: 600 });
   const drag = useRef<Drag | null>(null);
-  const readOnly = !live.canEdit;
+  const readOnly = !liveState.canEdit;
 
   useEffect(() => {
     const update = () => setEls([...map.values()]);
@@ -409,7 +410,7 @@ export function Whiteboard({ live, title }: { live: LiveDoc; title: string }) {
 
   const sel = selected.map((id) => byId.get(id)).filter(Boolean) as El[];
   const single = sel.length === 1 ? sel[0] : null;
-  const peers = [...live.peers.values()].filter((p) => p.cursor);
+  const peers = liveState.peers.filter((p) => p.cursor);
   const swatches = single?.type === 'sticky' || (!single && tool === 'sticky') ? STICKY : INK;
 
   return (
