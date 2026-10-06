@@ -111,6 +111,8 @@ const { server, ready } = createApp({
     everyHours: num('SOFTEX_BACKUP_HOURS'),
   },
   push: process.env.SOFTEX_PUSH === 'off' ? false : undefined,
+  mobilePush: process.env.SOFTEX_MOBILE_PUSH === 'off' ? false : undefined,
+  expoAccessToken: process.env.EXPO_ACCESS_TOKEN || undefined,
   vapid: {
     publicKey: process.env.SOFTEX_VAPID_PUBLIC_KEY || undefined,
     privateKey: process.env.SOFTEX_VAPID_PRIVATE_KEY || undefined,

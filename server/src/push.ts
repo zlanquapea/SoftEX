@@ -70,6 +70,54 @@ export function isAllowedPushEndpoint(endpoint: string) {
   return PUSH_HOSTS.some((re) => re.test(host));
 }
 
+/** One message for the Expo push service, which forwards it to Apple (APNs) or Google (FCM). */
+export interface MobilePushMessage {
+  to: string;
+  title: string;
+  body?: string;
+  data: { url: string };
+  sound: 'default';
+  priority: 'high';
+  channelId: 'default';
+  /** Replaces an earlier notification with the same id on iOS. */
+  collapseId?: string;
+}
+
+/** The Expo push service's answer for one message. */
+export interface MobilePushTicket {
+  status: 'ok' | 'error';
+  details?: { error?: string };
+}
+
+/** Sends phone-app notifications; swapped for a fake in tests. */
+export interface MobilePushTransport {
+  send(messages: MobilePushMessage[]): Promise<MobilePushTicket[]>;
+}
+
+/** Push tokens issued to the Küü app by Expo; anything else is refused. */
+export const isExpoPushToken = (token: string) => /^Expo(nent)?PushToken\[[A-Za-z0-9_-]{10,100}\]$/.test(token);
+
+/** Delivery through Expo's push service (exp.host). EXPO_ACCESS_TOKEN enables Expo's enhanced push security. */
+export function expoPushTransport(accessToken?: string): MobilePushTransport {
+  return {
+    async send(messages) {
+      const res = await fetch('https://exp.host/--/api/v2/push/send', {
+        method: 'POST',
+        signal: AbortSignal.timeout(10_000),
+        headers: {
+          accept: 'application/json',
+          'content-type': 'application/json',
+          ...(accessToken ? { authorization: `Bearer ${accessToken}` } : {}),
+        },
+        body: JSON.stringify(messages),
+      });
+      if (!res.ok) throw new Error(`Expo push service answered ${res.status}`);
+      const json = (await res.json()) as { data?: MobilePushTicket[] };
+      return json.data ?? [];
+    },
+  };
+}
+
 let cachedKeys: { db: unknown; keys: Promise<VapidKeys> } | undefined;
 
 /**
@@ -114,6 +162,7 @@ export const pushIdle = async () => {
 
 /** Send a notification to every device where the person is signed in and has alerts on. Never throws. */
 export function sendPush(ctx: Ctx, userId: string, payload: PushPayload) {
+  sendMobilePush(ctx, userId, payload);
   if (!ctx.push) return;
   const transport = ctx.push;
   const job = (async () => {
@@ -139,6 +188,47 @@ export function sendPush(ctx: Ctx, userId: string, payload: PushPayload) {
       }),
     );
   })().catch((error) => console.error('Push failed', error));
+  pending.add(job);
+  void job.finally(() => pending.delete(job));
+}
+
+/** The phone-app half of sendPush: every signed-in phone with notifications allowed. */
+function sendMobilePush(ctx: Ctx, userId: string, payload: PushPayload) {
+  if (!ctx.mobilePush) return;
+  const transport = ctx.mobilePush;
+  const job = (async () => {
+    const tokens = await ctx.db.all(
+      `SELECT p.id, p.token FROM mobile_push_tokens p JOIN sessions s ON s.id = p.session_id
+        WHERE p.user_id = ? AND s.user_id = p.user_id AND s.expires_at > ?`,
+      userId,
+      now(),
+    );
+    if (!tokens.length) return;
+    const messages: MobilePushMessage[] = tokens.map((t) => ({
+      to: t.token,
+      title: payload.title,
+      body: payload.body || undefined,
+      data: { url: payload.url ?? '/inbox' },
+      sound: 'default',
+      priority: 'high',
+      channelId: 'default',
+      collapseId: payload.tag,
+    }));
+    try {
+      const tickets = await transport.send(messages);
+      await Promise.all(
+        tickets.map(async (ticket, i) => {
+          const row = tokens[i];
+          if (!row) return;
+          // The app was removed or notifications turned off: stop sending to that phone.
+          if (ticket.status === 'error' && ticket.details?.error === 'DeviceNotRegistered') await ctx.db.run('DELETE FROM mobile_push_tokens WHERE id = ?', row.id);
+          else if (ticket.status === 'ok') await ctx.db.run('UPDATE mobile_push_tokens SET last_success_at = ? WHERE id = ?', now(), row.id);
+        }),
+      );
+    } catch (error) {
+      console.warn('Mobile push delivery failed', (error as Error).message);
+    }
+  })().catch((error) => console.error('Mobile push failed', error));
   pending.add(job);
   void job.finally(() => pending.delete(job));
 }

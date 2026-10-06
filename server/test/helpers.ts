@@ -36,6 +36,8 @@ export function setup(options: Partial<AppOptions> = {}): TestEnv {
     allowPrivateWebhooks: true,
     secretKey: 'test-secret-key',
     mail: { sendMail: async (m) => void sent.push(m as SentMail) },
+    // Never call the real Expo push service from tests.
+    mobilePush: false,
     ...options,
   });
   return {

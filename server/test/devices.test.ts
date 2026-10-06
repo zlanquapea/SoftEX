@@ -153,7 +153,7 @@ describe('push notifications', () => {
   it('can be turned off on a server', async () => {
     env = setup({ push: false });
     const owner = await registerOwner(env);
-    expect((await owner.agent.get('/api/push/config')).body).toEqual({ enabled: false });
+    expect((await owner.agent.get('/api/push/config')).body).toEqual({ enabled: false, mobile: false });
     expect((await owner.agent.post('/api/me/push').send({ endpoint: endpoint(1), keys })).status).toBe(404);
   });
 });

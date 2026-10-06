@@ -145,7 +145,10 @@ export async function startSession(ctx: Ctx, res: Response, userId: string, work
     ip: req?.ip ?? null,
   });
   // The device keeps its push notifications when it moves to a new session.
-  if (replaces) await ctx.db.run('UPDATE push_subscriptions SET session_id = ? WHERE session_id = ? AND user_id = ?', id, replaces, userId);
+  if (replaces) {
+    await ctx.db.run('UPDATE push_subscriptions SET session_id = ? WHERE session_id = ? AND user_id = ?', id, replaces, userId);
+    await ctx.db.run('UPDATE mobile_push_tokens SET session_id = ? WHERE session_id = ? AND user_id = ?', id, replaces, userId);
+  }
   res.cookie(COOKIE, token, {
     httpOnly: true,
     sameSite: 'lax',
@@ -153,6 +156,8 @@ export async function startSession(ctx: Ctx, res: Response, userId: string, work
     expires,
     path: '/',
   });
+  // The phone app can't read cookies the way a browser does; it keeps the token in the device's secure storage.
+  if (req?.get('x-kuu-client') === 'mobile') res.setHeader('X-Kuu-Session', token);
   return token;
 }
 
@@ -722,7 +727,7 @@ export function meRouter(ctx: Ctx) {
     }
     const workspaces = await db.all('SELECT m.workspace_id, w.name FROM memberships m JOIN workspaces w ON w.id = m.workspace_id WHERE m.user_id = ?', auth.userId);
     await db.transaction(async () => {
-      for (const table of ['sessions', 'calendar_feeds', 'push_subscriptions', 'favorites', 'email_verifications', 'password_resets', 'saved_messages', 'notifications', 'reminders', 'channel_members']) {
+      for (const table of ['sessions', 'calendar_feeds', 'push_subscriptions', 'mobile_push_tokens', 'favorites', 'email_verifications', 'password_resets', 'saved_messages', 'notifications', 'reminders', 'channel_members']) {
         await db.run(`DELETE FROM ${table} WHERE user_id = ?`, auth.userId);
       }
       await db.run('DELETE FROM scheduled_messages WHERE user_id = ? AND sent_message_id IS NULL', auth.userId);

@@ -652,6 +652,27 @@ CREATE TABLE IF NOT EXISTS server_settings (
 );
 
 -- Devices that receive push notifications; each belongs to a browser session.
+-- Push tokens of the Küü phone app (Expo push service), one per signed-in device.
+CREATE TABLE IF NOT EXISTS mobile_push_tokens (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  session_id TEXT NOT NULL,
+  token TEXT NOT NULL UNIQUE,
+  platform TEXT NOT NULL,                            -- ios | android
+  created_at TEXT NOT NULL,
+  last_success_at TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_mobile_push_user ON mobile_push_tokens(user_id);
+
+-- One-time codes that hand a single sign-on result to the phone app (exchanged with PKCE).
+CREATE TABLE IF NOT EXISTS mobile_auth_codes (
+  code_hash TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+  challenge TEXT NOT NULL,
+  created_at TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS push_subscriptions (
   id TEXT PRIMARY KEY,
   user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -946,6 +967,8 @@ const ADDED_COLUMNS: [table: string, column: string, definition: string, backfil
   ['messages', 'forwarded_from', 'TEXT'],
   // Per-workspace entitlement overrides set by an operator: custom deals, add-ons and comps.
   ['workspaces', 'entitlement_overrides', 'TEXT'],
+  // Single sign-on started from the phone app: the app's PKCE challenge for the hand-back.
+  ['sso_states', 'mobile_challenge', 'TEXT'],
 ];
 
 /** Idempotent data fixes run on every start-up, after the columns above exist. */

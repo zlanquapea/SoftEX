@@ -7,7 +7,7 @@ import type { BackupConfig } from './backup.js';
 import type { BillingConfig } from './plans.js';
 import type { RealtimeHub } from './realtime.js';
 import type { FileStore } from './storage.js';
-import { sendPush, type PushTransport } from './push.js';
+import { sendPush, type MobilePushTransport, type PushTransport } from './push.js';
 import { queueEmail } from './mailer.js';
 import { newId, now } from './util.js';
 
@@ -74,6 +74,8 @@ export interface Ctx {
   stt?: SpeechToText;
   /** Web Push delivery; absent when push is turned off. */
   push?: PushTransport;
+  /** Phone-app push delivery (Expo push service); absent when turned off. */
+  mobilePush?: MobilePushTransport;
 }
 
 declare global {
