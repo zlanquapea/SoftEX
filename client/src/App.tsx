@@ -17,7 +17,7 @@ import { MyWork } from './pages/MyWork';
 import { ProjectDetail, Projects } from './pages/Projects';
 import { Later, Workload } from './pages/Planning';
 import { Requests } from './pages/Requests';
-import { Pricing, VerifyEmail, usePublicPricing } from './pages/Pricing';
+import { Pricing, VerifyEmail } from './pages/Pricing';
 import { Landing } from './pages/Landing';
 import { Privacy, Terms } from './pages/Legal';
 import { Operator } from './pages/Operator';
@@ -66,15 +66,9 @@ const TITLES: [RegExp, string][] = [
   [/^\/help/, 'Help'],
 ];
 
-/**
- * Signed-out visitors to "/" see the product website on hosted servers, and the sign-in page otherwise.
- * The website itself is always at /welcome, signed in or not, so it can be previewed on any server.
- */
+/** Signed-out visitors always enter through the SaaS product website. */
 function PublicHome() {
-  const { data, error } = usePublicPricing();
-  if (error) return <Login />;
-  if (!data) return <Loading />;
-  return data.mode === 'saas' ? <Landing /> : <Login />;
+  return <Landing />;
 }
 
 export function App() {
@@ -112,7 +106,7 @@ export function App() {
         <Route path="/login" element={<Login />} />
         <Route path="/" element={<PublicHome />} />
         <Route path="/welcome" element={<Landing />} />
-        <Route path="*" element={<Login />} />
+        <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
     );
   }
