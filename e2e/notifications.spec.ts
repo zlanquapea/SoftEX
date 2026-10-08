@@ -110,3 +110,39 @@ test.describe('on a device that has never been asked', () => {
     await expect(prompt).toBeHidden();
   });
 });
+
+test('messages can have several paragraphs: Enter to send can be turned off, and Ctrl+Enter always sends', async ({ page }) => {
+  const noErrors = trackErrors(page);
+  await signIn(page, 'alex@acme.test');
+  await page.goto('/channels');
+  await page.getByRole('link', { name: 'general' }).first().click();
+  const composer = page.getByRole('textbox', { name: 'Message #general' });
+  const run = Date.now().toString(36);
+
+  // Default on a computer: Shift+Enter starts a new line, Enter sends.
+  await composer.fill(`First ${run}`);
+  await composer.press('Shift+Enter');
+  await composer.press('Shift+Enter');
+  await composer.pressSequentially(`Second ${run}`);
+  await composer.press('Enter');
+  const message = page.locator('.message').filter({ hasText: `First ${run}` });
+  await expect(message.locator('.markdown p')).toHaveCount(2);
+  // The blank line shows as a gap between the paragraphs.
+  const gap = await message.locator('.markdown p').nth(1).evaluate((p) => parseFloat(getComputedStyle(p).marginTop));
+  expect(gap).toBeGreaterThan(0);
+
+  // With "Enter to send" off, Enter starts a new line and Ctrl+Enter sends.
+  await page.getByLabel('Enter to send').uncheck();
+  await composer.pressSequentially(`Third ${run}`);
+  await composer.press('Enter');
+  await composer.press('Enter');
+  await composer.pressSequentially(`Fourth ${run}`);
+  await expect(composer).toHaveValue(`Third ${run}\n\nFourth ${run}`);
+  await composer.press('Control+Enter');
+  await expect(page.locator('.message').filter({ hasText: `Third ${run}` }).locator('.markdown p')).toHaveCount(2);
+  // Remembered on this device.
+  await page.reload();
+  await expect(page.getByLabel('Enter to send')).not.toBeChecked();
+  await page.getByLabel('Enter to send').check();
+  noErrors();
+});
