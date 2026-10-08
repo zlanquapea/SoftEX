@@ -92,6 +92,14 @@ test.describe('on a device that has never been asked', () => {
   test.use({ storageState: { cookies: [], origins: [] } });
 
   test('asks to turn on notifications after signing in, and "Not now" puts it away', async ({ page }) => {
+    // Headless browsers report notifications as blocked (when there is nothing to ask), so present a device
+    // that supports push and hasn't been asked yet: permission undecided, no push subscription.
+    await page.addInitScript(() => {
+      Object.defineProperty(Notification, 'permission', { get: () => 'default' });
+      const registration = { pushManager: { getSubscription: async () => null } };
+      Object.defineProperty(navigator.serviceWorker, 'ready', { get: () => Promise.resolve(registration) });
+      navigator.serviceWorker.getRegistration = async () => registration as unknown as ServiceWorkerRegistration;
+    });
     await signIn(page, 'jordan@acme.test');
     const prompt = page.getByRole('dialog', { name: 'Turn on notifications?' });
     await expect(prompt).toBeVisible({ timeout: 10_000 });
