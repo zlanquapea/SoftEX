@@ -175,15 +175,17 @@ export class RealtimeHub {
     });
     socket.on('close', () => {
       this.clients.delete(client);
-      if (!this.isLocallyOnline(auth.workspaceId, auth.userId) || client.viewing.length || client.active) void this.sharePresence();
+      const shared = !this.isLocallyOnline(auth.workspaceId, auth.userId) || client.viewing.length || client.active ? this.sharePresence() : Promise.resolve();
       if (!this.isOnline(auth.workspaceId, auth.userId)) {
-        void this.publish(auth.workspaceId, { type: 'presence', userId: auth.userId, online: false });
+        // After the presence list, so other servers already agree when their clients hear it.
+        void shared.then(() => this.publish(auth.workspaceId, { type: 'presence', userId: auth.userId, online: false }));
       }
     });
     socket.send(JSON.stringify({ type: 'hello', online: this.onlineUsers(auth.workspaceId) }));
     if (!wasOnline) {
-      void this.sharePresence();
-      void this.publish(auth.workspaceId, { type: 'presence', userId: auth.userId, online: true });
+      // Share the presence list first: messages between servers may otherwise overtake each other, and another
+      // server's clients would hear "online" before that server itself knows.
+      void this.sharePresence().then(() => this.publish(auth.workspaceId, { type: 'presence', userId: auth.userId, online: true }));
     }
   }
 
