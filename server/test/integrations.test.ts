@@ -1,8 +1,9 @@
-import { createHmac, generateKeyPairSync, sign } from 'node:crypto';
+import { createHash, createHmac, generateKeyPairSync, randomBytes, sign } from 'node:crypto';
 import { createServer as createHttpServer, type IncomingMessage, type Server } from 'node:http';
 import { createServer as createTcpServer } from 'node:net';
 import type { AddressInfo } from 'node:net';
 import { deflateRawSync } from 'node:zlib';
+import request from 'supertest';
 import { afterEach, describe, expect, it } from 'vitest';
 import { queueDigests } from '../src/mailer.js';
 import { flushJobs, invite, registerOwner, setup, type TestEnv } from './helpers.js';
@@ -309,6 +310,48 @@ describe('single sign-on (OIDC)', () => {
     expect(login.body.details.code).toBe('sso_required');
     // Owners keep a password fallback so a broken IdP cannot lock the workspace out.
     expect((await env.agent().post('/api/auth/login').send({ email: owner.email, password: 'password123' })).status).toBe(200);
+  });
+
+  it('hands sign-in back to the phone app with a one-time code bound to its PKCE verifier', async () => {
+    env = setup();
+    const idp = await fakeIdp({ email: 'sam@acme.example' });
+    const owner = await registerOwner(env);
+    await owner.agent.put('/api/admin/sso').send({ enabled: true, issuer: idp.issuer, clientId: 'softex', clientSecret: 's3cret', domain: 'acme.example' });
+    const verifier = randomBytes(32).toString('base64url');
+    const challenge = createHash('sha256').update(verifier).digest('base64url');
+    const browser = env.agent();
+    expect((await browser.get('/api/auth/sso/start').query({ email: 'sam@acme.example', client: 'mobile' })).status).toBe(400);
+    const start = await browser.get('/api/auth/sso/start').query({ email: 'sam@acme.example', client: 'mobile', challenge });
+    const authorize = new URL(start.headers.location);
+    idp.rememberNonce('the-code', authorize.searchParams.get('nonce')!);
+    const cb = await browser.get('/api/auth/sso/callback').query({ code: 'the-code', state: authorize.searchParams.get('state') });
+    const back = new URL(cb.headers.location);
+    expect(`${back.protocol}//${back.host}`).toBe('kuu://sso');
+    const code = back.searchParams.get('code')!;
+    // The browser itself is not signed in; only the app can finish.
+    expect((await browser.get('/api/me')).status).toBe(401);
+
+    const app = () => request(env.softex.app).post('/api/auth/mobile/exchange').set('x-kuu-client', 'mobile');
+    expect((await app().send({ code, verifier: randomBytes(32).toString('base64url') })).status).toBe(400);
+    // A wrong verifier burns the code, so an intercepted code is useless.
+    expect((await app().send({ code, verifier })).status).toBe(400);
+
+    const again = await browser.get('/api/auth/sso/start').query({ email: 'sam@acme.example', client: 'mobile', challenge });
+    const auth2 = new URL(again.headers.location);
+    idp.rememberNonce('code-2', auth2.searchParams.get('nonce')!);
+    const cb2 = await browser.get('/api/auth/sso/callback').query({ code: 'code-2', state: auth2.searchParams.get('state') });
+    const code2 = new URL(cb2.headers.location).searchParams.get('code')!;
+    const ok = await app().send({ code: code2, verifier });
+    expect(ok.status).toBe(200);
+    expect(ok.body.token).toBe(ok.headers['x-kuu-session']);
+    const me = await request(env.softex.app).get('/api/me').set('Authorization', `Bearer ${ok.body.token}`);
+    expect(me.body.user.email).toBe('sam@acme.example');
+    expect((await app().send({ code: code2, verifier })).status).toBe(400);
+
+    // Failures go back to the app too.
+    const bad = await browser.get('/api/auth/sso/start').query({ email: 'sam@acme.example', client: 'mobile', challenge });
+    const cb3 = await browser.get('/api/auth/sso/callback').query({ error: 'access_denied', state: new URL(bad.headers.location).searchParams.get('state') });
+    expect(cb3.headers.location).toMatch(/^kuu:\/\/sso\?error=access_denied/);
   });
 });
 

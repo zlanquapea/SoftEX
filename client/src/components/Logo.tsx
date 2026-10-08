@@ -29,4 +29,16 @@ export function Logo({ height = 28, onDark = false, className = '' }: { height?:
   );
 }
 
+/** The square Küü app icon (terracotta tile, cream ü, peach dots), for tight spaces such as the docked sidebar. */
+export function LogoMark({ size = 30, className = '' }: { size?: number; className?: string }) {
+  return (
+    <svg className={`logo ${className}`} viewBox="0 0 64 64" width={size} height={size} role="img" aria-label="Küü">
+      <rect width="64" height="64" rx="15" fill="var(--brand-terracotta)" />
+      <path d="M20 31V38A12 12 0 0 0 44 38V31" fill="none" stroke="var(--brand-cream)" strokeWidth={11} strokeLinecap="round" />
+      <circle cx="23" cy="16.5" r="5.5" fill="var(--brand-peach)" />
+      <circle cx="41" cy="16.5" r="5.5" fill="var(--brand-peach)" />
+    </svg>
+  );
+}
+
 export const TAGLINE = 'Work moves forward together.';

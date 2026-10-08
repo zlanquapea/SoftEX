@@ -59,6 +59,17 @@ const kindLabel = (kind: string, count: number) => {
   return `${count} ${count === 1 ? one : many}`;
 };
 
+/** The number badge on a row that stands for several unread updates about the same chat, task or meeting. */
+export function GroupCount({ n }: { n: Notification }) {
+  const count = n.group_count ?? 1;
+  if (count < 2 || n.read_at) return null;
+  return (
+    <b className="group-count" aria-label={`${count} unread updates`} title={`${count} unread updates`}>
+      {count > 99 ? '99+' : count}
+    </b>
+  );
+}
+
 export function Inbox() {
   const [filter, setFilter] = useState<Filter>('all');
   // Set by the "Last 24 hours" pills to show one kind of notification.
@@ -68,11 +79,13 @@ export function Inbox() {
     `/notifications${qs({ filter, kind, limit: 100 })}`,
   );
   const { data: digest } = useApi<{ kind: string; count: number; unread: number }[]>('/notifications/digest');
-  useRealtime((e) => e.type === 'notification' && reload());
+  useRealtime((e) => (e.type === 'notification' || e.type === 'notifications.read') && reload());
 
   const markRead = async (n: Notification, read = true) => {
     await api.post(`/notifications/${n.id}/read`, { read });
     setData(data && { ...data, notifications: data.notifications.map((x) => (x.id === n.id ? { ...x, read_at: read ? new Date().toISOString() : null } : x)) });
+    // Reading a grouped row reads the rest of its group on the server; refetch so they show as read.
+    if (read && (n.group_count ?? 1) > 1) reload();
   };
 
   return (
@@ -154,6 +167,7 @@ export function Inbox() {
             <Link to={n.link || '/inbox'} onClick={() => !n.read_at && markRead(n)} className="inbox-body">
               <span className="inbox-title">
                 <Icon name={KIND_ICON[n.kind] ?? 'bell'} size={14} /> {n.title}
+                <GroupCount n={n} />
               </span>
               {n.body && <span className="muted">{plainMentions(n.body)}</span>}
               <time>{timeAgo(n.created_at)}</time>

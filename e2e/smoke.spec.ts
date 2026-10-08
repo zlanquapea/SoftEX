@@ -61,7 +61,7 @@ test('guests only see what was shared with them', async ({ page }) => {
 });
 
 test('password reset screen is reachable from sign-in', async ({ page }) => {
-  await page.goto('/');
+  await page.goto('/login');
   await page.getByRole('link', { name: 'Forgot password?' }).click();
   await page.getByLabel('Work email').fill('alex@acme.test');
   await page.getByRole('button', { name: 'Email me a reset link' }).click();

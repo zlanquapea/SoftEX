@@ -18,7 +18,7 @@ import { productivityRouter } from './routes/productivity.js';
 import { scimAdminRouter, scimRouter } from './routes/scim.js';
 import { billingRouter, operatorRouter, publicBillingRouter } from './routes/billing.js';
 import { RealtimeHub } from './realtime.js';
-import { webPushTransport, type PushTransport } from './push.js';
+import { expoPushTransport, webPushTransport, type MobilePushTransport, type PushTransport } from './push.js';
 import type { BackupConfig } from './backup.js';
 import { pushRouter } from './routes/push.js';
 import { embedsRouter } from './routes/embeds.js';
@@ -71,6 +71,10 @@ export interface AppOptions extends Partial<Omit<Config, 'billing' | 'backups'>>
   sttLanguage?: string;
   /** Web Push sender (default: the real push services); false turns push off. */
   push?: PushTransport | false;
+  /** Phone-app push sender (default: the Expo push service); false turns it off. */
+  mobilePush?: MobilePushTransport | false;
+  /** Optional Expo access token for Expo's enhanced push security. */
+  expoAccessToken?: string;
 }
 
 export interface SoftexApp {
@@ -129,6 +133,7 @@ export function createApp(options: AppOptions = {}): SoftexApp {
     config,
     mail: options.mail,
     push: options.push === false ? undefined : (options.push ?? webPushTransport),
+    mobilePush: options.mobilePush === false ? undefined : (options.mobilePush ?? expoPushTransport(options.expoAccessToken)),
     ai: options.ai ?? (options.anthropicApiKey ? createClaudeClient(options.anthropicApiKey, config.aiModel) : undefined),
     stt: options.stt ?? (options.sttUrl ? createWhisperClient({ url: options.sttUrl, apiKey: options.sttApiKey, model: options.sttModel, language: options.sttLanguage }) : undefined),
   };

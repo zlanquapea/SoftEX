@@ -3,7 +3,7 @@ import { Router } from 'express';
 import { z } from 'zod';
 import { requireRole } from '../access.js';
 import { audit, authOf, type Ctx } from '../context.js';
-import { badRequest, hashPassword, HttpError, newId, now, parse, pickColor, randomToken } from '../util.js';
+import { badRequest, hashPassword, HttpError, newId, now, parse, pickColor, randomToken, sha256 } from '../util.js';
 import { requireFeature, requireMemberCapacity } from '../plans.js';
 import { startSession } from './auth.js';
 
@@ -106,6 +106,10 @@ export async function verifyIdToken(idToken: string, opts: { issuer: string; cli
 
 const domainOf = (email: string) => email.split('@')[1]?.toLowerCase() ?? '';
 
+/** Where the phone app listens for the end of a sign-in started in the system browser (RFC 8252). */
+export const MOBILE_REDIRECT = 'kuu://sso';
+const MOBILE_CODE_MINUTES = 5;
+
 export function ssoPublicRouter(ctx: Ctx) {
   const r = Router();
   const { db } = ctx;
@@ -121,7 +125,19 @@ export function ssoPublicRouter(ctx: Ctx) {
   });
 
   r.get('/auth/sso/start', async (req, res) => {
-    const { email } = parse(z.object({ email: z.string().trim().toLowerCase().email() }), req.query);
+    const { email, client, challenge } = parse(
+      z.object({
+        email: z.string().trim().toLowerCase().email(),
+        client: z.enum(['web', 'mobile']).default('web'),
+        // The app's own PKCE challenge, so only the app that started sign-in can finish it.
+        challenge: z
+          .string()
+          .regex(/^[A-Za-z0-9_-]{43}$/)
+          .optional(),
+      }),
+      req.query,
+    );
+    if (client === 'mobile' && !challenge) throw badRequest('challenge: Required');
     const ws = await workspaceForEmail(email);
     if (!ws) throw new HttpError(404, 'Single sign-on is not set up for this email domain');
     const doc = await discover(ws.sso_issuer);
@@ -129,7 +145,7 @@ export function ssoPublicRouter(ctx: Ctx) {
     const nonce = randomToken();
     const verifier = randomToken();
     await db.run('DELETE FROM sso_states WHERE created_at < ?', new Date(Date.now() - 15 * 60_000).toISOString());
-    await db.insert('sso_states', { state, workspace_id: ws.id, nonce, code_verifier: verifier, created_at: now() });
+    await db.insert('sso_states', { state, workspace_id: ws.id, nonce, code_verifier: verifier, mobile_challenge: client === 'mobile' ? challenge : null, created_at: now() });
     const url = new URL(doc.authorization_endpoint);
     url.search = new URLSearchParams({
       response_type: 'code',
@@ -146,10 +162,12 @@ export function ssoPublicRouter(ctx: Ctx) {
   });
 
   r.get('/auth/sso/callback', async (req, res) => {
-    const fail = (message: string) => res.redirect(`/login?sso_error=${encodeURIComponent(message)}`);
     const q = req.query as Record<string, string | undefined>;
-    if (q.error) return fail(q.error_description || q.error);
     const saved = q.state ? await db.get('SELECT * FROM sso_states WHERE state = ?', q.state) : undefined;
+    const mobile = !!saved?.mobile_challenge;
+    const fail = (message: string) =>
+      res.redirect(mobile ? `${MOBILE_REDIRECT}?error=${encodeURIComponent(message)}` : `/login?sso_error=${encodeURIComponent(message)}`);
+    if (q.error) return fail(q.error_description || q.error);
     if (!saved || !q.code || saved.created_at < new Date(Date.now() - 15 * 60_000).toISOString()) return fail('Your sign-in attempt expired. Please try again.');
     await db.run('DELETE FROM sso_states WHERE state = ?', saved.state);
     const ws = await db.get('SELECT * FROM workspaces WHERE id = ? AND sso_enabled = 1', saved.workspace_id);
@@ -206,6 +224,13 @@ export function ssoPublicRouter(ctx: Ctx) {
         });
         membership = { role: 'member' };
       }
+      if (mobile) {
+        // Hand a short-lived, single-use code back to the app; it trades the code (plus its PKCE verifier) for a session.
+        const code = randomToken();
+        await db.insert('mobile_auth_codes', { code_hash: sha256(code), user_id: user!.id, workspace_id: ws.id, challenge: saved.mobile_challenge, created_at: now() });
+        await audit(ctx, ws.id, user!.id, 'auth.sso_login', 'user', user!.id, { ip: req.ip, client: 'mobile' });
+        return res.redirect(`${MOBILE_REDIRECT}?code=${encodeURIComponent(code)}`);
+      }
       await startSession(ctx, res, user!.id, ws.id);
       await audit(ctx, ws.id, user!.id, 'auth.sso_login', 'user', user!.id, { ip: req.ip });
       res.redirect('/');
@@ -213,6 +238,26 @@ export function ssoPublicRouter(ctx: Ctx) {
       await audit(ctx, ws.id, null, 'auth.sso_failed', 'workspace', ws.id, { reason: (error as Error).message });
       fail((error as Error).message);
     }
+  });
+
+  r.post('/auth/mobile/exchange', async (req, res) => {
+    const { code, verifier } = parse(z.object({ code: z.string().min(10).max(200), verifier: z.string().min(43).max(128) }), req.body);
+    const row = await db.get('SELECT * FROM mobile_auth_codes WHERE code_hash = ?', sha256(code));
+    const invalid = () => new HttpError(400, 'This sign-in link has expired. Please sign in again.', { code: 'invalid_code' });
+    if (!row) throw invalid();
+    // Single use, whatever the outcome.
+    await db.run('DELETE FROM mobile_auth_codes WHERE code_hash = ?', row.code_hash);
+    if (row.created_at < new Date(Date.now() - MOBILE_CODE_MINUTES * 60_000).toISOString()) throw invalid();
+    if (createHash('sha256').update(verifier).digest('base64url') !== row.challenge) throw invalid();
+    const member = await db.get(
+      `SELECT 1 FROM memberships m JOIN workspaces w ON w.id = m.workspace_id
+       WHERE m.workspace_id = ? AND m.user_id = ? AND m.deactivated_at IS NULL AND w.suspended_at IS NULL`,
+      row.workspace_id,
+      row.user_id,
+    );
+    if (!member) throw new HttpError(403, 'Your access to this workspace has been removed');
+    const token = await startSession(ctx, res, row.user_id, row.workspace_id);
+    res.json({ ok: true, token });
   });
 
   return r;

@@ -42,6 +42,12 @@ export function useRealtime(handler: (event: any) => void) {
   useEffect(() => realtime.subscribe((e) => ref.current(e)), []);
 }
 
+/** Tell the server what this screen shows, so it skips notifications about it while the person is looking. */
+export function useViewing(keys: string[]) {
+  const key = keys.join('\n');
+  useEffect(() => (key ? realtime.addViewing(key.split('\n')) : undefined), [key]);
+}
+
 /** Debounce a changing value. */
 export function useDebounced<T>(value: T, ms = 250) {
   const [v, setV] = useState(value);

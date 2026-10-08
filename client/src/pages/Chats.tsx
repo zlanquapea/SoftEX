@@ -10,7 +10,7 @@ import { Markdown } from '../components/Markdown';
 import { NewMeetingForm, NewTaskForm } from '../components/QuickCreate';
 import { Empty, ErrorState, Field, Loading, Modal, PeoplePicker, StatusPill, useAction } from '../components/ui';
 import { bytes, plainMentions, timeAgo, timeOf } from '../format';
-import { useApi, useRealtime } from '../hooks';
+import { useApi, useRealtime, useViewing } from '../hooks';
 import { realtime } from '../realtime';
 import { useSession } from '../session';
 import { MediaAttachment, VideoLinks, isPlayable } from '../components/Media';
@@ -265,6 +265,15 @@ export function ChannelView() {
   useLayoutEffect(() => {
     if (stickToBottom.current && scroller.current) scroller.current.scrollTop = scroller.current.scrollHeight;
   }, [messages]);
+
+  // While this chat (and any open thread) is on screen, new messages in it don't become notifications.
+  useViewing(id ? [`/channels/${id}`, ...(threadId ? [`/channels/${id}?thread=${threadId}`] : [])] : []);
+  // Coming back to the tab reads what arrived meanwhile, which also clears its notifications.
+  useEffect(() => {
+    const onVisible = () => document.visibilityState === 'visible' && api.post(`/channels/${id}/read`).catch(() => {});
+    document.addEventListener('visibilitychange', onVisible);
+    return () => document.removeEventListener('visibilitychange', onVisible);
+  }, [id]);
 
   const refreshMessage = async (messageId: string) => {
     const res = await api.get<{ root: Message; replies: Message[] }>(`/messages/${messageId}/thread`).catch(() => null);

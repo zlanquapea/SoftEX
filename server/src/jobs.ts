@@ -25,6 +25,8 @@ export async function runPeriodicJobs(ctx: Ctx) {
   await ctx.db.run('DELETE FROM realtime_events WHERE created_at < ?', new Date(Date.now() - 60 * 60_000).toISOString());
   // Push subscriptions whose browser session has ended (signed out, revoked or expired).
   await ctx.db.run('DELETE FROM push_subscriptions WHERE NOT EXISTS (SELECT 1 FROM sessions s WHERE s.id = push_subscriptions.session_id AND s.expires_at > ?)', new Date().toISOString());
+  await ctx.db.run('DELETE FROM mobile_push_tokens WHERE NOT EXISTS (SELECT 1 FROM sessions s WHERE s.id = mobile_push_tokens.session_id AND s.expires_at > ?)', new Date().toISOString());
+  await ctx.db.run('DELETE FROM mobile_auth_codes WHERE created_at < ?', new Date(Date.now() - 10 * 60_000).toISOString());
   await ctx.db.run('DELETE FROM sessions WHERE expires_at < ?', new Date().toISOString());
   await backupIfDue(ctx);
 }

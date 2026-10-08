@@ -96,3 +96,27 @@ jobs:
             playwright-report
             test-results
           retention-days: 7
+
+  mobile:
+    name: Mobile app (typecheck & bundle)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: mobile
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: mobile/package-lock.json
+      - run: npm ci
+      - run: npm run typecheck
+      # Bundles iOS, Android and web with Metro: catches broken imports and modules that don't run on a platform.
+      - run: npm run export:check
+        env:
+          EXPO_OFFLINE: '1'
+          EXPO_NO_TELEMETRY: '1'

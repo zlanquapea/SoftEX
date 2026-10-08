@@ -1,10 +1,12 @@
 import { expect, test } from '@playwright/test';
 import { signIn, trackErrors } from './helpers';
 
-// This server is self-hosted, so "/" goes to sign-in; the website is still at /welcome.
+// Signed-out visitors to "/" see the product website on every server; sign-in is at /login.
 test('the product website can be previewed at /welcome, signed out or in', async ({ page }) => {
   const noErrors = trackErrors(page);
   await page.goto('/');
+  await expect(page.getByRole('heading', { level: 1, name: /Stop chasing work/ })).toBeVisible();
+  await page.goto('/login');
   await expect(page.getByLabel('Work email')).toBeVisible();
 
   await page.goto('/welcome');

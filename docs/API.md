@@ -17,6 +17,18 @@ curl -H "Authorization: Bearer sx_…" https://softex.example.com/api/my-work
 
 Errors use standard HTTP status codes with a JSON body: `{"error": "message", "details": …}`.
 
+### The phone apps
+
+The iOS and Android apps use the same endpoints as the web app, but they don't use cookies:
+
+- A request with the header `X-Kuu-Client: mobile` that signs someone in (`/api/auth/login`, `/api/auth/register`, accepting an invitation…) also gets the session token back in the `X-Kuu-Session` response header.
+- The app keeps that token in the phone's secure storage and sends it as `Authorization: Bearer <token>`, on the WebSocket too. It is an ordinary session: it appears under *Where you're signed in*, and signing out or deactivation ends it.
+- **Single sign-on:**
+  1. The app opens `GET /api/auth/sso/start?email=…&client=mobile&challenge=<S256 PKCE challenge>` in the system browser.
+  2. After the identity provider, the server redirects to `kuu://sso?code=…` (or `?error=…`).
+  3. The app swaps the code at `POST /api/auth/mobile/exchange` with `{ code, verifier }` for `{ token }`.
+  4. Codes can be used once and expire after 5 minutes.
+
 ## Common endpoints
 
 | Method & path | Purpose |
@@ -34,7 +46,8 @@ Errors use standard HTTP status codes with a JSON body: `{"error": "message", "d
 | `GET /api/files` · `POST /api/files` (multipart `file`) · `GET /api/files/:id/download` | Files |
 | `GET /api/meetings?range=upcoming\|past` · `POST /api/meetings` · `GET /api/meetings/:id/ics` | Meetings and calendar invites |
 | `GET /api/people` · `GET /api/teams` | Directory |
-| `GET /api/notifications` | Inbox |
+| `GET /api/notifications` | Inbox. Unread updates about the same chat, task or meeting come as one row (the newest) with `group_count`; `group_key` says what it is about, and `unread` counts these groups |
+| `POST /api/notifications/:id/read` · `POST /api/notifications/read-group` (`{ group: "/tasks/<id>" }`) | Mark a row read (which reads its whole group), or everything about one thing. Reading a channel (`POST /api/channels/:id/read`) or writing in it also reads its notifications |
 | `GET /api/export` | Everything you can access, as JSON |
 | `GET /api/workload?weeks=4&projectId=…&teamId=…` | Open tasks per person per due week |
 | `GET/POST /api/projects/:id/automations` · `PATCH/DELETE /api/automations/:id` · `GET /api/automations/:id/runs` | Project automations and their run log |
@@ -75,6 +88,7 @@ Browser-only (not available to API tokens):
 | `GET /api/me/sessions` · `DELETE /api/me/sessions/:id` · `POST /api/me/sessions/revoke-others` | Where you're signed in |
 | `GET/POST/DELETE /api/me/calendar-feed` | Your private calendar subscription link (the link is only returned by `POST`, which also replaces any earlier link). Calendar apps read it at `GET /api/calendar/<token>.ics` |
 | `GET /api/push/config` · `POST/DELETE /api/me/push` · `POST /api/me/push/test` | Push notifications for this device (Web Push subscription `endpoint` and `keys`) |
+| `POST/DELETE /api/me/mobile-push` | Push notifications for the iOS and Android apps (`{ token: "ExponentPushToken[…]", platform: "ios" \| "android" }`). `GET /api/push/config` reports `mobile: true` when the server sends them |
 
 Example: create a task in a project.
 

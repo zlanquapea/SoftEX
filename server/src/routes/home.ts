@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import { z } from 'zod';
-import { minutesAfter } from '../db.js';
+import { minutesAfter, type Row } from '../db.js';
 import {
   atLeast,
   accessibleChannelIds,
@@ -15,14 +15,24 @@ import {
   isGuest,
   loadProject,
 } from '../access.js';
-import { authOf, notify, recordActivity, type Ctx } from '../context.js';
+import { authOf, notificationGroup, notify, readNotificationGroup, recordActivity, type Ctx } from '../context.js';
 import { isSaas } from '../plans.js';
-import { forbidden, likePattern, newId, now, parse, parseJson, today, filterAsync } from '../util.js';
+import { forbidden, likePattern, notFound, newId, now, parse, parseJson, today, filterAsync } from '../util.js';
 import { serializeTasks } from './tasks.js';
 
 export function homeRouter(ctx: Ctx) {
   const r = Router();
   const { db } = ctx;
+  /** Unread notifications counted per chat, task or meeting, matching the grouped Inbox. */
+  const unreadGroups = async (userId: string, workspaceId: string) =>
+    Number(
+      (await db.get(
+        `SELECT COUNT(DISTINCT CASE WHEN group_key = '' THEN id ELSE group_key END) AS n FROM notifications
+          WHERE user_id = ? AND workspace_id = ? AND read_at IS NULL`,
+        userId,
+        workspaceId,
+      ))!.n,
+    );
 
   /** Home answers: what matters today, what is blocked, what changed since I last checked (§11). */
   r.get('/home', async (req, res) => {
@@ -77,13 +87,22 @@ export function homeRouter(ctx: Ctx) {
         participants: await db.all(`SELECT u.id, u.name, u.color FROM meeting_participants mp JOIN users u ON u.id = mp.user_id WHERE mp.meeting_id = ? LIMIT 5`, m.id),
       }))));
 
-    const mentions = await db.all(
+    // One row per chat, with how many unread messages it stands for.
+    const mentionRows = await db.all(
       `SELECT n.*, u.name AS actor_name, u.color AS actor_color FROM notifications n LEFT JOIN users u ON u.id = n.actor_id
         WHERE n.user_id = ? AND n.workspace_id = ? AND n.read_at IS NULL AND n.kind IN ('mention', 'dm', 'urgent', 'thread')
-        ORDER BY n.created_at DESC LIMIT 6`,
+        ORDER BY n.created_at DESC LIMIT 100`,
       auth.userId,
       auth.workspaceId,
     );
+    const mentionGroups = new Map<string, Row>();
+    for (const n of mentionRows) {
+      const key = n.group_key || n.id;
+      const first = mentionGroups.get(key);
+      if (first) first.group_count += 1;
+      else mentionGroups.set(key, { ...n, group_count: 1 });
+    }
+    const mentions = [...mentionGroups.values()].slice(0, 6);
 
     const decisions = (await filterAsync((await db
       .all(
@@ -181,7 +200,7 @@ export function homeRouter(ctx: Ctx) {
       counts: {
         open_tasks: myOpen.length,
         overdue: myOpen.filter((t) => t.due_date && t.due_date < t0).length,
-        unread: (await db.get('SELECT COUNT(*) AS n FROM notifications WHERE user_id = ? AND workspace_id = ? AND read_at IS NULL', auth.userId, auth.workspaceId))!.n,
+        unread: await unreadGroups(auth.userId, auth.workspaceId),
       },
     });
   });
@@ -219,21 +238,60 @@ export function homeRouter(ctx: Ctx) {
       where.push('n.created_at < ?');
       params.push(q.before);
     }
-    params.push(q.limit);
+    // Fetch extra rows: unread updates about the same chat, task or meeting fold into one row below.
+    params.push(q.limit * 4);
     const rows = await db.all(
       `SELECT n.*, u.name AS actor_name, u.color AS actor_color FROM notifications n LEFT JOIN users u ON u.id = n.actor_id
         WHERE ${where.join(' AND ')} ORDER BY n.created_at DESC LIMIT ?`,
       ...params,
     );
-    const unread = (await db.get('SELECT COUNT(*) AS n FROM notifications WHERE user_id = ? AND workspace_id = ? AND read_at IS NULL', auth.userId, auth.workspaceId))!.n;
-    res.json({ notifications: rows, unread });
+    // Unread notifications about the same thing become one row (the newest) with a count, instead of a row each.
+    const groups = new Map<string, Row>();
+    const list: Row[] = [];
+    for (const n of rows) {
+      if (n.read_at || !n.group_key) {
+        list.push({ ...n, group_count: 1 });
+        continue;
+      }
+      const first = groups.get(n.group_key);
+      if (first) first.group_count += 1;
+      else {
+        const row = { ...n, group_count: 1 };
+        groups.set(n.group_key, row);
+        list.push(row);
+      }
+    }
+    // The page above may not hold every unread update in a group, so count them properly.
+    if (groups.size) {
+      const keys = [...groups.keys()];
+      const counts = await db.all(
+        `SELECT group_key, COUNT(*) AS n FROM notifications WHERE user_id = ? AND workspace_id = ? AND read_at IS NULL
+          AND group_key IN (${keys.map(() => '?').join(', ')}) GROUP BY group_key`,
+        auth.userId,
+        auth.workspaceId,
+        ...keys,
+      );
+      for (const c of counts) groups.get(c.group_key)!.group_count = Math.max(groups.get(c.group_key)!.group_count, Number(c.n));
+    }
+    res.json({ notifications: list.slice(0, q.limit), unread: await unreadGroups(auth.userId, auth.workspaceId) });
   });
 
   r.post('/notifications/:id/read', async (req, res) => {
     const auth = authOf(req);
     const { read } = parse(z.object({ read: z.boolean().default(true) }), req.body ?? {});
-    await db.run('UPDATE notifications SET read_at = ? WHERE id = ? AND user_id = ?', read ? now() : null, req.params.id, auth.userId);
+    const n = await db.get('SELECT * FROM notifications WHERE id = ? AND user_id = ? AND workspace_id = ?', req.params.id, auth.userId, auth.workspaceId);
+    if (!n) throw notFound('Notification');
+    await db.run('UPDATE notifications SET read_at = ? WHERE id = ?', read ? now() : null, n.id);
+    // A grouped row stands for every unread update about the same thing, so reading it reads them all.
+    if (read) await readNotificationGroup(ctx, auth.workspaceId, auth.userId, n.group_key);
     res.json({ ok: true });
+  });
+
+  /** Mark everything about one chat, task or meeting read, e.g. when it is opened ({ group: "/tasks/<id>" }). */
+  r.post('/notifications/read-group', async (req, res) => {
+    const auth = authOf(req);
+    const { group } = parse(z.object({ group: z.string().min(1).max(200) }), req.body ?? {});
+    res.json({ read: await readNotificationGroup(ctx, auth.workspaceId, auth.userId, notificationGroup(group)) });
   });
 
   r.post('/notifications/read-all', async (req, res) => {

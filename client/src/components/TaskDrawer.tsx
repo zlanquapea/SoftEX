@@ -2,14 +2,14 @@ import { useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { api, qs, type Task } from '../api';
 import { bytes, dueLabel, plainMentions, STATUS_LABEL, timeAgo } from '../format';
-import { useApi, useRealtime } from '../hooks';
+import { useApi, useRealtime, useViewing } from '../hooks';
 import { useSession } from '../session';
 import { Avatar } from './Avatar';
 import { Icon } from './Icon';
 import { RemindButton } from './Later';
 import { Markdown } from './Markdown';
 import { NewTaskForm } from './QuickCreate';
-import { ErrorState, Loading, StatusPill, useAction } from './ui';
+import { ErrorBoundary, ErrorState, Loading, StatusPill, useAction } from './ui';
 import { LabelChips, LabelPicker, TaskFieldRows, TimeTracker } from './Work';
 import { usePlan } from './Plan';
 
@@ -34,7 +34,9 @@ export function TaskDrawer({ taskId, onClose }: { taskId: string | null; onClose
             <Icon name="x" />
           </button>
         </div>
-        <TaskDetail taskId={taskId} onDeleted={onClose} />
+        <ErrorBoundary resetKey={taskId}>
+          <TaskDetail taskId={taskId} onDeleted={onClose} />
+        </ErrorBoundary>
       </aside>
     </>
   );
@@ -74,6 +76,11 @@ export function TaskDetail({ taskId, onDeleted }: { taskId: string; onDeleted?: 
   useRealtime((e) => {
     if (e.type === 'task.updated' && e.taskId === taskId && !e.deleted) reload();
   });
+  // Seeing the task (in the drawer or on its page) reads its notifications, and comments on it don't notify while it is open.
+  useViewing([`/tasks/${taskId}`]);
+  useEffect(() => {
+    void api.post('/notifications/read-group', { group: `/tasks/${taskId}` }).catch(() => {});
+  }, [taskId]);
 
   useEffect(() => {
     if (depQuery.length < 2) return setDepOptions([]);
@@ -86,7 +93,11 @@ export function TaskDetail({ taskId, onDeleted }: { taskId: string; onDeleted?: 
 
   const update = async (patch: Record<string, unknown>) => {
     const updated = await act(() => api.patch<Task>(`/tasks/${task.id}`, patch));
-    if (updated) setData({ ...task, ...updated });
+    if (!updated) return;
+    // The response is the list shape, where checklist and subtasks are counts; keep the detail's lists, then refetch them.
+    const { checklist: _checklist, subtasks: _subtasks, ...fields } = updated;
+    setData({ ...task, ...fields });
+    reload();
   };
   const disabled = !task.can_edit;
   // Start dates feed the timeline, a planning feature; existing ones stay visible.

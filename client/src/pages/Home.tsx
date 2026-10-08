@@ -9,6 +9,7 @@ import { ErrorState, Field, HealthPill, Loading, Modal, useAction } from '../com
 import { plainMentions, timeAgo, timeOf } from '../format';
 import { useApi, useRealtime } from '../hooks';
 import { useSession } from '../session';
+import { GroupCount } from './Inbox';
 
 interface HomeData {
   since: string;
@@ -96,7 +97,7 @@ export function Home() {
   const show = (id: Section) => !hidden.includes(id);
 
   return (
-    <div className="page">
+    <div className="page home-page">
       <div className="welcome">
         <div>
           <p className="eyebrow">{new Date().toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric' }).toUpperCase()}</p>
@@ -294,7 +295,10 @@ export function Home() {
               <Link key={n.id} to={n.link} className="activity" onClick={() => api.post(`/notifications/${n.id}/read`)}>
                 <Avatar user={{ name: n.actor_name ?? '?', color: n.actor_color }} size="sm" />
                 <div>
-                  <p>{n.title}</p>
+                  <p>
+                    {n.title}
+                    <GroupCount n={n} />
+                  </p>
                   {n.body && <small>“{plainMentions(n.body).slice(0, 90)}”</small>}
                   <time>{timeAgo(n.created_at)}</time>
                 </div>

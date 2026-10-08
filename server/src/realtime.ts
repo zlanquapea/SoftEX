@@ -29,7 +29,7 @@ type PeerMessage =
   | { t: 'event'; origin: string; workspaceId: string; event: RealtimeEvent; audience: Audience }
   | { t: 'disconnect'; origin: string; workspaceId: string; userId: string }
   | { t: 'disconnect-sessions'; origin: string; userId: string; sessionIds: string[] }
-  | { t: 'presence'; origin: string; online: string[] };
+  | { t: 'presence'; origin: string; online: string[]; viewing?: Record<string, string[]>; active?: string[] };
 
 /** A publish/subscribe link between servers (PostgreSQL LISTEN/NOTIFY); absent with one server. */
 export interface PeerLink {
@@ -41,6 +41,10 @@ interface Client {
   socket: WebSocket;
   auth: Auth;
   alive: boolean;
+  /** What this window has on screen right now ("/channels/<id>", a thread…), as told by the client. */
+  viewing: string[];
+  /** Whether this window is in front and being used (not a background tab, a minimised window or a phone in a pocket). */
+  active: boolean;
 }
 
 const PRESENCE_EVERY = 20_000;
@@ -61,7 +65,7 @@ export class RealtimeHub {
   private peers?: PeerLink;
   private unsubscribe?: () => Promise<void>;
   /** Online users on other servers: server id → ("workspace:user" keys, when last heard). */
-  private remote = new Map<string, { online: Set<string>; at: number }>();
+  private remote = new Map<string, { online: Set<string>; viewing: Map<string, Set<string>>; active: Set<string>; at: number }>();
   resolveAudience: AudienceResolver = async () => () => true;
 
   attach(server: Server, authenticate: (req: IncomingMessage) => Promise<Auth | null>) {
@@ -123,7 +127,8 @@ export class RealtimeHub {
     else if (msg.t === 'presence') {
       const before = this.remote.get(msg.origin)?.online ?? new Set<string>();
       const now = new Set(msg.online);
-      this.remote.set(msg.origin, { online: now, at: Date.now() });
+      const viewing = new Map(Object.entries(msg.viewing ?? {}).map(([key, keys]) => [key, new Set(keys)]));
+      this.remote.set(msg.origin, { online: now, viewing, active: new Set(msg.active ?? []), at: Date.now() });
       // Tell local clients about people who came online or left on another server.
       for (const key of now) if (!before.has(key)) this.announcePresence(key, true);
       for (const key of before) if (!now.has(key)) this.announcePresence(key, false);
@@ -138,11 +143,19 @@ export class RealtimeHub {
 
   private sharePresence() {
     const online = [...new Set([...this.clients].map((c) => `${c.auth.workspaceId}:${c.auth.userId}`))];
-    return this.send({ t: 'presence', origin: this.id, online });
+    const viewing: Record<string, string[]> = {};
+    for (const c of this.clients) {
+      if (!c.viewing.length) continue;
+      const key = `${c.auth.workspaceId}:${c.auth.userId}`;
+      viewing[key] = [...new Set([...(viewing[key] ?? []), ...c.viewing])];
+    }
+    const active = [...new Set([...this.clients].filter((c) => c.active).map((c) => `${c.auth.workspaceId}:${c.auth.userId}`))];
+    return this.send({ t: 'presence', origin: this.id, online, viewing, active });
   }
 
   private register(socket: WebSocket, auth: Auth) {
-    const client: Client = { socket, auth, alive: true };
+    // Until a window says otherwise, treat it as in use (older clients never report).
+    const client: Client = { socket, auth, alive: true, viewing: [], active: true };
     const wasOnline = this.isOnline(auth.workspaceId, auth.userId);
     this.clients.add(client);
     socket.on('pong', () => (client.alive = true));
@@ -151,6 +164,10 @@ export class RealtimeHub {
         const msg = JSON.parse(raw.toString());
         if (msg.type === 'typing' && typeof msg.channelId === 'string') {
           this.onTyping?.(auth, msg.channelId).catch((error) => console.error('Typing event failed', error));
+        } else if (msg.type === 'viewing' && Array.isArray(msg.keys)) {
+          client.viewing = msg.keys.filter((k: unknown): k is string => typeof k === 'string' && k.length <= 200).slice(0, 5);
+          if (typeof msg.active === 'boolean') client.active = msg.active;
+          void this.sharePresence();
         }
       } catch {
         /* ignore malformed frames */
@@ -158,15 +175,17 @@ export class RealtimeHub {
     });
     socket.on('close', () => {
       this.clients.delete(client);
-      if (!this.isLocallyOnline(auth.workspaceId, auth.userId)) void this.sharePresence();
+      const shared = !this.isLocallyOnline(auth.workspaceId, auth.userId) || client.viewing.length || client.active ? this.sharePresence() : Promise.resolve();
       if (!this.isOnline(auth.workspaceId, auth.userId)) {
-        void this.publish(auth.workspaceId, { type: 'presence', userId: auth.userId, online: false });
+        // After the presence list, so other servers already agree when their clients hear it.
+        void shared.then(() => this.publish(auth.workspaceId, { type: 'presence', userId: auth.userId, online: false }));
       }
     });
     socket.send(JSON.stringify({ type: 'hello', online: this.onlineUsers(auth.workspaceId) }));
     if (!wasOnline) {
-      void this.sharePresence();
-      void this.publish(auth.workspaceId, { type: 'presence', userId: auth.userId, online: true });
+      // Share the presence list first: messages between servers may otherwise overtake each other, and another
+      // server's clients would hear "online" before that server itself knows.
+      void this.sharePresence().then(() => this.publish(auth.workspaceId, { type: 'presence', userId: auth.userId, online: true }));
     }
   }
 
@@ -185,6 +204,22 @@ export class RealtimeHub {
       else for (const key of entry.online) keys.add(key);
     }
     return keys;
+  }
+
+  /** Whether the person has this chat, thread or page on screen in any window, on any server. */
+  isViewing(workspaceId: string, userId: string, key: string) {
+    for (const c of this.clients) if (c.auth.workspaceId === workspaceId && c.auth.userId === userId && c.viewing.includes(key)) return true;
+    const cutoff = Date.now() - PRESENCE_TTL;
+    for (const entry of this.remote.values()) if (entry.at >= cutoff && entry.viewing.get(`${workspaceId}:${userId}`)?.has(key)) return true;
+    return false;
+  }
+
+  /** Whether the person is using Küü right now in a window that's in front (on any server). */
+  isActive(workspaceId: string, userId: string) {
+    for (const c of this.clients) if (c.auth.workspaceId === workspaceId && c.auth.userId === userId && c.active) return true;
+    const cutoff = Date.now() - PRESENCE_TTL;
+    for (const entry of this.remote.values()) if (entry.at >= cutoff && entry.active.has(`${workspaceId}:${userId}`)) return true;
+    return false;
   }
 
   /** Whether the person has Küü open anywhere (on any server). */
