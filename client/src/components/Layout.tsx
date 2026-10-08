@@ -111,11 +111,10 @@ export function Layout({ children }: { children: ReactNode }) {
   }, []);
 
   // Opening a meeting, page, project, goal or file reads what you were notified about it (chats do this as they are read).
-  const unread = counts?.unread ?? 0;
+  // Not gated on the unread count: on a direct load (or a push notification tap) the count hasn't arrived yet.
   useEffect(() => {
-    if (!unread || !READS_NOTIFICATIONS.test(location.pathname)) return;
+    if (!READS_NOTIFICATIONS.test(location.pathname)) return;
     void api.post('/notifications/read-group', { group: location.pathname }).catch(() => {});
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [location.pathname]);
 
   // Keep unread counts fresh when a channel is read.

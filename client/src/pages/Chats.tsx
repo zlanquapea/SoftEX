@@ -23,6 +23,33 @@ const channelIcon = (c: { kind: string }) => (c.kind === 'private' ? 'lock' : c.
 
 // ======================= Chats (direct & group messages) =======================
 
+
+/**
+ * Whether pressing Enter sends a message (Shift+Enter then starts a new line) or starts a new line (Ctrl/⌘+Enter
+ * then sends). Phones and tablets have no Shift key, so there Enter starts a new line unless the person changes it.
+ * Remembered on this device.
+ */
+function useEnterSends() {
+  const [value, setValue] = useState(() => {
+    try {
+      const stored = localStorage.getItem('kuu:enter-sends');
+      if (stored) return stored === '1';
+    } catch {
+      /* fall through to the device default */
+    }
+    return !window.matchMedia?.('(pointer: coarse)').matches;
+  });
+  const set = (next: boolean) => {
+    setValue(next);
+    try {
+      localStorage.setItem('kuu:enter-sends', next ? '1' : '0');
+    } catch {
+      /* private mode: only for this visit */
+    }
+  };
+  return [value, set] as const;
+}
+
 export function Chats() {
   const { openCreate } = useShell();
   const { data: channels, error, reload } = useApi<Channel[]>('/channels');
@@ -987,6 +1014,7 @@ function Composer({
   const { people } = useSession();
   const act = useAction();
   const storageKey = `softex.draft.${channelId}.${parentId ?? 'root'}`;
+  const [enterSends, setEnterSends] = useEnterSends();
   const [text, setText] = useState(() => {
     try {
       return localStorage.getItem(storageKey) ?? '';
@@ -1147,14 +1175,17 @@ function Composer({
         aria-label={placeholder}
         onChange={(e) => onChange(e.target.value)}
         onKeyDown={(e) => {
-          if (e.key === 'Enter' && !e.shiftKey && !(e.nativeEvent as KeyboardEvent).isComposing) {
-            if (candidates.length) {
+          if (e.key === 'Enter' && !(e.nativeEvent as KeyboardEvent).isComposing) {
+            if (candidates.length && !e.shiftKey) {
               e.preventDefault();
               pick(candidates[0]);
               return;
             }
-            e.preventDefault();
-            send();
+            // Ctrl/⌘+Enter always sends; plain Enter sends only when "Enter to send" is on. Otherwise Enter is a new line.
+            if (e.ctrlKey || e.metaKey || (enterSends && !e.shiftKey)) {
+              e.preventDefault();
+              send();
+            }
           }
           if (e.key === 'Escape') setQuery(null);
         }}
@@ -1174,7 +1205,12 @@ function Composer({
         <label className={`urgent-toggle ${urgent ? 'on' : ''}`} title="Urgent messages break through quiet hours and focus time">
           <input type="checkbox" checked={urgent} onChange={(e) => setUrgent(e.target.checked)} /> Urgent
         </label>
-        <span className="muted small hide-mobile">**bold**, *italic*, `code` · Shift+Enter for a new line</span>
+        <label className="enter-toggle" title={enterSends ? 'Shift+Enter starts a new line' : 'Ctrl+Enter (⌘+Enter on a Mac) sends'}>
+          <input type="checkbox" checked={enterSends} onChange={(e) => setEnterSends(e.target.checked)} /> Enter to send
+        </label>
+        <span className="muted small hide-mobile">
+          {enterSends ? 'Shift+Enter for a new line' : 'Ctrl+Enter to send'} · **bold**, *italic*, `code`
+        </span>
         <button
           className="icon-btn xs"
           onClick={() => setLater(true)}

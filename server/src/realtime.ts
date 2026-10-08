@@ -154,8 +154,9 @@ export class RealtimeHub {
   }
 
   private register(socket: WebSocket, auth: Auth) {
-    // Until a window says otherwise, treat it as in use (older clients never report).
-    const client: Client = { socket, auth, alive: true, viewing: [], active: true };
+    // Not "in use" until the window says so: the web app reports as soon as it connects, while clients that never
+    // report (the phone app, which may keep its socket open in the background) must not hold back push notifications.
+    const client: Client = { socket, auth, alive: true, viewing: [], active: false };
     const wasOnline = this.isOnline(auth.workspaceId, auth.userId);
     this.clients.add(client);
     socket.on('pong', () => (client.alive = true));

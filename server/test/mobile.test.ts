@@ -63,6 +63,10 @@ describe('phone app', () => {
     expect((await request(env.softex.app).post('/api/me/push/test').set(bearer)).status).toBe(200);
     expect(sent).toHaveLength(1);
 
+    // If Expo refuses, the test button says so instead of claiming success.
+    error = 'MessageRateExceeded';
+    expect((await request(env.softex.app).post('/api/me/push/test').set(bearer)).status).toBe(400);
+
     // Expo reports the app was uninstalled: the token is dropped.
     error = 'DeviceNotRegistered';
     await request(env.softex.app).post('/api/me/push/test').set(bearer);

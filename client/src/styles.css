@@ -6824,3 +6824,24 @@ audio.recording-player {
     display: none;
   }
 }
+
+/* Messages: a blank line between paragraphs shows as a gap (compact markdown otherwise has none). */
+.markdown.compact p + p,
+.markdown.compact p + ul,
+.markdown.compact p + ol,
+.markdown.compact ul + p,
+.markdown.compact ol + p {
+  margin-top: 0.6em;
+}
+.enter-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 12px;
+  color: var(--muted);
+  white-space: nowrap;
+  cursor: pointer;
+}
+.enter-toggle input {
+  margin: 0;
+}

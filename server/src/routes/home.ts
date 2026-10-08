@@ -238,28 +238,36 @@ export function homeRouter(ctx: Ctx) {
       where.push('n.created_at < ?');
       params.push(q.before);
     }
-    // Fetch extra rows: unread updates about the same chat, task or meeting fold into one row below.
-    params.push(q.limit * 4);
-    const rows = await db.all(
-      `SELECT n.*, u.name AS actor_name, u.color AS actor_color FROM notifications n LEFT JOIN users u ON u.id = n.actor_id
-        WHERE ${where.join(' AND ')} ORDER BY n.created_at DESC LIMIT ?`,
-      ...params,
-    );
     // Unread notifications about the same thing become one row (the newest) with a count, instead of a row each.
+    // A busy chat can fill many raw rows, so keep reading pages until there are enough rows to show.
     const groups = new Map<string, Row>();
     const list: Row[] = [];
-    for (const n of rows) {
-      if (n.read_at || !n.group_key) {
-        list.push({ ...n, group_count: 1 });
-        continue;
+    const pageSize = Math.max(q.limit * 4, 50);
+    let cursor: { at: string; id: string } | null = null;
+    for (let page = 0; page < 20 && list.length < q.limit; page++) {
+      const rows: Row[] = await db.all(
+        `SELECT n.*, u.name AS actor_name, u.color AS actor_color FROM notifications n LEFT JOIN users u ON u.id = n.actor_id
+          WHERE ${where.join(' AND ')} ${cursor ? 'AND (n.created_at < ? OR (n.created_at = ? AND n.id < ?))' : ''}
+          ORDER BY n.created_at DESC, n.id DESC LIMIT ?`,
+        ...params,
+        ...(cursor ? [cursor.at, cursor.at, cursor.id] : []),
+        pageSize,
+      );
+      for (const n of rows) {
+        if (n.read_at || !n.group_key) {
+          list.push({ ...n, group_count: 1 });
+          continue;
+        }
+        const first = groups.get(n.group_key);
+        if (first) first.group_count += 1;
+        else {
+          const row = { ...n, group_count: 1 };
+          groups.set(n.group_key, row);
+          list.push(row);
+        }
       }
-      const first = groups.get(n.group_key);
-      if (first) first.group_count += 1;
-      else {
-        const row = { ...n, group_count: 1 };
-        groups.set(n.group_key, row);
-        list.push(row);
-      }
+      if (rows.length < pageSize) break;
+      cursor = { at: rows[rows.length - 1].created_at, id: rows[rows.length - 1].id };
     }
     // The page above may not hold every unread update in a group, so count them properly.
     if (groups.size) {
