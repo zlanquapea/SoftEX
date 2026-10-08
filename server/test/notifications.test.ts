@@ -114,6 +114,12 @@ describe('notifications', () => {
     const dm = (await owner.agent.post('/api/dms').send({ userIds: [member.id] })).body;
     const window = await openWindow(member.email);
 
+    // A connection that never says it is in use (the phone app in the background) doesn't hold pushes back.
+    await owner.agent.post(`/api/channels/${dm.id}/messages`).send({ body: 'zero' });
+    await pushIdle();
+    expect(sent).toHaveLength(1);
+    sent.length = 0;
+
     // Using Küü right now (in another chat): the alert shows in the app, not as a push.
     await window.view(['/channels/elsewhere'], true);
     await owner.agent.post(`/api/channels/${dm.id}/messages`).send({ body: 'one' });
@@ -131,5 +137,18 @@ describe('notifications', () => {
     const test = await member.agent.post('/api/me/push/test');
     expect(test.status).toBe(400);
     expect(test.body.error).toMatch(/refused the server’s keys/);
+  });
+
+  it('fills the requested number of rows even when one chat has a flood of unread messages', async () => {
+    env = setup();
+    const owner = await registerOwner(env, 'Ada');
+    const member = await invite(env, owner.agent, 'member', {}, 'Bo');
+    const task = (await owner.agent.post('/api/tasks').send({ title: 'Older task', ownerId: member.id })).body;
+    const dm = (await owner.agent.post('/api/dms').send({ userIds: [member.id] })).body;
+    for (let i = 0; i < 70; i++) await owner.agent.post(`/api/channels/${dm.id}/messages`).send({ body: `ping ${i}` });
+
+    const res = (await member.agent.get('/api/notifications?limit=5')).body;
+    expect(res.notifications.map((n: { group_key: string }) => n.group_key)).toEqual([`/channels/${dm.id}`, `/tasks/${task.id}`]);
+    expect(res.notifications[0].group_count).toBe(70);
   });
 });

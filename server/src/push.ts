@@ -173,9 +173,9 @@ export interface PushResult {
  * the returned promise (which callers usually don't wait for) says how browser delivery went.
  */
 export function sendPush(ctx: Ctx, userId: string, payload: PushPayload): Promise<PushResult> {
-  sendMobilePush(ctx, userId, payload);
   const result: PushResult = { delivered: 0, failed: 0, errors: [] };
-  if (!ctx.push) return Promise.resolve(result);
+  const mobile = sendMobilePush(ctx, userId, payload, result);
+  if (!ctx.push) return mobile.then(() => result);
   const transport = ctx.push;
   const job = (async () => {
     const subs = await ctx.db.all(
@@ -211,12 +211,12 @@ export function sendPush(ctx: Ctx, userId: string, payload: PushPayload): Promis
   })().catch((error) => console.error('Push failed', error));
   pending.add(job);
   void job.finally(() => pending.delete(job));
-  return job.then(() => result);
+  return Promise.all([job, mobile]).then(() => result);
 }
 
 /** The phone-app half of sendPush: every signed-in phone with notifications allowed. */
-function sendMobilePush(ctx: Ctx, userId: string, payload: PushPayload) {
-  if (!ctx.mobilePush) return;
+function sendMobilePush(ctx: Ctx, userId: string, payload: PushPayload, result: PushResult): Promise<void> {
+  if (!ctx.mobilePush) return Promise.resolve();
   const transport = ctx.mobilePush;
   const job = (async () => {
     const tokens = await ctx.db.all(
@@ -243,14 +243,23 @@ function sendMobilePush(ctx: Ctx, userId: string, payload: PushPayload) {
           const row = tokens[i];
           if (!row) return;
           // The app was removed or notifications turned off: stop sending to that phone.
-          if (ticket.status === 'error' && ticket.details?.error === 'DeviceNotRegistered') await ctx.db.run('DELETE FROM mobile_push_tokens WHERE id = ?', row.id);
-          else if (ticket.status === 'ok') await ctx.db.run('UPDATE mobile_push_tokens SET last_success_at = ? WHERE id = ?', now(), row.id);
+          if (ticket.status === 'ok') {
+            result.delivered += 1;
+            await ctx.db.run('UPDATE mobile_push_tokens SET last_success_at = ? WHERE id = ?', now(), row.id);
+            return;
+          }
+          result.failed += 1;
+          result.errors.push('error');
+          if (ticket.details?.error === 'DeviceNotRegistered') await ctx.db.run('DELETE FROM mobile_push_tokens WHERE id = ?', row.id);
         }),
       );
     } catch (error) {
+      result.failed += tokens.length;
+      result.errors.push(...tokens.map(() => 'error' as const));
       console.warn('Mobile push delivery failed', (error as Error).message);
     }
   })().catch((error) => console.error('Mobile push failed', error));
   pending.add(job);
   void job.finally(() => pending.delete(job));
+  return job;
 }
