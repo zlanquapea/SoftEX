@@ -434,20 +434,23 @@ hr {
 
 /* ---------- Shell ---------- */
 .app-shell {
+  /* Sidebar width; the docked sidebar is a narrow strip of icons. */
+  --nav-w: 248px;
   display: flex;
   min-height: 100vh;
 }
 .sidebar {
   position: fixed;
   inset: 0 auto 0 0;
-  width: 248px;
+  width: var(--nav-w);
   background: var(--nav);
   color: var(--nav-text);
   padding: 20px 14px 16px;
   display: flex;
   flex-direction: column;
   z-index: 30;
-  overflow-y: auto;
+  /* The logo, workspace switcher and profile stay put; only the sections between them scroll. */
+  overflow: hidden;
 }
 .brand {
   height: 40px;
@@ -755,9 +758,9 @@ hr {
   letter-spacing: 0.8px;
 }
 main {
-  margin-left: 248px;
+  margin-left: var(--nav-w);
   min-width: 0;
-  width: calc(100% - 248px);
+  width: calc(100% - var(--nav-w));
   display: flex;
   flex-direction: column;
   min-height: 100vh;
@@ -6543,4 +6546,281 @@ audio.recording-player {
 }
 .check-inline.consent input {
   margin-top: 3px;
+}
+
+/* Several unread updates about one chat, task or meeting, shown as one row. */
+.group-count {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 20px;
+  height: 20px;
+  padding: 0 6px;
+  margin-left: 6px;
+  border-radius: 10px;
+  background: var(--accent);
+  color: #fff;
+  font-size: 11px;
+  font-weight: 800;
+  line-height: 1;
+  vertical-align: middle;
+  flex-shrink: 0;
+}
+
+/*
+ * Home on wide screens: the greeting stays put and the two columns scroll on their own,
+ * so a long list on one side never pushes the other out of view.
+ */
+@media (min-width: 1181px) {
+  main:has(.home-page) {
+    height: 100vh;
+    height: 100dvh;
+  }
+  .content:has(> .home-page),
+  .content:has(> * > .home-page) {
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+  }
+  .home-page {
+    flex: 1;
+    min-height: 0;
+    width: 100%;
+    display: flex;
+    flex-direction: column;
+    padding-bottom: 0;
+    /* If the top area is very tall the page itself still scrolls, rather than squeezing the columns. */
+    overflow-y: auto;
+  }
+  .home-page > .dashboard-grid {
+    flex: 1 0 420px;
+    min-height: 420px;
+    align-items: stretch;
+  }
+  .home-page .main-column,
+  .home-page .right-column {
+    min-height: 0;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    padding: 0 6px 32px 2px;
+    scrollbar-gutter: stable;
+  }
+}
+
+/* Asks to turn on notifications for this device (after signing in, or when they've been off a while). */
+.push-prompt {
+  position: fixed;
+  right: 20px;
+  /* Under the top bar, clear of message composers and other bottom-anchored controls. */
+  top: 78px;
+  z-index: 60;
+  width: min(380px, calc(100vw - 32px));
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+  padding: 16px 18px;
+  box-shadow: 0 18px 50px rgba(43, 29, 22, 0.18);
+  animation: push-prompt-in 0.25s ease-out;
+}
+.push-prompt-icon {
+  flex: none;
+  width: 38px;
+  height: 38px;
+  border-radius: 12px;
+  display: grid;
+  place-items: center;
+  background: var(--accent-soft);
+  color: var(--accent-ink, var(--accent));
+}
+.push-prompt-body {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+.push-prompt-body p {
+  margin: 0 0 4px;
+  font-size: 13px;
+}
+.push-prompt-close {
+  margin: -6px -8px 0 0;
+}
+@keyframes push-prompt-in {
+  from {
+    opacity: 0;
+    transform: translateY(-12px);
+  }
+}
+@media (max-width: 760px) {
+  .push-prompt {
+    right: 16px;
+    left: 16px;
+    width: auto;
+    top: 68px;
+  }
+}
+
+/* ---------- Sidebar: pinned top and bottom, scrolling middle, foldable channels, dock ---------- */
+.brand-link {
+  display: flex;
+  align-items: center;
+  border-radius: 8px;
+}
+.dock-toggle {
+  margin-left: auto;
+  width: 28px;
+  height: 28px;
+  color: var(--nav-muted);
+}
+.dock-toggle:hover {
+  color: #fff;
+  background: var(--nav-2);
+}
+.sidebar > .menu-anchor,
+.sidebar > .brand,
+.sidebar-bottom {
+  flex: none;
+}
+.nav-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  margin: 0 -8px;
+  padding: 0 8px 8px;
+  scrollbar-width: thin;
+  scrollbar-color: var(--nav-line) transparent;
+}
+.nav-scroll::-webkit-scrollbar {
+  width: 8px;
+}
+.nav-scroll::-webkit-scrollbar-thumb {
+  background: var(--nav-line);
+  border-radius: 4px;
+}
+.nav-group {
+  position: relative;
+}
+.nav-group:has(> .nav-fold) > .nav-item {
+  padding-right: 38px;
+}
+.nav-fold {
+  position: absolute;
+  top: 8px;
+  right: 6px;
+  width: 24px;
+  height: 24px;
+  display: grid;
+  place-items: center;
+  border: 0;
+  border-radius: 6px;
+  background: none;
+  color: var(--nav-muted);
+}
+.nav-fold:hover {
+  background: var(--nav-line);
+  color: #fff;
+}
+.nav-group:has(> .nav-fold) > .nav-item b {
+  margin-right: 2px;
+}
+
+@media (min-width: 761px) {
+  .app-shell.nav-docked {
+    --nav-w: 72px;
+  }
+  .sidebar.docked {
+    padding: 16px 10px 14px;
+    align-items: stretch;
+  }
+  .sidebar.docked .brand {
+    flex-direction: column;
+    height: auto;
+    gap: 10px;
+    padding: 0;
+  }
+  .sidebar.docked .dock-toggle {
+    margin: 0;
+  }
+  .sidebar.docked .workspace-switcher {
+    justify-content: center;
+    padding: 6px;
+    margin: 12px 0 14px;
+  }
+  .sidebar.docked .workspace-switcher > span:nth-child(2),
+  .sidebar.docked .workspace-switcher > .icon {
+    display: none;
+  }
+  .sidebar.docked .nav-label {
+    height: 0;
+    margin: 0;
+    overflow: hidden;
+  }
+  .sidebar.docked .nav-label + * {
+    margin-top: 0;
+  }
+  .sidebar.docked .nav-scroll .nav-channels {
+    display: none;
+  }
+  .sidebar.docked .nav-item {
+    position: relative;
+    justify-content: center;
+    padding: 0;
+    height: 42px;
+  }
+  .sidebar.docked .nav-item > span {
+    display: none;
+  }
+  .sidebar.docked .nav-item.active {
+    box-shadow: inset 3px 0 var(--nav-accent);
+  }
+  .sidebar.docked .nav-item b,
+  .sidebar.docked .nav-item em {
+    position: absolute;
+    top: 3px;
+    right: 5px;
+    min-width: 16px;
+    height: 16px;
+    padding: 0 4px;
+    font-size: 10px;
+  }
+  .sidebar.docked .nav-separator {
+    margin: 10px 6px;
+  }
+  .sidebar.docked .invite-btn {
+    padding: 0;
+  }
+  .sidebar.docked .invite-btn span {
+    display: none;
+  }
+  .sidebar.docked .profile {
+    justify-content: center;
+    padding: 12px 0 0;
+  }
+  .sidebar.docked .profile > span:nth-child(2),
+  .sidebar.docked .profile > .icon {
+    display: none;
+  }
+  /* Menus open beside the dock instead of being squeezed into it. */
+  .sidebar.docked .popover {
+    left: calc(100% + 10px);
+    right: auto;
+    top: 0;
+    width: 240px;
+  }
+  .sidebar.docked .popover.up {
+    top: auto;
+    bottom: 0;
+  }
+  .sidebar.docked {
+    overflow: visible;
+  }
+  .sidebar.docked .nav-scroll {
+    overflow-x: hidden;
+  }
+}
+@media (max-width: 760px) {
+  .dock-toggle {
+    display: none;
+  }
 }

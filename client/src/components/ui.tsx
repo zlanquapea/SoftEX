@@ -1,4 +1,4 @@
-import { createContext, useCallback, useContext, useEffect, useRef, useState, type ReactNode } from 'react';
+import { Component, createContext, useCallback, useContext, useEffect, useRef, useState, type ErrorInfo, type ReactNode } from 'react';
 import { Icon } from './Icon';
 import { Avatar } from './Avatar';
 
@@ -126,6 +126,38 @@ export function Loading({ label = 'Loading' }: { label?: string }) {
       <span className="sr-only">{label}…</span>
     </div>
   );
+}
+
+/**
+ * Keeps a rendering bug in one screen from blanking the whole app: shows what broke and lets the person carry on.
+ * Changing `resetKey` (for example the URL) clears the error.
+ */
+export class ErrorBoundary extends Component<{ children: ReactNode; resetKey?: unknown }, { error: Error | null; key: unknown }> {
+  state = { error: null as Error | null, key: this.props.resetKey };
+  static getDerivedStateFromError(error: Error) {
+    return { error };
+  }
+  static getDerivedStateFromProps(props: { resetKey?: unknown }, state: { error: Error | null; key: unknown }) {
+    return props.resetKey !== state.key ? { error: null, key: props.resetKey } : null;
+  }
+  componentDidCatch(error: Error, info: ErrorInfo) {
+    console.error(error, info.componentStack);
+  }
+  render() {
+    if (!this.state.error) return this.props.children;
+    return (
+      <div className="empty" role="alert">
+        <span className="empty-icon danger">
+          <Icon name="alert" size={22} />
+        </span>
+        <strong>Something went wrong showing this</strong>
+        <div className="muted">Your changes were saved. Try again, or reload the page if it keeps happening.</div>
+        <button className="btn" onClick={() => this.setState({ error: null })}>
+          Try again
+        </button>
+      </div>
+    );
+  }
 }
 
 export function ErrorState({ error, retry }: { error: Error; retry?: () => void }) {

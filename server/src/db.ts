@@ -969,6 +969,19 @@ const ADDED_COLUMNS: [table: string, column: string, definition: string, backfil
   ['workspaces', 'entitlement_overrides', 'TEXT'],
   // Single sign-on started from the phone app: the app's PKCE challenge for the hand-back.
   ['sso_states', 'mobile_challenge', 'TEXT'],
+  // What a notification is about (its link without ?query or #hash), so several updates to one chat or task group together.
+  [
+    'notifications',
+    'group_key',
+    "TEXT NOT NULL DEFAULT ''",
+    {
+      sqlite: `UPDATE notifications SET group_key = CASE
+          WHEN instr(link, '?') > 0 THEN substr(link, 1, instr(link, '?') - 1)
+          WHEN instr(link, '#') > 0 THEN substr(link, 1, instr(link, '#') - 1)
+          ELSE link END`,
+      postgres: "UPDATE notifications SET group_key = split_part(split_part(link, '?', 1), '#', 1)",
+    },
+  ],
 ];
 
 /** Idempotent data fixes run on every start-up, after the columns above exist. */
@@ -978,6 +991,7 @@ export const DATA_MIGRATIONS = [
   "UPDATE workspaces SET plan = 'organization' WHERE plan = 'business'",
   "UPDATE payments SET plan = 'team' WHERE plan = 'standard'",
   "UPDATE payments SET plan = 'organization' WHERE plan = 'business'",
+  'CREATE INDEX IF NOT EXISTS idx_notifications_group ON notifications(user_id, group_key, read_at)',
 ];
 
 export type Row = Record<string, any>;

@@ -160,10 +160,22 @@ export const pushIdle = async () => {
   while (pending.size) await Promise.all([...pending]);
 };
 
-/** Send a notification to every device where the person is signed in and has alerts on. Never throws. */
-export function sendPush(ctx: Ctx, userId: string, payload: PushPayload) {
+/** What happened to one round of pushes: how many push services accepted it, and what the others answered. */
+export interface PushResult {
+  delivered: number;
+  failed: number;
+  /** HTTP statuses (or "error") from push services that refused or could not be reached. */
+  errors: (number | 'error')[];
+}
+
+/**
+ * Send a notification to every device where the person is signed in and has alerts on. Never throws;
+ * the returned promise (which callers usually don't wait for) says how browser delivery went.
+ */
+export function sendPush(ctx: Ctx, userId: string, payload: PushPayload): Promise<PushResult> {
   sendMobilePush(ctx, userId, payload);
-  if (!ctx.push) return;
+  const result: PushResult = { delivered: 0, failed: 0, errors: [] };
+  if (!ctx.push) return Promise.resolve(result);
   const transport = ctx.push;
   const job = (async () => {
     const subs = await ctx.db.all(
@@ -179,10 +191,19 @@ export function sendPush(ctx: Ctx, userId: string, payload: PushPayload) {
       subs.map(async (sub) => {
         try {
           const status = await transport.send({ endpoint: sub.endpoint, keys: { p256dh: sub.p256dh, auth: sub.auth } }, body, keys);
+          if (status >= 200 && status < 300) {
+            result.delivered += 1;
+            await ctx.db.run('UPDATE push_subscriptions SET last_success_at = ? WHERE id = ?', now(), sub.id);
+            return;
+          }
+          result.failed += 1;
+          result.errors.push(status);
+          // The browser unsubscribed or the subscription expired: stop sending to it.
           if (status === 404 || status === 410) await ctx.db.run('DELETE FROM push_subscriptions WHERE id = ?', sub.id);
-          else if (status >= 200 && status < 300) await ctx.db.run('UPDATE push_subscriptions SET last_success_at = ? WHERE id = ?', now(), sub.id);
           else console.warn(`Push service answered ${status}`);
         } catch (error) {
+          result.failed += 1;
+          result.errors.push('error');
           console.warn('Push delivery failed', (error as Error).message);
         }
       }),
@@ -190,6 +211,7 @@ export function sendPush(ctx: Ctx, userId: string, payload: PushPayload) {
   })().catch((error) => console.error('Push failed', error));
   pending.add(job);
   void job.finally(() => pending.delete(job));
+  return job.then(() => result);
 }
 
 /** The phone-app half of sendPush: every signed-in phone with notifications allowed. */

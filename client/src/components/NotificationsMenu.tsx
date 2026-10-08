@@ -3,7 +3,7 @@ import { Link, useNavigate } from 'react-router-dom';
 import { api, qs, type Notification } from '../api';
 import { plainMentions, timeAgo } from '../format';
 import { useApi, useRealtime } from '../hooks';
-import { KIND_ICON } from '../pages/Inbox';
+import { GroupCount, KIND_ICON } from '../pages/Inbox';
 import { Avatar } from './Avatar';
 import { Icon } from './Icon';
 
@@ -22,7 +22,7 @@ export function NotificationsMenu({ unread, onChange }: { unread: number; onChan
   const { data, reload, setData } = useApi<{ notifications: Item[]; unread: number }>(
     open ? `/notifications${qs({ filter: onlyUnread ? 'unread' : 'all', limit: 12 })}` : null,
   );
-  useRealtime((e) => e.type === 'notification' && open && reload());
+  useRealtime((e) => (e.type === 'notification' || e.type === 'notifications.read') && open && reload());
 
   // Close on a click outside or Escape.
   useEffect(() => {
@@ -106,7 +106,10 @@ export function NotificationsMenu({ unread, onChange }: { unread: number; onChan
                   </span>
                 )}
                 <span className="notif-text">
-                  <span className="notif-title">{n.title}</span>
+                  <span className="notif-title">
+                    {n.title}
+                    <GroupCount n={n} />
+                  </span>
                   {n.body && <span className="notif-body">{plainMentions(n.body)}</span>}
                   <time>{timeAgo(n.created_at)}</time>
                 </span>

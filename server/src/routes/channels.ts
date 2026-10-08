@@ -13,7 +13,7 @@ import {
   type Auth,
 } from '../access.js';
 import type { Database, Row } from '../db.js';
-import { audit, authOf, notify, publishToChannel, recordActivity, type Ctx } from '../context.js';
+import { audit, authOf, notify, publishToChannel, readNotificationGroup, recordActivity, type Ctx } from '../context.js';
 import { emitEvent } from '../webhooks.js';
 import { badRequest, extractMentionIds, forbidden, newId, notFound, now, parse, filterAsync } from '../util.js';
 
@@ -281,6 +281,8 @@ export async function postMessage(ctx: Ctx, auth: Auth, channel: Row, input: New
   });
   const [message] = await serializeMessages(db, auth, [(await db.get('SELECT * FROM messages WHERE id = ?', id))!]);
   await publishToChannel(ctx, channel, { type: 'message.created', message });
+  // Writing in a chat means you have caught up with it.
+  await readNotificationGroup(ctx, auth.workspaceId, auth.userId, `/channels/${channel.id}`, createdAt);
   await emitEvent(
     ctx,
     auth.workspaceId,
@@ -293,6 +295,8 @@ export async function postMessage(ctx: Ctx, auth: Auth, channel: Row, input: New
   const actor = (await db.get('SELECT name FROM users WHERE id = ?', auth.userId))!;
   const where = channel.kind === 'dm' ? 'a direct message' : `#${channel.name}`;
   const link = `/channels/${channel.id}?message=${parent?.id ?? id}`;
+  // A reply only counts as seen if its thread is open; a top-level message if the channel is.
+  const viewKey = parent ? `/channels/${channel.id}?thread=${parent.id}` : `/channels/${channel.id}`;
   const preview = body.body.replace(/@\[([^\]]+)\]\([0-9a-f-]{36}\)/g, '@$1');
   const notified = new Set<string>([auth.userId]);
   const prefs = new Map((await db.all('SELECT user_id, notify FROM channel_members WHERE channel_id = ?', channel.id)).map((m) => [m.user_id, m.notify]));
@@ -302,7 +306,7 @@ export async function postMessage(ctx: Ctx, auth: Auth, channel: Row, input: New
     if (!await canViewChannel(db, { userId, workspaceId: auth.workspaceId, role }, channel)) continue;
     if (prefs.get(userId) === 'none' && !body.urgent) continue;
     notified.add(userId);
-    await notify(ctx, auth.workspaceId, { userId, kind: 'mention', title: `${actor.name} mentioned you in ${where}`, body: preview, link, actorId: auth.userId, urgent: body.urgent });
+    await notify(ctx, auth.workspaceId, { userId, kind: 'mention', title: `${actor.name} mentioned you in ${where}`, body: preview, link, viewKey, actorId: auth.userId, urgent: body.urgent });
   }
   const recipients = async (ids: string[], kind: string, title: string) => {
     for (const userId of ids) {
@@ -310,7 +314,7 @@ export async function postMessage(ctx: Ctx, auth: Auth, channel: Row, input: New
       const pref = prefs.get(userId) ?? 'all';
       if (pref !== 'all' && !body.urgent && kind !== 'announcement') continue;
       notified.add(userId);
-      await notify(ctx, auth.workspaceId, { userId, kind, title, body: preview, link, actorId: auth.userId, urgent: body.urgent });
+      await notify(ctx, auth.workspaceId, { userId, kind, title, body: preview, link, viewKey, actorId: auth.userId, urgent: body.urgent });
     }
   };
   const memberIds = [...prefs.keys()];
@@ -323,7 +327,7 @@ export async function postMessage(ctx: Ctx, auth: Auth, channel: Row, input: New
       if (prefs.get(userId) === 'none' && !body.urgent) continue;
       if (!await isActiveMember(db, auth.workspaceId, userId)) continue;
       notified.add(userId);
-      await notify(ctx, auth.workspaceId, { userId, kind: 'mention', title: `${actor.name} notified @${broadcast} in ${where}`, body: preview, link, actorId: auth.userId, urgent: body.urgent });
+      await notify(ctx, auth.workspaceId, { userId, kind: 'mention', title: `${actor.name} notified @${broadcast} in ${where}`, body: preview, link, viewKey, actorId: auth.userId, urgent: body.urgent });
     }
   }
   if (channel.kind === 'dm') await recipients(memberIds, 'dm', `New message from ${actor.name}`);
@@ -502,7 +506,10 @@ export function channelsRouter(ctx: Ctx) {
   r.post('/channels/:id/read', async (req, res) => {
     const auth = authOf(req);
     const channel = await loadChannel(db, auth, req.params.id);
-    await db.run('UPDATE channel_members SET last_read_at = ? WHERE channel_id = ? AND user_id = ?', now(), channel.id, auth.userId);
+    const readAt = now();
+    await db.run('UPDATE channel_members SET last_read_at = ? WHERE channel_id = ? AND user_id = ?', readAt, channel.id, auth.userId);
+    // Reading the chat is reading what you were notified about in it.
+    await readNotificationGroup(ctx, auth.workspaceId, auth.userId, `/channels/${channel.id}`, readAt);
     res.json({ ok: true });
   });
 

@@ -81,9 +81,20 @@ export function pushRouter(ctx: Ctx) {
       Number((await db.get<{ n: number }>('SELECT COUNT(*) AS n FROM push_subscriptions WHERE user_id = ?', auth.userId))!.n) +
       Number((await db.get<{ n: number }>('SELECT COUNT(*) AS n FROM mobile_push_tokens WHERE user_id = ?', auth.userId))!.n);
     if (!count) throw badRequest('Turn on notifications on this device first');
-    sendPush(ctx, auth.userId, { title: 'Küü notifications are on', body: 'You’ll get alerts here when you’re away from Küü.', url: '/settings?tab=notifications', tag: 'softex-test' });
+    const result = await sendPush(ctx, auth.userId, { title: 'Küü notifications are on', body: 'You’ll get alerts here when you’re away from Küü.', url: '/settings?tab=notifications', tag: 'softex-test' });
     await pushIdle();
-    res.json({ ok: true });
+    // Say plainly when no browser accepted it, so a broken set-up doesn't look like it works.
+    if (!result.delivered && result.failed) {
+      const status = result.errors.find((e) => typeof e === 'number');
+      throw badRequest(
+        status === 404 || status === 410
+          ? 'This device’s notification subscription has expired. Turn notifications off and on again.'
+          : status === 401 || status === 403
+            ? 'The push service refused the server’s keys. Check SOFTEX_VAPID_* (or remove them so the server uses its own) and set SOFTEX_VAPID_SUBJECT to a mailto: address.'
+            : 'The push service could not be reached from the server. Check that it can make outgoing HTTPS requests.',
+      );
+    }
+    res.json({ ok: true, ...result });
   });
 
   return r;

@@ -101,7 +101,11 @@ function TaskDetail({ taskId, onDeleted }: { taskId: string; onDeleted?: () => v
 
   const update = async (patch: Record<string, unknown>) => {
     const updated = await act(() => api.patch<Task>(`/tasks/${task.id}`, patch));
-    if (updated) setData({ ...task, ...updated });
+    if (!updated) return;
+    // The response is the list shape, where checklist and subtasks are counts; keep the detail's lists, then refetch them.
+    const { checklist: _checklist, subtasks: _subtasks, ...fields } = updated;
+    setData({ ...task, ...fields });
+    reload();
   };
   const disabled = !task.can_edit;
   const showStart = planHas('planning') || !!task.start_date;

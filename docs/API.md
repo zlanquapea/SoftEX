@@ -46,7 +46,8 @@ The iOS and Android apps use the same endpoints as the web app, but they don't u
 | `GET /api/files` · `POST /api/files` (multipart `file`) · `GET /api/files/:id/download` | Files |
 | `GET /api/meetings?range=upcoming\|past` · `POST /api/meetings` · `GET /api/meetings/:id/ics` | Meetings and calendar invites |
 | `GET /api/people` · `GET /api/teams` | Directory |
-| `GET /api/notifications` | Inbox |
+| `GET /api/notifications` | Inbox. Unread updates about the same chat, task or meeting come as one row (the newest) with `group_count`; `group_key` says what it is about, and `unread` counts these groups |
+| `POST /api/notifications/:id/read` · `POST /api/notifications/read-group` (`{ group: "/tasks/<id>" }`) | Mark a row read (which reads its whole group), or everything about one thing. Reading a channel (`POST /api/channels/:id/read`) or writing in it also reads its notifications |
 | `GET /api/export` | Everything you can access, as JSON |
 | `GET /api/workload?weeks=4&projectId=…&teamId=…` | Open tasks per person per due week |
 | `GET/POST /api/projects/:id/automations` · `PATCH/DELETE /api/automations/:id` · `GET /api/automations/:id/runs` | Project automations and their run log |

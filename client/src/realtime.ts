@@ -8,10 +8,41 @@ class Realtime {
   private stopped = true;
   private timer?: number;
   online = new Set<string>();
+  /** What the open screen shows (a chat, a thread), reported while this tab is in front so the server doesn't notify about it. */
+  private viewing = new Map<number, string[]>();
+  private nextView = 0;
+  private reported = '';
 
   start() {
     this.stopped = false;
     this.connect();
+    if (!this.watching) {
+      this.watching = true;
+      for (const name of ['visibilitychange', 'focus', 'blur'] as const) (name === 'visibilitychange' ? document : window).addEventListener(name, () => this.reportViewing());
+    }
+  }
+  private watching = false;
+
+  /** Add what one part of the screen shows; call the returned function when it goes away. */
+  addViewing(keys: string[]) {
+    const id = this.nextView++;
+    this.viewing.set(id, keys);
+    this.reportViewing();
+    return () => {
+      this.viewing.delete(id);
+      this.reportViewing();
+    };
+  }
+
+  private reportViewing(force = false) {
+    // "Active" decides whether the server also pushes to this person's other devices (and this one, when hidden).
+    const inFront = document.visibilityState === 'visible' && document.hasFocus();
+    const keys = inFront ? [...new Set([...this.viewing.values()].flat())] : [];
+    const next = JSON.stringify({ keys, active: inFront });
+    if (!force && next === this.reported) return;
+    if (this.socket?.readyState !== WebSocket.OPEN) return;
+    this.reported = next;
+    this.socket.send(JSON.stringify({ type: 'viewing', keys, active: inFront }));
   }
 
   stop() {
@@ -30,6 +61,7 @@ class Realtime {
       // After a reconnect, listeners refetch so nothing sent while offline is missed.
       if (this.retry > 0) this.emit({ type: 'reconnected' });
       this.retry = 0;
+      this.reportViewing(true);
     };
     socket.onmessage = (e) => {
       try {

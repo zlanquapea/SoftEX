@@ -111,6 +111,8 @@ export interface NotifyInput {
   link?: string;
   actorId?: string;
   urgent?: boolean;
+  /** What the person must have on screen for this to count as already seen (default: the chat, task or page it links to). */
+  viewKey?: string;
 }
 
 function inQuietHours(user: Row, at = new Date()) {
@@ -131,8 +133,33 @@ function inQuietHours(user: Row, at = new Date()) {
  * notification is still stored (and shown in the Inbox) but the live push is
  * marked silent unless it is urgent (§5.5 urgent escalation rules).
  */
+/** What a notification is about: its link without ?query or #hash ("/channels/<id>", "/tasks/<id>"…). */
+export const notificationGroup = (link: string | undefined) => (link ?? '').split(/[?#]/)[0];
+
+/**
+ * Mark everything a person was notified about one chat, task or meeting as read (for example once they have read the chat),
+ * and tell their other open windows so badges update.
+ */
+export async function readNotificationGroup(ctx: Ctx, workspaceId: string, userId: string, group: string, upTo = now()) {
+  if (!group) return 0;
+  const { changes } = await ctx.db.run(
+    'UPDATE notifications SET read_at = ? WHERE user_id = ? AND workspace_id = ? AND group_key = ? AND read_at IS NULL AND created_at <= ?',
+    now(),
+    userId,
+    workspaceId,
+    group,
+    upTo,
+  );
+  if (changes) await ctx.hub.toUser(workspaceId, userId, { type: 'notifications.read', group });
+  return changes;
+}
+
 export async function notify(ctx: Ctx, workspaceId: string, input: NotifyInput) {
   if (input.actorId && input.actorId === input.userId) return;
+  const group = notificationGroup(input.link);
+  // Someone looking at the chat (or task) right now sees the update there; a notification would only be noise.
+  const viewKey = input.viewKey ?? group;
+  if (viewKey && ctx.hub.isViewing(workspaceId, input.userId, viewKey)) return;
   const user = await ctx.db.get(
     `SELECT u.* FROM users u JOIN memberships m ON m.user_id = u.id
       WHERE u.id = ? AND m.workspace_id = ? AND m.deactivated_at IS NULL`,
@@ -148,6 +175,7 @@ export async function notify(ctx: Ctx, workspaceId: string, input: NotifyInput) 
     title: input.title,
     body: (input.body ?? '').slice(0, 280),
     link: input.link ?? '',
+    group_key: group,
     actor_id: input.actorId ?? null,
     urgent: input.urgent ? 1 : 0,
     created_at: now(),
@@ -165,8 +193,9 @@ export async function notify(ctx: Ctx, workspaceId: string, input: NotifyInput) 
       action: { label: 'Open in Küü', url: `${ctx.config.publicUrl}${input.link ?? '/inbox'}` },
     });
   }
-  // Phones and closed browsers get a push notification when the person isn't connected right now.
-  if (!silent && !ctx.hub.isOnline(workspaceId, input.userId)) {
+  // Phones and browsers get a push notification unless the person is using Küü in a window that's in front right now:
+  // a background tab or another device left open must not swallow it.
+  if (!silent && !ctx.hub.isActive(workspaceId, input.userId)) {
     const pushBody = (input.body ?? '').replace(/@\[([^\]]+)\]\([0-9a-f-]{36}\)/g, '@$1').slice(0, 180);
     await ctx.db.afterCommit(async () => sendPush(ctx, input.userId, { title: input.title, body: pushBody, url: input.link || '/inbox', tag: row.id }));
   }

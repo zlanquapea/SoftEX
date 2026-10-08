@@ -310,6 +310,10 @@ export interface Notification {
   urgent: number;
   read_at: string | null;
   created_at: string;
+  /** What it is about ("/channels/<id>", "/tasks/<id>"); unread updates about one thing come as a single row. */
+  group_key?: string;
+  /** How many unread updates this row stands for (1 when it isn't grouped). */
+  group_count?: number;
 }
 
 export interface Meeting {

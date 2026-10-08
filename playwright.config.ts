@@ -6,6 +6,12 @@ const PORT = 4100;
 const DATA = resolve('e2e/.data');
 const SAAS_PORT = 4101;
 const SAAS_DATA = resolve('e2e/.data-saas');
+// Tests start as if "Turn on notifications?" had already been answered, so the popup never covers what they click
+// (welcome.spec.ts checks the popup itself with a fresh browser).
+const promptAnswered = (port: number) => ({
+  origin: `http://localhost:${port}`,
+  localStorage: [{ name: 'kuu:push-prompt', value: JSON.stringify({ dismissedAt: 4102444800000, missed: 0 }) }],
+});
 
 /**
  * Browser smoke tests against the production build with the demo seed data.
@@ -19,6 +25,7 @@ export default defineConfig({
   use: {
     baseURL: `http://localhost:${PORT}`,
     trace: 'retain-on-failure',
+    storageState: { cookies: [], origins: [promptAnswered(PORT), promptAnswered(SAAS_PORT)] },
     screenshot: 'only-on-failure',
     launchOptions: process.env.PLAYWRIGHT_CHROMIUM_PATH ? { executablePath: process.env.PLAYWRIGHT_CHROMIUM_PATH } : undefined,
   },
