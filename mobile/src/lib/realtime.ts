@@ -20,7 +20,6 @@ class Realtime {
     // Phones suspend sockets in the background; reconnect (and refetch) when the app comes back.
     this.appState ??= AppState.addEventListener('change', (state) => {
       if (this.stopped) return;
-      this.reportActive();
       if (state === 'active' && this.socket?.readyState !== WebSocket.OPEN) {
         clearTimeout(this.timer);
         this.retry = Math.max(this.retry, 1);
@@ -50,7 +49,6 @@ class Realtime {
     socket.onopen = () => {
       if (this.retry > 0) this.emit({ type: 'reconnected' });
       this.retry = 0;
-      this.reportActive();
     };
     socket.onmessage = (e) => {
       try {
@@ -73,11 +71,6 @@ class Realtime {
       this.retry += 1;
       this.timer = setTimeout(() => this.connect(), Math.min(30_000, 500 * 2 ** this.retry));
     };
-  }
-
-  /** Tell the server whether the app is on screen, so it pushes to this person's devices only when they aren't using it. */
-  private reportActive() {
-    this.send({ type: 'viewing', keys: [], active: AppState.currentState === 'active' });
   }
 
   private emit(event: any) {
