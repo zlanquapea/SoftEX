@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type CSSProperties } from 'react';
 import { Link } from 'react-router-dom';
 import { Icon } from '../components/Icon';
-import { usd } from '../components/Plan';
+import { largestTeam, usd } from '../components/Plan';
 import { ProductDemo } from '../components/ProductDemo';
 import { PublicPage } from '../components/Public';
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from '@/components/ui/accordion';
@@ -331,7 +331,7 @@ export function Landing() {
               ))}
             </div>
             <p className="mx-auto mt-3 block text-center">
-              More than 50 people? We'll quote for you.{' '}
+              More than {data ? largestTeam(data.plans) : 30} people? We'll quote for you.{' '}
               <Link className="font-medium text-primary hover:underline" to="/pricing">
                 Compare plans in detail →
               </Link>

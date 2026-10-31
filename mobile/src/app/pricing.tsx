@@ -14,7 +14,7 @@ const FAQ = (supportEmail: string | null) => [
   ['What happens when the trial ends?', 'Your workspace moves to the Free plan automatically. Nothing is deleted; paid features pause until you choose a plan.'],
   ['How do I pay?', 'An admin chooses a plan under Administration → Billing on the web, pays by mobile money or bank transfer, and enters the transaction ID. We confirm it and your plan starts — usually within one business day.'],
   ['Is the price per person?', "No. Each plan is one flat monthly price for the whole workspace, up to its member limit. Guests (clients and partners you share specific channels or projects with) don't count toward the limit."],
-  ['We have more than 50 people.', `Larger organisations get a custom quote based on usage, onboarding and support needs.${supportEmail ? ` Email ${supportEmail} to talk it through.` : ' Contact us to talk it through.'}`],
+  ['We need more members than our plan includes.', `Larger organisations get a custom quote based on usage, onboarding and support needs.${supportEmail ? ` Email ${supportEmail} to talk it through.` : ' Contact us to talk it through.'}`],
   ['Can I leave at any time?', 'Yes. Export your data whenever you like, and owners can delete the workspace permanently from Administration → Workspace.'],
 ];
 

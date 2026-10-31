@@ -2,7 +2,7 @@ import { useEffect, useState, type ReactNode } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { api, type PublicPlan } from '../api';
 import { Icon } from '../components/Icon';
-import { PlanAllowances, PlanComparison, PlanPrice, PlanUnlocks, annualLine, contactHref, lrd, memberAllowance, monthsFreeYearly, projectAllowance } from '../components/Plan';
+import { PlanAllowances, PlanComparison, PlanPrice, PlanUnlocks, annualLine, contactHref, largestTeam, lrd, memberAllowance, monthsFreeYearly, projectAllowance } from '../components/Plan';
 import { allowanceBytes } from '../format';
 import { Loading } from '@/components/kit';
 import { useApi } from '../hooks';
@@ -77,7 +77,7 @@ export function Pricing() {
       a: 'No. These allowances apply to workspaces created from November 2026. Existing workspaces, and anything you’ve already paid for, keep their current allowances.',
     },
     {
-      q: 'We have more than 50 people.',
+      q: `We have more than ${largestTeam(data.plans)} people.`,
       a: (
         <>
           Larger organisations get a custom quote based on usage, onboarding and support needs.

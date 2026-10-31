@@ -11,13 +11,13 @@ import { HttpError, newId, now, parseJson } from './util.js';
  * price per workspace, whatever the number of members up to the plan's limit:
  *
  * - Free: permanent, for trying Küü with a small team (3 members, 250 MB, 2 active projects).
- * - Starter: 10 members, 5 GB, 10 active projects; projects, tasks, messaging, file
+ * - Starter: 6 members, 5 GB, 10 active projects; projects, tasks, messaging, file
  *   sharing, knowledge and meetings.
- * - Team: 25 members, 25 GB, unlimited projects; adds reporting, planning, custom fields,
+ * - Team: 15 members, 25 GB, unlimited projects; adds reporting, planning, custom fields,
  *   goals, automations, guests, API access and meeting recordings.
- * - Organization: 50 members, 100 GB, unlimited projects; adds AI, single sign-on, SCIM,
+ * - Organization: 30 members, 100 GB, unlimited projects; adds AI, single sign-on, SCIM,
  *   retention controls and priority support.
- * - Enterprise: above 50 members, priced by quote and set up by the operator.
+ * - Enterprise: above 30 members, priced by quote and set up by the operator.
  *
  * Allowances are versioned (PLAN_VERSIONS). Each workspace records the version it signed
  * up under, so new packaging applies to new workspaces only and existing workspaces keep
@@ -113,10 +113,11 @@ const ORGANIZATION_FEATURES: Feature[] = [...TEAM_FEATURES, 'ai', 'sso', 'scim',
  *
  * - v1: the original packaging (Free 5 members and 2 GB; no project limits). Every
  *   workspace created before 2026-11 is on it.
- * - 2026-11: Free is for evaluation (3 members, 250 MB, 2 active projects) and each
- *   paid plan has clear storage and project allowances.
+ * - 2026-11: Free is for evaluation (3 members, 250 MB, 2 active projects), paid plans
+ *   have smaller member caps (6, 15 and 30) and clear storage and project allowances.
  *
- * Prices, features, AI and recording quotas, and Enterprise are the same in both.
+ * Prices, features, AI and recording quotas, and Enterprise's negotiated terms are the same in both;
+ * Enterprise starts above the largest self-serve plan's member cap.
  */
 export const PLAN_VERSIONS = ['v1', '2026-11'] as const;
 export type PlanVersion = (typeof PLAN_VERSIONS)[number];
@@ -135,9 +136,9 @@ const ALLOWANCES: Record<PlanVersion, Record<PlanId, Allowance>> = {
   },
   '2026-11': {
     free: { memberLimit: 3, storage: 250 * MB, projectLimit: 2 },
-    starter: { memberLimit: 10, storage: 5 * GB, projectLimit: 10 },
-    team: { memberLimit: 25, storage: 25 * GB, projectLimit: null },
-    organization: { memberLimit: 50, storage: 100 * GB, projectLimit: null },
+    starter: { memberLimit: 6, storage: 5 * GB, projectLimit: 10 },
+    team: { memberLimit: 15, storage: 25 * GB, projectLimit: null },
+    organization: { memberLimit: 30, storage: 100 * GB, projectLimit: null },
     // Enterprise terms are negotiated; unchanged from v1.
     enterprise: { memberLimit: null, storage: 1024 * GB, projectLimit: null },
   },
@@ -156,7 +157,7 @@ const TAGLINES: Record<PlanVersion, Record<PlanId, string>> = {
     starter: 'Run your team’s everyday work.',
     team: 'Coordinate projects, clients, and workflows.',
     organization: 'Manage growing teams with AI and advanced controls.',
-    enterprise: 'For organisations above 50 members. Priced on usage, onboarding and support needs.',
+    enterprise: 'For organisations above 30 members. Priced on usage, onboarding and support needs.',
   },
 };
 

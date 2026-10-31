@@ -153,7 +153,7 @@ Railway redeploys automatically when `main` changes, because the service is conn
 | | Free | Starter | Team | Organization | Enterprise |
 | --- | --- | --- | --- | --- | --- |
 | Price per workspace / month | $0 | `SOFTEX_PRICE_STARTER` ($10) | `SOFTEX_PRICE_TEAM` ($25) | `SOFTEX_PRICE_ORGANIZATION` ($60) | Custom quote |
-| Members, the owner included (guests don't count) | 3 | 10 | 25 | 50 | Above 50 |
+| Members, the owner included (guests don't count) | 3 | 6 | 15 | 30 | Above 30 |
 | Shared storage (files, their versions and recordings) | 250 MB | 5 GB | 25 GB | 100 GB | 1 TB |
 | Active (non-archived) projects | 2 | 10 | Unlimited | Unlimited | Unlimited |
 | Projects, tasks, messaging, file sharing, knowledge, meetings, decisions | ✓ | ✓ | ✓ | ✓ | ✓ |
@@ -164,7 +164,7 @@ Railway redeploys automatically when `main` changes, because the service is conn
 
 **Enterprise** isn't sold in the app. Agree the price with the customer, take the payment your usual way, then in **Operator console → Workspaces** set the workspace's **Plan** to *Enterprise* and **Paid through** to the end of the agreed period. Customers see a *Contact us for a quote* button that emails `SOFTEX_SUPPORT_EMAIL`.
 
-These are the **2026-11** allowances, which apply to workspaces created from then on. Each workspace stores the packaging version it signed up under (`workspaces.plan_version`); workspaces that existed before keep the original **v1** allowances (Free 5 members and 2 GB, Starter 20 GB, Team 100 GB, Organization 250 GB, no project limits) at the same prices, including when they renew. Nothing migrates on its own: to move a workspace to new allowances once a migration policy is agreed, set its plan version in the operator API (`PATCH /api/operator/workspaces/:id` with `planVersion`), which is audited. Both versions live in `PLAN_VERSIONS` in `server/src/plans.ts`.
+These are the **2026-11** allowances, which apply to workspaces created from then on. Each workspace stores the packaging version it signed up under (`workspaces.plan_version`); workspaces that existed before keep the original **v1** allowances (Free 5 members and 2 GB, Starter 10 members and 20 GB, Team 25 members and 100 GB, Organization 50 members and 250 GB, no project limits) at the same prices, including when they renew. Nothing migrates on its own: to move a workspace to new allowances once a migration policy is agreed, set its plan version in the operator API (`PATCH /api/operator/workspaces/:id` with `planVersion`), which is audited. Both versions live in `PLAN_VERSIONS` in `server/src/plans.ts`.
 
 A workspace that has more members than a plan allows can't choose that plan. When a workspace goes over any limit (for example after a trial), nothing is deleted and nobody is removed: everyone can still open, download, export, archive and delete, and only adding more of what's over (inviting members, creating or restoring projects, uploading) is refused until usage is back within the allowance or it upgrades. Admins can delete files to free storage (not while a legal hold is on).
 

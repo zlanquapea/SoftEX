@@ -40,7 +40,7 @@ test('sign up on a hosted server: trial, pricing and billing', async ({ page }) 
   await expect(page.getByRole('heading', { name: /Organization trial/ })).toBeVisible();
   await expect(page.getByText(/Organization trial — 14 days left/)).toBeVisible();
   await page.getByRole('button', { name: 'Choose Team' }).click();
-  await expect(page.getByText('One price for the whole workspace: 25 members (guests don\'t count), 25 GB shared storage and unlimited active projects.', { exact: false })).toBeVisible();
+  await expect(page.getByText('One price for the whole workspace: 15 members (guests don\'t count), 25 GB shared storage and unlimited active projects.', { exact: false })).toBeVisible();
   await expect(page.getByText('Send to Orange Money 0770 000 000')).toBeVisible();
   // Payments need a confirmed email address.
   await expect(page.getByRole('button', { name: 'Submit payment' })).toBeDisabled();

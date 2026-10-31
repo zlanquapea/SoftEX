@@ -208,7 +208,9 @@ export function annualLine(plan: PublicPlan, annualFactor: number) {
   return `${usd(total)} billed yearly${free > 0 ? ` — ${free} month${free === 1 ? '' : 's'} free` : ''}`;
 }
 
-export const memberAllowance = (plan: Pick<PublicPlan, 'member_limit'>) => (plan.member_limit == null ? 'More than 50 members' : `${plan.member_limit} members`);
+/** The most members any self-serve plan includes; Enterprise starts above it. */
+export const largestTeam = (plans: PublicPlan[]) => Math.max(0, ...plans.filter((p) => p.self_serve && p.member_limit != null).map((p) => p.member_limit!));
+export const memberAllowance = (plan: Pick<PublicPlan, 'member_limit'>) => (plan.member_limit == null ? 'Members by agreement' : `${plan.member_limit} members`);
 export const projectAllowance = (plan: Pick<PublicPlan, 'project_limit'>) =>
   plan.project_limit == null ? 'Unlimited active projects' : `${plan.project_limit} active project${plan.project_limit === 1 ? '' : 's'}`;
 
@@ -278,7 +280,7 @@ export function PlanComparison({ plans }: { plans: PublicPlan[] }) {
   const sorted = [...plans].sort((a, b) => ORDER.indexOf(a.id) - ORDER.indexOf(b.id));
   const rows: [string, (p: PublicPlan) => ReactNode][] = [
     ['Monthly price per workspace', (p) => (p.price == null ? 'Quote' : usd(p.price))],
-    ['Members (guests don’t count)', (p) => (p.member_limit == null ? '50+' : p.member_limit)],
+    ['Members (guests don’t count)', (p) => (p.member_limit == null ? `${largestTeam(plans)}+` : p.member_limit)],
     ['Shared storage', (p) => allowanceBytes(p.storage_bytes)],
     ['Active projects', (p) => (p.project_limit == null ? 'Unlimited' : p.project_limit)],
     [CORE, () => <Icon name="check" size={16} className="mx-auto text-success" aria-label="Included" />],

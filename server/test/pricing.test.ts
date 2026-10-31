@@ -4,8 +4,8 @@ import { CURRENT_PLAN_VERSION, GB, MB, storageUsed } from '../src/plans.js';
 import { flushJobs, invite, registerOwner, setup, type TestEnv } from './helpers.js';
 
 /**
- * The 2026-11 packaging: Free for evaluation (3 members, 250 MB, 2 active projects), Starter (10, 5 GB, 10),
- * Team (25, 25 GB, unlimited) and Organization (50, 100 GB, unlimited), with existing workspaces kept on
+ * The 2026-11 packaging: Free for evaluation (3 members, 250 MB, 2 active projects), Starter (6, 5 GB, 10),
+ * Team (15, 25 GB, unlimited) and Organization (30, 100 GB, unlimited), with existing workspaces kept on
  * their original allowances.
  */
 
@@ -60,9 +60,9 @@ describe('plan catalog and versions', () => {
     const row = (id: string) => plans.find((p: { id: string }) => p.id === id);
     expect(plans.map((p: Record<string, unknown>) => [p.id, p.price, p.member_limit, p.storage_bytes, p.project_limit])).toEqual([
       ['free', 0, 3, 250 * MB, 2],
-      ['starter', 10, 10, 5 * GB, 10],
-      ['team', 25, 25, 25 * GB, null],
-      ['organization', 60, 50, 100 * GB, null],
+      ['starter', 10, 6, 5 * GB, 10],
+      ['team', 25, 15, 25 * GB, null],
+      ['organization', 60, 30, 100 * GB, null],
       ['enterprise', null, null, 1024 * GB, null],
     ]);
     // 250 MB is not rounded away for older clients either.
@@ -84,7 +84,7 @@ describe('plan catalog and versions', () => {
     const owner = await verifiedOwner();
     expect((await db().get('SELECT plan_version FROM workspaces WHERE id = ?', ws(owner)))!.plan_version).toBe(CURRENT_PLAN_VERSION);
     const trial = (await owner.agent.get('/api/billing').expect(200)).body;
-    expect(trial.plan).toMatchObject({ id: 'organization', status: 'trial', member_limit: 50, storage_limit: 100 * GB, project_limit: null, plan_version: '2026-11' });
+    expect(trial.plan).toMatchObject({ id: 'organization', status: 'trial', member_limit: 30, storage_limit: 100 * GB, project_limit: null, plan_version: '2026-11' });
     await endTrial(ws(owner));
     const after = (await owner.agent.get('/api/billing')).body;
     expect(after.plan).toMatchObject({ id: 'free', status: 'free', member_limit: 3, storage_limit: 250 * MB, project_limit: 2 });
@@ -127,6 +127,16 @@ describe('members', () => {
     expect(limit(res)).toEqual([402, 'members']);
     expect(res.body.details).toMatchObject({ code: 'plan_limit', used: 3, allowed: 3, upgrade: 'starter' });
     expect(res.body.error).toMatch(/includes 3 members .* Deactivate someone .* Starter plan includes more/);
+  });
+
+  it('fits six members on Starter, the owner included', async () => {
+    env = saas();
+    const owner = await verifiedOwner();
+    await pay(ws(owner), 'starter');
+    for (let i = 0; i < 5; i++) await invite(env, owner.agent);
+    const seventh = await owner.agent.post('/api/admin/invitations').send({ email: 'seventh@example.com' });
+    expect(limit(seventh)).toEqual([402, 'members']);
+    expect(seventh.body.details).toMatchObject({ used: 6, allowed: 6, upgrade: 'team' });
   });
 
   it('checks again when an invitation is accepted, so earlier invitations can’t overfill the plan', async () => {

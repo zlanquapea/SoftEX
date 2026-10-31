@@ -70,7 +70,7 @@ describe('entitlement overrides', () => {
 
     // null clears the overrides.
     await ops.patch(`/api/operator/workspaces/${wsId}`).send({ overrides: null });
-    expect((await owner.agent.get('/api/billing')).body.plan).toMatchObject({ custom: false, member_limit: 50 });
+    expect((await owner.agent.get('/api/billing')).body.plan).toMatchObject({ custom: false, member_limit: 30 });
   });
 });
 
