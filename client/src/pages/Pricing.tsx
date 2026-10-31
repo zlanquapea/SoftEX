@@ -74,7 +74,7 @@ export function Pricing() {
     },
     {
       q: 'We already use Küü. Does this change our plan?',
-      a: 'No. These allowances apply to workspaces created from November 2026. Existing workspaces, and anything you’ve already paid for, keep their current allowances.',
+      a: 'Yes — these allowances apply to every workspace. If you’ve already paid, your current allowances continue until the end of the period you paid for, and renewals use the plans above. Nothing is deleted if you’re above a new allowance; you just can’t add more of that until you reduce usage or choose a larger plan.',
     },
     {
       q: `We have more than ${largestTeam(data.plans)} people.`,

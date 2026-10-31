@@ -942,6 +942,13 @@ CREATE INDEX IF NOT EXISTS idx_saved_views_user ON saved_views(user_id, workspac
 `;
 
 /**
+ * One-time move of every workspace on the original 'v1' allowances to the current packaging ('2026-11'),
+ * remembering the end of any paid period already bought so it is honoured to the end. Exported for tests.
+ */
+export const MOVE_TO_CURRENT_PLANS = `UPDATE workspaces SET legacy_allowances_until = CASE WHEN plan <> 'free' THEN paid_through ELSE NULL END,
+  plan_version = '2026-11' WHERE plan_version = 'v1'`;
+
+/**
  * Columns added after the first release. Applied idempotently on start-up so
  * existing databases upgrade in place without a separate migration step. A
  * backfill runs once, only when the column is first added.
@@ -1003,6 +1010,9 @@ const ADDED_COLUMNS: [table: string, column: string, definition: string, backfil
   // Plan packaging version (see PLAN_VERSIONS in plans.ts). Workspaces that existed before versioning keep
   // the original allowances ('v1'); new workspaces are stamped with the current version when created.
   ['workspaces', 'plan_version', "TEXT NOT NULL DEFAULT 'v1'"],
+  // Moving existing workspaces to the current packaging (runs once, when this column is added). A paid period
+  // bought under the original allowances keeps them until it ends; renewals after that get the new ones.
+  ['workspaces', 'legacy_allowances_until', 'TEXT', MOVE_TO_CURRENT_PLANS],
   // Out of office: dates (inclusive, YYYY-MM-DD) and the automatic reply people get meanwhile.
   ['users', 'ooo_from', 'TEXT'],
   ['users', 'ooo_until', 'TEXT'],

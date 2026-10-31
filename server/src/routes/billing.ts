@@ -174,8 +174,9 @@ export function billingRouter(ctx: Ctx) {
     res.json({
       plan,
       usage: await usage(ctx, auth.workspaceId),
-      // The allowances this workspace signed up under (existing workspaces keep theirs).
-      plans: publicPlans(ctx, plan.plan_version ?? undefined),
+      // What each plan includes for this workspace from now on. A paid period still on the original allowances
+      // shows those in its meters (plan.legacy_until says until when); choosing or renewing a plan gets these.
+      plans: publicPlans(ctx, plan.legacy_until ? undefined : plan.plan_version ?? undefined),
       trial_days: b.trialDays,
       currency: 'USD',
       lrd_per_usd: b.lrdPerUsd ?? null,
