@@ -23,7 +23,7 @@ import { serializeTasks } from './tasks.js';
 import { mePayload, startSession } from './auth.js';
 import { verifyTotp } from '../totp.js';
 import { queueEmail } from '../mailer.js';
-import { requireFeature, requireMemberCapacity, requireVerifiedEmail } from '../plans.js';
+import { requireFeature, requireMemberCapacity, requireVerifiedEmail, withQuotaLock } from '../plans.js';
 import { HttpError, badRequest, forbidden, newId, notFound, now, parse, parseJson, randomToken, sha256, verifyPassword, filterAsync } from '../util.js';
 
 const RoleEnum = z.enum(['owner', 'admin', 'lead', 'member', 'guest']);
@@ -369,9 +369,13 @@ export function workspaceRouter(ctx: Ctx) {
       if (owners <= 1) throw badRequest('A workspace must keep at least one owner');
     }
     if (req.params.userId === auth.userId && body.deactivated) throw badRequest('You cannot deactivate yourself');
-    if (body.deactivated === false && target.deactivated_at) await requireMemberCapacity(ctx, auth.workspaceId, 1, body.role ?? target.role);
-    else if (body.role === 'guest' && target.role !== 'guest') await requireMemberCapacity(ctx, auth.workspaceId, 0, 'guest');
-    else if (body.role && body.role !== 'guest' && target.role === 'guest' && !target.deactivated_at) await requireMemberCapacity(ctx, auth.workspaceId, 1, body.role);
+    // Reactivating someone, or giving a guest full membership, takes a member place.
+    const checkCapacity = async () => {
+      if (body.deactivated === false && target.deactivated_at) await requireMemberCapacity(ctx, auth.workspaceId, 1, body.role ?? target.role);
+      else if (body.role === 'guest' && target.role !== 'guest') await requireMemberCapacity(ctx, auth.workspaceId, 0, 'guest');
+      else if (body.role && body.role !== 'guest' && target.role === 'guest' && !target.deactivated_at) await requireMemberCapacity(ctx, auth.workspaceId, 1, body.role);
+    };
+    await checkCapacity();
     const role = body.role as Role | undefined;
     const changes: Record<string, unknown> = {};
     if (role) changes.role = role;
@@ -389,7 +393,8 @@ export function workspaceRouter(ctx: Ctx) {
       if ((role ?? target.role) !== 'guest') throw badRequest('Only guests have an access expiry date');
       changes.guest_expires_at = body.guestExpiresAt;
     }
-    await db.transaction(async () => {
+    await withQuotaLock(ctx, auth.workspaceId, async () => {
+      await checkCapacity();
       for (const column of ['role', 'deactivated_at', 'guest_expires_at', 'sponsor_id'] as const) {
         if (!(column in changes)) continue;
         await db.run(`UPDATE memberships SET ${column} = ? WHERE workspace_id = ? AND user_id = ?`, changes[column] as string | null, auth.workspaceId, req.params.userId);

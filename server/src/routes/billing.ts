@@ -9,6 +9,10 @@ import {
   TERMS_VERSION,
   activeGuestCount,
   activeMemberCount,
+  activeProjectCount,
+  asPlanVersion,
+  formatBytes,
+  PLAN_VERSIONS,
   aiUsedThisMonth,
   denialLabel,
   EntitlementOverrides,
@@ -115,6 +119,8 @@ async function usage(ctx: Ctx, workspaceId: string) {
     guests: await activeGuestCount(ctx.db, workspaceId),
     storage_bytes: await storageUsed(ctx.db, workspaceId),
     storage_limit: plan.storage_limit,
+    projects: await activeProjectCount(ctx.db, workspaceId),
+    project_limit: plan.project_limit,
     ai_used: await aiUsedThisMonth(ctx.db, workspaceId, plan.status === 'trial' ? new Date(0).toISOString() : monthStart()),
     ai_limit: plan.features.includes('ai') ? plan.ai_limit : 0,
     recording_seconds: await recordingSecondsThisMonth(ctx.db, workspaceId),
@@ -164,10 +170,13 @@ export function billingRouter(ctx: Ctx) {
     const auth = authOf(req);
     requireRole(auth, 'admin');
     const b = ctx.config.billing;
+    const plan = await effectivePlan(ctx, auth.workspaceId);
     res.json({
-      plan: await effectivePlan(ctx, auth.workspaceId),
+      plan,
       usage: await usage(ctx, auth.workspaceId),
-      plans: publicPlans(ctx),
+      // The allowances this workspace signed up under (existing workspaces keep theirs).
+      plans: publicPlans(ctx, plan.plan_version ?? undefined),
+      trial_days: b.trialDays,
       currency: 'USD',
       lrd_per_usd: b.lrdPerUsd ?? null,
       annual_factor: b.annualFactor,
@@ -177,6 +186,25 @@ export function billingRouter(ctx: Ctx) {
       instructions: b.paymentInstructions || null,
       support_email: b.supportEmail ?? null,
       payments: (await Promise.all((await db.all('SELECT * FROM payments WHERE workspace_id = ? ORDER BY created_at DESC LIMIT 50', auth.workspaceId)).map((p) => paymentRow(db, p)))),
+    });
+  });
+
+  /**
+   * Shared allowances anyone in the workspace can see (members, storage, active projects), so screens can warn
+   * before an upload or a new project is refused. Billing details stay admin-only. Self-hosted: no limits.
+   */
+  r.get('/plan/usage', async (req, res) => {
+    const auth = authOf(req);
+    const plan = await effectivePlan(ctx, auth.workspaceId);
+    res.json({
+      plan: { id: plan.id, name: plan.name, status: plan.status, trial_ends_at: plan.trial_ends_at },
+      members: await activeMemberCount(db, auth.workspaceId),
+      member_limit: plan.member_limit,
+      storage_bytes: await storageUsed(db, auth.workspaceId),
+      storage_limit: plan.storage_limit,
+      projects: await activeProjectCount(db, auth.workspaceId),
+      project_limit: plan.project_limit,
+      can_manage_billing: isSaas(ctx) && ['owner', 'admin'].includes(auth.role),
     });
   });
 
@@ -202,12 +230,13 @@ export function billingRouter(ctx: Ctx) {
     if (await db.get(`SELECT 1 FROM payments WHERE reference = ? AND method = ? AND status IN ('pending', 'approved')`, body.reference, body.method)) {
       throw badRequest('A payment with this transaction reference has already been submitted');
     }
-    const chosen = planCatalog(ctx.config.billing)[body.plan];
+    const version = asPlanVersion((await db.get('SELECT plan_version FROM workspaces WHERE id = ?', auth.workspaceId))?.plan_version);
+    const chosen = planCatalog(ctx.config.billing, version)[body.plan];
     const members = await activeMemberCount(db, auth.workspaceId);
     if (chosen.memberLimit != null && members > chosen.memberLimit) {
       throw badRequest(`${chosen.name} allows up to ${chosen.memberLimit} members and this workspace has ${members}. Choose a larger plan, or remove members first.`);
     }
-    const amount = priceFor(ctx, body.plan, body.months);
+    const amount = priceFor(ctx, body.plan, body.months, version);
     const id = newId();
     await db.insert('payments', {
       id,
@@ -285,7 +314,7 @@ export function operatorRouter(ctx: Ctx) {
       created_at: ws.created_at,
       suspended_at: ws.suspended_at,
       suspended_reason: ws.suspended_reason,
-      plan: { id: plan.id, name: plan.name, status: plan.status, purchased: plan.purchased, trial_ends_at: plan.trial_ends_at, paid_through: plan.paid_through, custom: plan.custom },
+      plan: { id: plan.id, name: plan.name, status: plan.status, purchased: plan.purchased, trial_ends_at: plan.trial_ends_at, paid_through: plan.paid_through, custom: plan.custom, plan_version: plan.plan_version },
       overrides: readOverrides(ws.entitlement_overrides),
       owners,
       usage: await usage(ctx, ws.id),
@@ -299,8 +328,8 @@ export function operatorRouter(ctx: Ctx) {
     const all = await db.all('SELECT * FROM workspaces');
     const counts = { total: all.length, trial: 0, active: 0, grace: 0, free: 0, suspended: 0 };
     let mrr = 0;
-    const catalog = planCatalog(ctx.config.billing);
     for (const ws of all) {
+      const catalog = planCatalog(ctx.config.billing, asPlanVersion(ws.plan_version));
       if (ws.suspended_at) {
         counts.suspended += 1;
         continue;
@@ -356,6 +385,8 @@ export function operatorRouter(ctx: Ctx) {
         suspended: z.boolean().optional(),
         reason: z.string().trim().max(300).optional(),
         overrides: EntitlementOverrides.nullable().optional(),
+        // Moving a workspace to other allowances is an explicit, audited operator action; nothing migrates on its own.
+        planVersion: z.enum(PLAN_VERSIONS).optional(),
       }),
       req.body,
     );
@@ -371,6 +402,7 @@ export function operatorRouter(ctx: Ctx) {
       suspended_at: body.suspended === undefined ? undefined : body.suspended ? now() : null,
       suspended_reason: body.suspended === undefined ? undefined : body.suspended ? body.reason : null,
       entitlement_overrides: body.overrides === undefined ? undefined : body.overrides === null ? null : JSON.stringify(body.overrides),
+      plan_version: body.planVersion,
     });
     if (body.suspended) {
       for (const m of await db.all('SELECT user_id FROM memberships WHERE workspace_id = ?', ws.id)) ctx.hub.disconnect(ws.id, m.user_id);
@@ -419,7 +451,7 @@ export function operatorRouter(ctx: Ctx) {
       await platformEvent(ctx, await actor(req), 'payment.approved', ws, { payment: p.id, amount: p.amount, plan: p.plan, months: p.months, paid_through: end.toISOString() });
       await audit(ctx, ws.id, null, 'billing.payment_approved', 'payment', p.id, { plan: p.plan, paid_through: end.toISOString() });
     });
-    const planName = planCatalog(ctx.config.billing)[p.plan as PlanId].name;
+    const planName = planCatalog(ctx.config.billing, asPlanVersion(ws.plan_version))[p.plan as PlanId].name;
     await tellBillingContacts(
       ctx,
       ws.id,
@@ -518,7 +550,7 @@ export async function processBillingNotices(ctx: Ctx, at = new Date()) {
     if (plan.status === 'trial' && ws.trial_ends_at) {
       const left = days(ws.trial_ends_at);
       const end = friendlyDate(ws.trial_ends_at);
-      if (left <= 1) await notice('trial_1', ws.trial_ends_at, `Your Küü trial ends tomorrow`, `The Organization trial for ${ws.name} ends on ${end}. Choose a plan to keep reporting, automations, AI and more. If you do nothing, ${ws.name} moves to the Free plan and nothing is deleted.`);
+      if (left <= 1) await notice('trial_1', ws.trial_ends_at, `Your Küü trial ends tomorrow`, `The Organization trial for ${ws.name} ends on ${end}. Choose a plan to keep reporting, automations, AI and more. If you do nothing, ${ws.name} moves to the Free plan and nothing is deleted: anything above Free's allowances stays available, but you can't add more until you reduce usage or choose a plan.`);
       else if (left <= 7) await notice('trial_7', ws.trial_ends_at, `Your Küü trial ends in ${Math.ceil(left)} days`, `The Organization trial for ${ws.name} ends on ${end}. Choose a plan any time from Administration → Billing. If you do nothing, ${ws.name} moves to the Free plan and nothing is deleted.`);
     } else if (plan.status === 'active' && ws.paid_through) {
       const left = days(ws.paid_through);
@@ -529,7 +561,7 @@ export async function processBillingNotices(ctx: Ctx, at = new Date()) {
     await usageAlerts(ctx, ws, plan, notice);
     if (plan.status === 'free') {
       const endedAt = [ws.trial_ends_at, ws.paid_through].filter((x): x is string => !!x && x < at.toISOString()).sort().pop();
-      if (endedAt) await notice('moved_to_free', endedAt, `${ws.name} is now on the Free plan`, `${ws.name} has moved to the Free plan. Your data is safe. Paid features are paused until you choose a plan under Administration → Billing.`);
+      if (endedAt) await notice('moved_to_free', endedAt, `${ws.name} is now on the Free plan`, `${ws.name} has moved to the Free plan. Nothing has been deleted: you can still open, download, export, archive and delete everything. Paid features are paused, and if the workspace is above Free's allowances (members, storage or active projects) you can't add more of that until you reduce usage or choose a plan under Administration → Billing.`);
     }
   }
   return sent;
@@ -546,10 +578,10 @@ async function usageAlerts(
   notice: (kind: string, ref: string, subject: string, text: string) => Promise<void>,
 ) {
   const month = monthStart().slice(0, 7);
-  const gb = (bytes: number) => `${Math.round((bytes / 1024 ** 3) * 10) / 10} GB`;
   const checks: { key: string; used: number; limit: number | null; ref: string; what: string; show: (n: number) => string; resets: boolean }[] = [
     { key: 'members', used: await activeMemberCount(ctx.db, ws.id), limit: plan.member_limit, ref: String(plan.member_limit), what: 'member limit', show: String, resets: false },
-    { key: 'storage', used: await storageUsed(ctx.db, ws.id), limit: plan.storage_limit, ref: String(plan.storage_limit), what: 'file storage', show: gb, resets: false },
+    { key: 'storage', used: await storageUsed(ctx.db, ws.id), limit: plan.storage_limit, ref: String(plan.storage_limit), what: 'file storage', show: formatBytes, resets: false },
+    { key: 'projects', used: await activeProjectCount(ctx.db, ws.id), limit: plan.project_limit, ref: String(plan.project_limit), what: 'active project limit', show: String, resets: false },
   ];
   if (plan.features.includes('ai') && plan.status !== 'trial') {
     checks.push({ key: 'ai', used: await aiUsedThisMonth(ctx.db, ws.id), limit: plan.ai_limit, ref: month, what: 'AI requests for this month', show: String, resets: true });

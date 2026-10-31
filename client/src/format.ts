@@ -59,6 +59,17 @@ export const bytes = (n: number | null | undefined) => {
   return `${gb >= 10 || Number.isInteger(gb) ? Math.round(gb) : gb.toFixed(1)} GB`;
 };
 
+/** A plan allowance, in the same binary units the server enforces: "250 MB", "5 GB", "1 TB". */
+export const allowanceBytes = (n: number) => {
+  const tb = 1024 ** 4;
+  const gb = 1024 ** 3;
+  const mb = 1024 ** 2;
+  const round = (x: number) => (Number.isInteger(x) ? String(x) : x.toFixed(1));
+  if (n >= tb) return `${round(n / tb)} TB`;
+  if (n >= gb) return `${round(n / gb)} GB`;
+  return `${round(n / mb)} MB`;
+};
+
 export const STATUS_LABEL: Record<string, string> = {
   todo: 'To do',
   in_progress: 'In progress',

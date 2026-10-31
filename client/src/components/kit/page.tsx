@@ -214,9 +214,22 @@ export function ProgressBar({ value, label, showValue = false, className }: { va
 }
 
 /** Usage against a limit (members, storage…), turning amber near the limit and red over it. */
-export function Meter({ label, used, limit, format = (n) => n.toLocaleString() }: { label: ReactNode; used: number; limit: number | null; format?: (n: number) => string }) {
+export function Meter({
+  label,
+  used,
+  limit,
+  format = (n) => n.toLocaleString(),
+  note,
+}: {
+  label: ReactNode;
+  used: number;
+  limit: number | null;
+  format?: (n: number) => string;
+  /** A line under the bar, e.g. what happens at the limit. */
+  note?: ReactNode;
+}) {
   const pct = limit ? Math.min(100, (used / limit) * 100) : 0;
-  const tone = !limit ? '' : used > limit ? '[&_[data-slot=progress-indicator]]:bg-destructive' : pct >= 80 ? '[&_[data-slot=progress-indicator]]:bg-warning' : '';
+  const tone = !limit ? '' : used >= limit ? '[&_[data-slot=progress-indicator]]:bg-destructive' : pct >= 80 ? '[&_[data-slot=progress-indicator]]:bg-warning' : '';
   return (
     <div className="flex flex-col gap-1.5">
       <div className="flex flex-wrap items-baseline justify-between gap-2 text-sm">
@@ -227,6 +240,7 @@ export function Meter({ label, used, limit, format = (n) => n.toLocaleString() }
         </span>
       </div>
       {limit ? <Progress value={pct} className={tone} aria-label={typeof label === 'string' ? label : 'Usage'} /> : null}
+      {note && <p className="text-xs text-muted-foreground">{note}</p>}
     </div>
   );
 }

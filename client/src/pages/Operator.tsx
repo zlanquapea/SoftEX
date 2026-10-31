@@ -614,14 +614,16 @@ interface Overrides {
   revoke: Feature[];
   members?: number | null;
   storage_gb?: number | null;
+  projects?: number | null;
   ai_per_month?: number | null;
   recording_hours?: number | null;
   note: string;
 }
 
-const LIMITS: { key: 'members' | 'storage_gb' | 'ai_per_month' | 'recording_hours'; label: string }[] = [
+const LIMITS: { key: 'members' | 'storage_gb' | 'projects' | 'ai_per_month' | 'recording_hours'; label: string }[] = [
   { key: 'members', label: 'Members' },
   { key: 'storage_gb', label: 'Storage (GB)' },
+  { key: 'projects', label: 'Active projects' },
   { key: 'ai_per_month', label: 'AI requests / month' },
   { key: 'recording_hours', label: 'Recording hours / month' },
 ];

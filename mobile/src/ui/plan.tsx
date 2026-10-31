@@ -163,7 +163,7 @@ export function PlanFeatures({ plan, all = FEATURE_ORDER }: { plan: PublicPlan; 
   );
   return (
     <View style={{ gap: 6 }}>
-      {line(true, plan.member_limit ? `Up to ${plan.member_limit} members` : 'More than 50 members', 'members')}
+      {line(true, plan.member_limit ? `Up to ${plan.member_limit} members` : 'Members by agreement', 'members')}
       {line(true, `${storageLabel(plan.storage_gb)} storage`, 'storage')}
       {line(true, 'Projects, tasks, messaging, file sharing, knowledge and meetings', 'core')}
       {all.map((f) =>

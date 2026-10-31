@@ -1,11 +1,12 @@
 import { useEffect, useState, type ReactNode } from 'react';
-import { dateLabel } from '../format';
+import { allowanceBytes, bytes, dateLabel } from '../format';
 import { Link } from 'react-router-dom';
-import { api, type Feature, type PublicPlan } from '../api';
+import { api, type Feature, type PlanId, type PlanUsage, type PublicPlan } from '../api';
+import { useApi } from '../hooks';
 import { useSession } from '../session';
 import { Sparkles } from 'lucide-react';
 import { Icon } from './Icon';
-import { Callout, useAction } from '@/components/kit';
+import { Callout, Meter, useAction } from '@/components/kit';
 import { Alert, AlertAction, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Button, buttonVariants } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
@@ -177,12 +178,10 @@ export function AccountBanners() {
   return <>{banners}</>;
 }
 
-const storage = (gb: number) => (gb >= 1024 ? `${gb / 1024} TB` : `${gb} GB`);
-
 /** A plan's price line: flat per workspace, free, or by quote. */
 export function PlanPrice({ plan }: { plan: PublicPlan }) {
   return (
-    <p className="flex items-baseline gap-1.5">
+    <p className="flex flex-wrap items-baseline gap-x-1.5">
       {plan.price == null ? (
         <strong className="font-heading text-3xl font-semibold">Custom quote</strong>
       ) : plan.price ? (
@@ -191,38 +190,252 @@ export function PlanPrice({ plan }: { plan: PublicPlan }) {
         </>
       ) : (
         <>
-          <strong className="font-heading text-3xl font-semibold">$0</strong> <span className="text-sm text-muted-foreground">forever</span>
+          <strong className="font-heading text-3xl font-semibold">$0</strong> <span className="text-sm text-muted-foreground">per workspace</span>
         </>
       )}
     </p>
   );
 }
 
+/** Months free when paying for a year, e.g. 2 for a 10/12 factor. */
+export const monthsFreeYearly = (annualFactor: number) => Math.round(12 * (1 - annualFactor));
+
+/** "$250 billed yearly — 2 months free" (the whole year's charge, paid once). */
+export function annualLine(plan: PublicPlan, annualFactor: number) {
+  if (!plan.price) return null;
+  const total = Math.round(plan.price * 12 * annualFactor * 100) / 100;
+  const free = monthsFreeYearly(annualFactor);
+  return `${usd(total)} billed yearly${free > 0 ? ` — ${free} month${free === 1 ? '' : 's'} free` : ''}`;
+}
+
+/** The most members any self-serve plan includes; Enterprise starts above it. */
+export const largestTeam = (plans: PublicPlan[]) => Math.max(0, ...plans.filter((p) => p.self_serve && p.member_limit != null).map((p) => p.member_limit!));
+export const memberAllowance = (plan: Pick<PublicPlan, 'member_limit'>) => (plan.member_limit == null ? 'Members by agreement' : `${plan.member_limit} members`);
+export const projectAllowance = (plan: Pick<PublicPlan, 'project_limit'>) =>
+  plan.project_limit == null ? 'Unlimited active projects' : `${plan.project_limit} active project${plan.project_limit === 1 ? '' : 's'}`;
+
+/** The three numbers that differ most between plans: members, shared storage and active projects. */
+export function PlanAllowances({ plan, className }: { plan: PublicPlan; className?: string }) {
+  const rows: [string, string, string][] = [
+    ['users', memberAllowance(plan), 'Guests don’t count'],
+    ['folder', `${allowanceBytes(plan.storage_bytes)} storage`, 'Shared by the whole workspace'],
+    ['board', projectAllowance(plan), 'Archived projects don’t count'],
+  ];
+  return (
+    <ul className={cn('flex flex-col gap-2 rounded-xl bg-muted/50 p-3', className)} aria-label={`What ${plan.name} includes`}>
+      {rows.map(([icon, main, hint]) => (
+        <li key={main} className="flex items-start gap-2.5">
+          <Icon name={icon} size={16} className="mt-0.5 shrink-0 text-primary" />
+          <span className="flex flex-col">
+            <strong className="text-sm font-semibold">{main}</strong>
+            <span className="text-xs text-muted-foreground">{hint}</span>
+          </span>
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+const ORDER: PlanId[] = ['free', 'starter', 'team', 'organization', 'enterprise'];
+const CORE = 'Projects, tasks, messaging, file sharing, knowledge and meetings';
+
+const featureDetail = (plan: PublicPlan, f: Feature) =>
+  f === 'recordings' ? (plan.recording_hours == null ? ' (unlimited)' : ` (${plan.recording_hours} hours a month)`) : f === 'ai' && plan.ai_per_month ? ` (${plan.ai_per_month.toLocaleString()} requests a month)` : '';
+
+/** What upgrading to this plan adds over the one below it: only features that exist today. */
+export function PlanUnlocks({ plan, plans }: { plan: PublicPlan; plans: PublicPlan[] }) {
+  const sorted = [...plans].sort((a, b) => ORDER.indexOf(a.id) - ORDER.indexOf(b.id));
+  const previous = sorted[sorted.findIndex((p) => p.id === plan.id) - 1];
+  const added = FEATURE_ORDER.filter((f) => plan.features.includes(f) && !previous?.features.includes(f));
+  const support = plan.priority_support && !previous?.priority_support;
+  return (
+    <div className="flex flex-col gap-2 text-sm">
+      <p className="font-medium">{previous ? `Everything in ${previous.name}, plus:` : 'Included:'}</p>
+      <ul className="flex flex-col gap-1.5">
+        {!previous && <FeatureRow>{CORE}</FeatureRow>}
+        {previous && !added.length && !support && <FeatureRow>More members, storage and active projects</FeatureRow>}
+        {added.map((f) => (
+          <FeatureRow key={f}>
+            {FEATURE_LABEL[f]}
+            {featureDetail(plan, f)}
+          </FeatureRow>
+        ))}
+        {support && <FeatureRow>Priority support</FeatureRow>}
+      </ul>
+    </div>
+  );
+}
+
 function FeatureRow({ on = true, children }: { on?: boolean; children: ReactNode }) {
   return (
-    <li className={cn('flex gap-2', !on && 'text-muted-foreground line-through decoration-muted-foreground/40')}>
+    <li className={cn('flex gap-2', !on && 'text-muted-foreground')}>
       <Icon name={on ? 'check' : 'x'} size={14} className={cn('mt-0.5 shrink-0', on ? 'text-success' : 'text-muted-foreground')} />
       <span>{children}</span>
     </li>
   );
 }
 
-export function PlanFeatures({ plan, all }: { plan: PublicPlan; all: Feature[] }) {
-  const has = (f: Feature) => plan.features.includes(f);
+/** Every plan side by side: allowances, then each feature. Scrolls sideways on small screens. */
+export function PlanComparison({ plans }: { plans: PublicPlan[] }) {
+  const sorted = [...plans].sort((a, b) => ORDER.indexOf(a.id) - ORDER.indexOf(b.id));
+  const rows: [string, (p: PublicPlan) => ReactNode][] = [
+    ['Monthly price per workspace', (p) => (p.price == null ? 'Quote' : usd(p.price))],
+    ['Members (guests don’t count)', (p) => (p.member_limit == null ? `${largestTeam(plans)}+` : p.member_limit)],
+    ['Shared storage', (p) => allowanceBytes(p.storage_bytes)],
+    ['Active projects', (p) => (p.project_limit == null ? 'Unlimited' : p.project_limit)],
+    [CORE, () => <Icon name="check" size={16} className="mx-auto text-success" aria-label="Included" />],
+    ...FEATURE_ORDER.map(
+      (f) =>
+        [
+          FEATURE_LABEL[f],
+          (p: PublicPlan) =>
+            p.features.includes(f) ? (
+              <span className="inline-flex items-center gap-1">
+                <Icon name="check" size={16} className="text-success" aria-label="Included" />
+                <span className="text-xs text-muted-foreground">{featureDetail(p, f).replace(/[()]/g, '').trim()}</span>
+              </span>
+            ) : (
+              <span className="text-muted-foreground" aria-label="Not included">
+                —
+              </span>
+            ),
+        ] as [string, (p: PublicPlan) => ReactNode],
+    ),
+    ['Priority support', (p) => (p.priority_support ? <Icon name="check" size={16} className="mx-auto text-success" aria-label="Included" /> : <span className="text-muted-foreground" aria-label="Not included">—</span>)],
+  ];
   return (
-    <ul className="flex flex-col gap-2 text-sm">
-      <FeatureRow>{plan.member_limit ? `Up to ${plan.member_limit} members` : 'More than 50 members'}</FeatureRow>
-      <FeatureRow>{storage(plan.storage_gb)} storage</FeatureRow>
-      <FeatureRow>Projects, tasks, messaging, file sharing, knowledge and meetings</FeatureRow>
-      {all.map((f) => (
-        <FeatureRow key={f} on={has(f)}>
-          {FEATURE_LABEL[f]}
-          {f === 'recordings' && has(f) ? (plan.recording_hours == null ? ' (unlimited)' : ` (${plan.recording_hours} hours a month)`) : ''}
-          {f === 'ai' && has(f) && plan.ai_per_month ? ` (${plan.ai_per_month.toLocaleString()} requests a month)` : ''}
-        </FeatureRow>
-      ))}
-      <FeatureRow on={plan.priority_support}>Priority support</FeatureRow>
-    </ul>
+    // Focusable so keyboard users can scroll it sideways on a small screen.
+    <div className="overflow-x-auto rounded-2xl border bg-card focus-visible:outline-2 focus-visible:outline-ring" tabIndex={0} role="region" aria-label="Plan comparison">
+      <table className="w-full min-w-[40rem] text-sm">
+        <caption className="sr-only">Compare plans</caption>
+        <thead>
+          <tr className="border-b">
+            <th scope="col" className="p-3 text-left font-medium text-muted-foreground">
+              Plan
+            </th>
+            {sorted.map((p) => (
+              <th key={p.id} scope="col" className="p-3 text-center font-heading font-semibold">
+                {p.name}
+              </th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map(([label, cell], i) => (
+            <tr key={label} className={cn('border-b last:border-0', i === 3 && 'border-b-2')}>
+              <th scope="row" className="p-3 text-left font-normal">
+                {label}
+              </th>
+              {sorted.map((p) => (
+                <td key={p.id} className="p-3 text-center whitespace-nowrap tabular-nums">
+                  {cell(p)}
+                </td>
+              ))}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+/** A stored amount: "320 KB", "212.4 MB", "5 GB". */
+export const storageAmount = (n: number) => (n < 1024 ** 2 ? bytes(n) : allowanceBytes(n));
+
+export interface UsageNumbers {
+  members: number;
+  member_limit: number | null;
+  storage_bytes: number;
+  storage_limit: number | null;
+  projects: number;
+  project_limit: number | null;
+}
+
+type Level = 'ok' | 'near' | 'full';
+/** "near" from 80% of a limit, "full" at or over it. */
+export const level = (used: number, limit: number | null): Level => (limit == null || limit <= 0 ? 'ok' : used >= limit ? 'full' : used / limit >= 0.8 ? 'near' : 'ok');
+
+/** What each limit stops when it's reached, and how to get room again. */
+const AT_LIMIT = {
+  members: 'At the limit, new invitations wait. Deactivate people who no longer need access, or upgrade.',
+  storage: 'At the limit, uploads stop. Delete files you no longer need, or upgrade. Nothing is deleted for you.',
+  projects: 'At the limit, new projects wait. Archive finished projects (they stay readable), or upgrade.',
+};
+
+/** Members, shared storage and active projects against the plan's allowances, with a note near and at each limit. */
+export function UsageMeters({ usage, guests }: { usage: UsageNumbers; guests?: number }) {
+  const note = (key: keyof typeof AT_LIMIT, used: number, limit: number | null) => {
+    const l = level(used, limit);
+    return l === 'ok' ? undefined : (
+      <span className={cn(l === 'full' ? 'text-destructive' : 'text-warning')}>
+        {l === 'full' ? 'Limit reached. ' : 'Nearly full. '}
+        {AT_LIMIT[key]}
+      </span>
+    );
+  };
+  return (
+    <>
+      <Meter
+        label={guests ? `Members (plus ${guests} guest${guests === 1 ? '' : 's'}, who don't count)` : 'Members'}
+        used={usage.members}
+        limit={usage.member_limit}
+        note={note('members', usage.members, usage.member_limit)}
+      />
+      <Meter label="Shared storage" used={usage.storage_bytes} limit={usage.storage_limit} format={storageAmount} note={note('storage', usage.storage_bytes, usage.storage_limit)} />
+      <Meter label="Active projects" used={usage.projects} limit={usage.project_limit} note={note('projects', usage.projects, usage.project_limit)} />
+    </>
+  );
+}
+
+/** The workspace's shared allowances (members, storage, active projects); null on self-hosted servers, which have no limits. */
+export function usePlanUsage() {
+  const { me } = useSession();
+  const { data, reload } = useApi<PlanUsage>(me?.mode === 'saas' ? '/plan/usage' : null);
+  return { usage: data ?? null, reload };
+}
+
+const LIMIT_TEXT = {
+  storage: {
+    near: (u: PlanUsage) => `Storage is ${Math.round((u.storage_bytes / u.storage_limit!) * 100)}% full (${storageAmount(u.storage_bytes)} of ${allowanceBytes(u.storage_limit!)}, shared by the whole workspace).`,
+    full: (u: PlanUsage) => `Storage is full (${storageAmount(u.storage_bytes)} of ${allowanceBytes(u.storage_limit!)}), so uploads are paused.`,
+    fix: 'Delete files you no longer need to make room — everything else keeps working.',
+  },
+  projects: {
+    near: (u: PlanUsage) => `${u.projects} of ${u.project_limit} active projects used on the ${u.plan.name} plan.`,
+    full: (u: PlanUsage) => `All ${u.project_limit} active projects on the ${u.plan.name} plan are in use, so new projects are paused.`,
+    fix: 'Archive a finished project to free a place — it stays readable and can be restored.',
+  },
+  members: {
+    near: (u: PlanUsage) => `${u.members} of ${u.member_limit} members on the ${u.plan.name} plan (guests don't count).`,
+    full: (u: PlanUsage) => `All ${u.member_limit} member places on the ${u.plan.name} plan are taken, so new invitations are paused.`,
+    fix: 'Deactivate people who no longer need access to free a place.',
+  },
+} as const;
+
+/**
+ * A quiet note where a limit matters (Files for storage, Projects for active projects, invitations for members):
+ * from 80% it warns, at the limit it says what's paused and how to make room. Nothing shows otherwise.
+ */
+export function LimitNotice({ kind, usage, className }: { kind: keyof typeof LIMIT_TEXT; usage: PlanUsage | null; className?: string }) {
+  if (!usage) return null;
+  const [used, limit] =
+    kind === 'storage' ? [usage.storage_bytes, usage.storage_limit] : kind === 'projects' ? [usage.projects, usage.project_limit] : [usage.members, usage.member_limit];
+  const l = level(used, limit);
+  if (l === 'ok') return null;
+  const text = LIMIT_TEXT[kind];
+  return (
+    <Callout
+      tone={l === 'full' ? 'warning' : 'info'}
+      className={className}
+      action={
+        <Link to={usage.can_manage_billing ? '/admin?tab=billing' : '/pricing'} className={buttonVariants({ variant: 'outline', size: 'sm' })}>
+          {usage.can_manage_billing ? 'Upgrade' : 'See plans'}
+        </Link>
+      }
+    >
+      {l === 'full' ? text.full(usage) : text.near(usage)} {text.fix}
+      {!usage.can_manage_billing && ' A workspace admin can upgrade for more.'}
+    </Callout>
   );
 }
 

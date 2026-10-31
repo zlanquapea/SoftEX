@@ -1000,6 +1000,9 @@ const ADDED_COLUMNS: [table: string, column: string, definition: string, backfil
   ['tasks', 'team_id', 'TEXT REFERENCES teams(id) ON DELETE SET NULL'],
   ['files', 'team_id', 'TEXT REFERENCES teams(id) ON DELETE SET NULL'],
   ['messages', 'forwarded_from', 'TEXT'],
+  // Plan packaging version (see PLAN_VERSIONS in plans.ts). Workspaces that existed before versioning keep
+  // the original allowances ('v1'); new workspaces are stamped with the current version when created.
+  ['workspaces', 'plan_version', "TEXT NOT NULL DEFAULT 'v1'"],
   // Out of office: dates (inclusive, YYYY-MM-DD) and the automatic reply people get meanwhile.
   ['users', 'ooo_from', 'TEXT'],
   ['users', 'ooo_until', 'TEXT'],

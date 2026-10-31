@@ -7,7 +7,7 @@ import { z } from 'zod';
 import { canManageMeeting, canTakeMeetingNotes, canViewMeeting, isAdmin, type Auth } from '../access.js';
 import { audit, authOf, notify, type Ctx } from '../context.js';
 import type { Row } from '../db.js';
-import { hasFeature, requireFeature, requireRecordingAllowance, requireStorage } from '../plans.js';
+import { hasFeature, requireFeature, requireRecordingAllowance, requireStorage, withQuotaLock } from '../plans.js';
 import { scanUpload } from '../scanner.js';
 import { HttpError, badRequest, forbidden, newId, notFound, now, parse } from '../util.js';
 import { parseRange } from './knowledge.js';
@@ -219,17 +219,26 @@ export function recordingsRouter(ctx: Ctx) {
       const key = newId();
       await ctx.files.put(key, tempPath(file), mime);
       const queue = body.transcribe === 'true' && await serverTranscription(auth.workspaceId);
-      await db.run(
-        `UPDATE meeting_recordings SET status = 'ready', storage_key = ?, mime = ?, size = ?, duration_sec = ?, ended_at = ?, transcript_status = ?
-          WHERE id = ?`,
-        key,
-        mime,
-        file.size,
-        body.durationSec,
-        now(),
-        queue ? 'queued' : rec.transcript_status,
-        rec.id,
-      );
+      try {
+        // Checked again under the quota lock, so uploads at the same moment can't together pass the storage limit.
+        await withQuotaLock(ctx, auth.workspaceId, async () => {
+          await requireStorage(ctx, auth.workspaceId, file.size);
+          await db.run(
+            `UPDATE meeting_recordings SET status = 'ready', storage_key = ?, mime = ?, size = ?, duration_sec = ?, ended_at = ?, transcript_status = ?
+              WHERE id = ?`,
+            key,
+            mime,
+            file.size,
+            body.durationSec,
+            now(),
+            queue ? 'queued' : rec.transcript_status,
+            rec.id,
+          );
+        });
+      } catch (e) {
+        await ctx.files.remove(key).catch(() => {});
+        throw e;
+      }
       await audit(ctx, auth.workspaceId, auth.userId, 'meeting.recording_saved', 'meeting', meeting.id, { recordingId: rec.id, bytes: file.size, transcribe: queue });
       await ctx.hub.publish(auth.workspaceId, { type: 'meeting.recording', meetingId: meeting.id, active: false }, { kind: 'meeting', meetingId: meeting.id });
       res.json(await serialize(auth, (await db.get('SELECT * FROM meeting_recordings WHERE id = ?', rec.id))!, meeting));

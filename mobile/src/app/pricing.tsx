@@ -14,7 +14,7 @@ const FAQ = (supportEmail: string | null) => [
   ['What happens when the trial ends?', 'Your workspace moves to the Free plan automatically. Nothing is deleted; paid features pause until you choose a plan.'],
   ['How do I pay?', 'An admin chooses a plan under Administration → Billing on the web, pays by mobile money or bank transfer, and enters the transaction ID. We confirm it and your plan starts — usually within one business day.'],
   ['Is the price per person?', "No. Each plan is one flat monthly price for the whole workspace, up to its member limit. Guests (clients and partners you share specific channels or projects with) don't count toward the limit."],
-  ['We have more than 50 people.', `Larger organisations get a custom quote based on usage, onboarding and support needs.${supportEmail ? ` Email ${supportEmail} to talk it through.` : ' Contact us to talk it through.'}`],
+  ['We need more members than our plan includes.', `Larger organisations get a custom quote based on usage, onboarding and support needs.${supportEmail ? ` Email ${supportEmail} to talk it through.` : ' Contact us to talk it through.'}`],
   ['Can I leave at any time?', 'Yes. Export your data whenever you like, and owners can delete the workspace permanently from Administration → Workspace.'],
 ];
 
@@ -32,7 +32,7 @@ export default function Pricing() {
         <Eyebrow>Pricing</Eyebrow>
         <H1>Everything your team needs, one simple price</H1>
         <Muted size={15}>
-          Chat, projects, knowledge and meetings in one place. One flat price per workspace, not per person. Start with a {data.trial_days}-day free trial of Organization — no payment needed — and keep a free plan for up to 5 members forever.
+          Chat, projects, knowledge and meetings in one place. One flat price per workspace, not per person. Start with a {data.trial_days}-day free trial of Organization — no payment needed — and keep the Free plan for as long as you like.
         </Muted>
         {data.plans.map((p) => (
           <Card key={p.id} style={{ gap: 10, borderColor: p.id === 'organization' ? c.accent : c.line, borderWidth: p.id === 'organization' ? 2 : 1 }}>

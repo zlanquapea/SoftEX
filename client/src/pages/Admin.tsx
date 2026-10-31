@@ -5,7 +5,7 @@ import { Avatar } from '../components/Avatar';
 import { Icon } from '../components/Icon';
 import { WorkspaceInsights } from './Planning';
 import { BillingSettings } from './Billing';
-import { UpgradeNotice, usePlan } from '../components/Plan';
+import { LimitNotice, UpgradeNotice, usePlan, usePlanUsage } from '../components/Plan';
 import {
   Callout,
   DatePicker,
@@ -329,10 +329,12 @@ function Invitations() {
   const [form, setForm] = useState({ email: '', role: 'member', guestDays: 30, channelIds: [] as string[], projectIds: [] as string[] });
   const [link, setLink] = useState<{ url: string; email: string } | null>(null);
   const [bulk, setBulk] = useState(false);
+  const { usage } = usePlanUsage();
   const toggle = (key: 'channelIds' | 'projectIds', id: string) =>
     setForm({ ...form, [key]: form[key].includes(id) ? form[key].filter((x) => x !== id) : [...form[key], id] });
   return (
     <div className="grid items-start gap-4 lg:grid-cols-[minmax(0,1.4fr)_minmax(0,1fr)]">
+      <LimitNotice kind="members" usage={usage} className="lg:col-span-2" />
       <Panel title="Invite someone">
         <form
           className="flex flex-col gap-4"

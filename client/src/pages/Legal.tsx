@@ -82,7 +82,7 @@ export function Terms() {
             <ul>
               <li>New workspaces receive a free trial of the Organization plan. When it ends, the workspace moves to the Free plan unless you choose a paid plan.</li>
               <li>
-                Paid plans are priced per workspace per month, up to each plan's member limit, as shown on the <Link to="/pricing">pricing page</Link> when you pay. Guests don't count toward the limit. Plans above 50 members are priced by written quote. Prices may change;
+                Paid plans are priced per workspace per month, up to each plan's member limit, as shown on the <Link to="/pricing">pricing page</Link> when you pay. Guests don't count toward the limit. Workspaces larger than the biggest plan's member limit are priced by written quote. Prices may change;
                 changes apply from your next payment and we will tell you at least 30 days in advance.
               </li>
               <li>

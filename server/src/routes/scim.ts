@@ -1,6 +1,6 @@
 import { Router, type NextFunction, type Request, type Response } from 'express';
 import { requireRole } from '../access.js';
-import { hasFeature, requireFeature, requireMemberCapacity } from '../plans.js';
+import { hasFeature, requireFeature, requireMemberCapacity, withQuotaLock } from '../plans.js';
 import { audit, authOf, type Ctx } from '../context.js';
 import type { Row } from '../db.js';
 import { hashPassword, newId, now, pickColor, randomToken, sha256 } from '../util.js';
@@ -105,7 +105,10 @@ export function scimRouter(ctx: Ctx) {
   const setActive = async (workspaceId: string, userId: string, active: boolean, role: string) => {
     if (!active && role === 'owner') throw new ScimError(400, 'Workspace owners cannot be deactivated by provisioning', 'mutability');
     if (active) await requireMemberCapacity(ctx, workspaceId, 1);
-    await db.run('UPDATE memberships SET deactivated_at = ? WHERE workspace_id = ? AND user_id = ?', active ? null : now(), workspaceId, userId);
+    await withQuotaLock(ctx, workspaceId, async () => {
+      if (active) await requireMemberCapacity(ctx, workspaceId, 1);
+      await db.run('UPDATE memberships SET deactivated_at = ? WHERE workspace_id = ? AND user_id = ?', active ? null : now(), workspaceId, userId);
+    });
     if (!active) {
       await db.run('DELETE FROM sessions WHERE user_id = ? AND workspace_id = ?', userId, workspaceId);
       await db.run('UPDATE api_tokens SET revoked_at = ? WHERE user_id = ? AND workspace_id = ? AND revoked_at IS NULL', now(), userId, workspaceId);
@@ -175,7 +178,8 @@ export function scimRouter(ctx: Ctx) {
       throw new ScimError(409, 'User already exists', 'uniqueness');
     }
     if (req.body.active !== false) await requireMemberCapacity(ctx, ws, 1);
-    await db.transaction(async () => {
+    await withQuotaLock(ctx, ws, async () => {
+      if (req.body.active !== false) await requireMemberCapacity(ctx, ws, 1);
       if (!user) {
         const id = newId();
         await db.insert('users', {

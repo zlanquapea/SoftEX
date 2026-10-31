@@ -4,7 +4,7 @@ import { z } from 'zod';
 import { requireRole } from '../access.js';
 import { audit, authOf, type Ctx } from '../context.js';
 import { badRequest, hashPassword, HttpError, newId, now, parse, pickColor, randomToken, sha256 } from '../util.js';
-import { requireFeature, requireMemberCapacity } from '../plans.js';
+import { requireFeature, requireMemberCapacity, withQuotaLock } from '../plans.js';
 import { startSession } from './auth.js';
 
 /**
@@ -201,7 +201,8 @@ export function ssoPublicRouter(ctx: Ctx) {
       if (!membership) {
         if (!ws.sso_auto_provision) throw new Error('You do not have an account in this workspace yet. Ask an administrator to invite you.');
         await requireMemberCapacity(ctx, ws.id, 1);
-        await db.transaction(async () => {
+        await withQuotaLock(ctx, ws.id, async () => {
+          await requireMemberCapacity(ctx, ws.id, 1);
           if (!user) {
             const id = newId();
             await db.insert('users', {

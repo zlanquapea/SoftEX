@@ -2,7 +2,7 @@
 
 Küü runs on Railway as **one service** built from the repository's `Dockerfile`, with **one volume** for the database and uploaded files. `railway.json` in the repository sets the builder, the health check (`/api/health`) and the restart policy, so there is nothing to configure for the build itself.
 
-This guide sets Küü up as a **hosted service (SaaS)**: customers sign up themselves, get a 14-day Organization trial, can stay on the Free plan (up to 5 members) forever, and pay a flat monthly price per workspace for Starter, Team or Organization with Orange Money, MTN Mobile Money or bank transfer. If you only want a private server for one organisation, see [Private deployment](#private-deployment-for-one-organisation) at the end.
+This guide sets Küü up as a **hosted service (SaaS)**: customers sign up themselves, get a 14-day Organization trial, can stay on the Free plan (3 members, 250 MB of storage and 2 active projects) for as long as they like, and pay a flat monthly price per workspace for Starter, Team or Organization with Orange Money, MTN Mobile Money or bank transfer. If you only want a private server for one organisation, see [Private deployment](#private-deployment-for-one-organisation) at the end.
 
 Allow about 20 minutes.
 
@@ -153,8 +153,9 @@ Railway redeploys automatically when `main` changes, because the service is conn
 | | Free | Starter | Team | Organization | Enterprise |
 | --- | --- | --- | --- | --- | --- |
 | Price per workspace / month | $0 | `SOFTEX_PRICE_STARTER` ($10) | `SOFTEX_PRICE_TEAM` ($25) | `SOFTEX_PRICE_ORGANIZATION` ($60) | Custom quote |
-| Members (guests don't count) | Up to 5 | Up to 10 | Up to 25 | Up to 50 | Above 50 |
-| Storage | 2 GB | 20 GB | 100 GB | 250 GB | 1 TB |
+| Members, the owner included (guests don't count) | 3 | 6 | 15 | 30 | Above 30 |
+| Shared storage (files, their versions and recordings) | 250 MB | 5 GB | 25 GB | 100 GB | 1 TB |
+| Active (non-archived) projects | 2 | 10 | Unlimited | Unlimited | Unlimited |
 | Projects, tasks, messaging, file sharing, knowledge, meetings, decisions | ✓ | ✓ | ✓ | ✓ | ✓ |
 | Reporting (insights, dashboards, time reports), timeline, workload, custom fields, goals, forms, automations, guests, API and webhooks | | | ✓ | ✓ | ✓ |
 | Meeting recordings and transcripts | | | 20 hours a month | 60 hours a month | Unlimited |
@@ -163,7 +164,9 @@ Railway redeploys automatically when `main` changes, because the service is conn
 
 **Enterprise** isn't sold in the app. Agree the price with the customer, take the payment your usual way, then in **Operator console → Workspaces** set the workspace's **Plan** to *Enterprise* and **Paid through** to the end of the agreed period. Customers see a *Contact us for a quote* button that emails `SOFTEX_SUPPORT_EMAIL`.
 
-A workspace that has more members than a plan allows can't choose that plan, and when it goes over its limit (for example after a trial) nobody is removed: it just can't add members until it upgrades.
+These are the **2026-11** allowances, which apply to workspaces created from then on. Each workspace stores the packaging version it signed up under (`workspaces.plan_version`); workspaces that existed before keep the original **v1** allowances (Free 5 members and 2 GB, Starter 10 members and 20 GB, Team 25 members and 100 GB, Organization 50 members and 250 GB, no project limits) at the same prices, including when they renew. Nothing migrates on its own: to move a workspace to new allowances once a migration policy is agreed, set its plan version in the operator API (`PATCH /api/operator/workspaces/:id` with `planVersion`), which is audited. Both versions live in `PLAN_VERSIONS` in `server/src/plans.ts`.
+
+A workspace that has more members than a plan allows can't choose that plan. When a workspace goes over any limit (for example after a trial), nothing is deleted and nobody is removed: everyone can still open, download, export, archive and delete, and only adding more of what's over (inviting members, creating or restoring projects, uploading) is refused until usage is back within the allowance or it upgrades. Admins can delete files to free storage (not while a legal hold is on).
 
 Workspaces that were on the earlier **Standard** and **Business** plans move to **Team** and **Organization** automatically when the server starts, keeping their paid-through dates.
 
@@ -174,7 +177,7 @@ New workspaces get a 14-day Organization trial (`SOFTEX_TRIAL_DAYS`). When a tri
 **Other operator tools**
 
 - **Workspaces:** search by name or owner email. You can extend a trial, grant or correct a plan by hand (discounts, partners, refunds), or suspend a workspace that breaks your terms. Suspension signs everyone out until you restore it.
-- **Custom terms:** on a workspace, switch single features on or off and raise or lower its limits (members, storage, AI requests, recording hours), with a note saying why. Use it for negotiated Enterprise deals, add-ons ("Team plus AI"), pilots and comps. Custom terms sit on top of the plan and stay when the plan changes; *Remove custom terms* puts the workspace back on the plan exactly. Customers see "Custom terms apply" on their billing page.
+- **Custom terms:** on a workspace, switch single features on or off and raise or lower its limits (members, storage, active projects, AI requests, recording hours), with a note saying why. Use it for negotiated Enterprise deals, add-ons ("Team plus AI"), pilots and comps. Custom terms sit on top of the plan and stay when the plan changes; *Remove custom terms* puts the workspace back on the plan exactly. Customers see "Custom terms apply" on their billing page.
 - **Upgrade signals:** each workspace shows what its people tried in the last 30 days that the plan stopped (for example "Goals and intake forms ×3"). It's the best list of who to talk to about upgrading.
 - **Activity log:** a permanent record of payments, plan changes, suspensions and deleted workspaces.
 
@@ -182,10 +185,11 @@ You see sizes, dates and counts only. The console never shows customers' message
 
 **How plan limits are enforced.** Küü follows the usual entitlements pattern:
 
-- Each plan is a set of *entitlements*: feature switches (goals, automations, AI…) and limits (members, storage, AI requests, recording hours). The code checks entitlements, never plan names, so changing what a plan includes is a one-line change in `server/src/plans.ts`.
+- Each plan is a set of *entitlements*: feature switches (goals, automations, AI…) and limits (members, storage, active projects, AI requests, recording hours). The code checks entitlements, never plan names, so changing what a plan includes is a one-line change in `server/src/plans.ts`.
 - The server works out a workspace's entitlements on every request, from its plan, paid-through date, trial and any custom terms. There is no separate on/off switch that can drift: when a trial or payment ends, features stop on the next request.
 - The server is the authority. The web app hides what isn't included and shows an upgrade prompt, but calling the API directly gets the same refusal (HTTP 402 with the reason).
-- Nothing is deleted on a downgrade. Goals, dashboards and logged time made earlier stay readable (and can be deleted), but can't be created or changed; automations stop running without being removed; a workspace over its member limit keeps everyone but can't add more.
+- Nothing is deleted on a downgrade. Goals, dashboards and logged time made earlier stay readable (and can be deleted), but can't be created or changed; automations stop running without being removed; a workspace over a limit keeps everything but can't add more of that resource.
+- Limit checks that add members, projects or stored bytes run again inside a transaction that locks the workspace row, so simultaneous requests can't together pass a limit.
 - Owners and admins get an email and a notification at 80% and at 100% of each limit, once per limit (monthly allowances once per month).
 
 **Customers leaving.** Owners can delete their workspace (Administration → Workspace → Delete workspace), and anyone can delete their own account (Settings → Security). Both are permanent and recorded in the activity log.
