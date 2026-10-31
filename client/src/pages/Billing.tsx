@@ -42,6 +42,7 @@ interface BillingData {
     features: Feature[];
     custom?: boolean;
     plan_version?: string | null;
+    legacy_until?: string | null;
   };
   usage: {
     members: number;
@@ -136,8 +137,14 @@ export function BillingSettings() {
             </Callout>
           )}
           {plan.custom && <p className="text-xs text-muted-foreground">Custom terms apply to this workspace, as agreed with us.</p>}
-          {plan.plan_version === 'v1' && (
-            <p className="text-xs text-muted-foreground">This workspace keeps the allowances it signed up with. The plans below show what each includes for you.</p>
+          {plan.legacy_until && (
+            <Callout tone="info" title={`Your paid period keeps its original allowances until ${dateLabel(plan.legacy_until)}.`}>
+              After that, {plan.name} includes what’s shown below — renewing or changing plans uses these allowances. Nothing is deleted if you’re above them; you just can’t
+              add more of that until you reduce usage or choose a larger plan.
+            </Callout>
+          )}
+          {plan.plan_version === 'v1' && !plan.legacy_until && (
+            <p className="text-xs text-muted-foreground">Custom allowances agreed with us apply to this workspace.</p>
           )}
           {usage.blocked.length > 0 && (
             <Callout tone="warning" title="Your team tried to use these in the last 30 days, and your plan stopped them:">

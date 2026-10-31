@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import type { AppOptions } from '../src/app.js';
+import { MOVE_TO_CURRENT_PLANS } from '../src/db.js';
 import { CURRENT_PLAN_VERSION, GB, MB, storageUsed } from '../src/plans.js';
 import { flushJobs, invite, registerOwner, setup, type TestEnv } from './helpers.js';
 
@@ -95,10 +96,33 @@ describe('plan catalog and versions', () => {
     expect((await member.agent.get('/api/plan/usage').expect(200)).body).toMatchObject({ members: 2, member_limit: 3, project_limit: 2, can_manage_billing: false });
   });
 
-  it('keeps existing workspaces on their original allowances, paid or free', async () => {
+  it('moves existing workspaces to the new plans once, letting a paid period finish on the old allowances', async () => {
+    env = saas();
+    const free = await verifiedOwner('Free');
+    const paid = await verifiedOwner('Paid');
+    // Both from before versioning; one has paid for Starter until next month.
+    await db().run(`UPDATE workspaces SET plan_version = 'v1' WHERE id IN (?, ?)`, ws(free), ws(paid));
+    await endTrial(ws(free));
+    await pay(ws(paid), 'starter');
+    await db().run(MOVE_TO_CURRENT_PLANS);
+    await db().run(MOVE_TO_CURRENT_PLANS); // safe to repeat
+
+    expect((await free.agent.get('/api/billing')).body.plan).toMatchObject({ id: 'free', member_limit: 3, storage_limit: 250 * MB, project_limit: 2, plan_version: '2026-11', legacy_until: null });
+    const during = (await paid.agent.get('/api/billing')).body;
+    expect(during.plan).toMatchObject({ id: 'starter', member_limit: 10, storage_limit: 20 * GB, project_limit: null, plan_version: 'v1' });
+    expect(new Date(during.plan.legacy_until).getTime()).toBeGreaterThan(Date.now() + 29 * DAY);
+    // Choosing or renewing a plan shows (and buys) the new allowances.
+    expect(during.plans.find((p: { id: string }) => p.id === 'starter')).toMatchObject({ member_limit: 6, storage_bytes: 5 * GB, project_limit: 10 });
+
+    // A renewal extends the paid date, but the old allowances still end with the period paid before the move.
+    await db().run('UPDATE workspaces SET paid_through = ?, legacy_allowances_until = ? WHERE id = ?', iso(60), iso(-8), ws(paid));
+    expect((await paid.agent.get('/api/billing')).body.plan).toMatchObject({ id: 'starter', status: 'active', member_limit: 6, storage_limit: 5 * GB, project_limit: 10, legacy_until: null });
+  });
+
+  it('lets an operator keep a workspace on the original allowances on purpose', async () => {
     env = saas();
     const owner = await verifiedOwner();
-    // A workspace created before versioning (the column's default for existing rows).
+    // Set explicitly (after the one-time move), e.g. for an agreed exception.
     await db().run(`UPDATE workspaces SET plan_version = 'v1' WHERE id = ?`, ws(owner));
     await endTrial(ws(owner));
     expect((await owner.agent.get('/api/billing')).body.plan).toMatchObject({ id: 'free', member_limit: 5, storage_limit: 2 * GB, project_limit: null });

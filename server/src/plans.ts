@@ -204,8 +204,10 @@ export interface EffectivePlan {
   storage_limit: number | null;
   /** Active (non-archived) projects; null means unlimited. */
   project_limit: number | null;
-  /** The packaging version whose allowances apply to this workspace. */
+  /** The packaging version whose allowances apply to this workspace right now. */
   plan_version: PlanVersion | null;
+  /** While a paid period bought under the original allowances runs: when it ends (the new allowances apply after). */
+  legacy_until?: string | null;
   ai_limit: number | null;
   /** Hours of meeting recording per month; null means unlimited. */
   recording_hours: number | null;
@@ -350,7 +352,12 @@ export async function effectivePlan(ctx: Ctx, workspace: Row | string, at = new 
     status = 'trial';
     id = 'organization';
   }
-  const plan = catalog[id];
+  // A paid period bought under the original allowances keeps them until that period (and its grace) ends.
+  const legacyUntil = version !== 'v1' && ws.legacy_allowances_until && (status === 'active' || status === 'grace')
+    ? new Date(new Date(ws.legacy_allowances_until).getTime() + GRACE_DAYS * 86_400_000) > at ? (ws.legacy_allowances_until as string) : null
+    : null;
+  const applied: PlanVersion = legacyUntil ? 'v1' : version;
+  const plan = planCatalog(ctx.config.billing, applied)[id];
   const o = readOverrides(ws.entitlement_overrides);
   const features = ALL_FEATURES.filter((f) => (plan.features.includes(f) || o.grant.includes(f)) && !o.revoke.includes(f));
   const pick = <T>(key: keyof EntitlementOverrides, fallback: T, map: (v: number) => T = (v) => v as T): T =>
@@ -366,7 +373,8 @@ export async function effectivePlan(ctx: Ctx, workspace: Row | string, at = new 
     member_limit: pick('members', plan.memberLimit),
     storage_limit: pick('storage_gb', plan.storage as number | null, (gb) => Math.round(gb * GB)),
     project_limit: pick('projects', plan.projectLimit),
-    plan_version: version,
+    plan_version: applied,
+    legacy_until: legacyUntil,
     ai_limit: pick('ai_per_month', status === 'trial' ? ctx.config.billing.trialAiRequests : plan.aiPerMonth as number | null),
     recording_hours: pick('recording_hours', plan.recordingHours),
     priority_support: plan.prioritySupport,
