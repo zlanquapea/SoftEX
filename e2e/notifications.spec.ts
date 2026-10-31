@@ -32,9 +32,10 @@ test('unread messages from one chat are one Inbox row with a count, and reading 
 
   // Open the chat: its notifications are read, and a message arriving while it's open doesn't notify.
   await page.goto(`/channels/${dm.id}`);
-  await expect(page.getByText(`Update 3 ${run}`)).toBeVisible();
+  // In the conversation (the list beside it previews the latest message too).
+  await expect(page.locator('.message').getByText(`Update 3 ${run}`)).toBeVisible();
   await call(nina, 'POST', `/channels/${dm.id}/messages`, { body: `While you look ${run}` });
-  await expect(page.getByText(`While you look ${run}`)).toBeVisible();
+  await expect(page.locator('.message').getByText(`While you look ${run}`)).toBeVisible();
   await expect
     .poll(async () => (await call(page, 'GET', '/notifications?filter=unread')).notifications.filter((n: { group_key: string }) => n.group_key === `/channels/${dm.id}`).length)
     .toBe(0);

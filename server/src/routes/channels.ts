@@ -15,7 +15,7 @@ import {
   type Auth,
 } from '../access.js';
 import type { Database, Row } from '../db.js';
-import { audit, authOf, notify, publishToChannel, readNotificationGroup, recordActivity, type Ctx } from '../context.js';
+import { audit, authOf, notify, publishToChannel, readNotificationGroup, recordActivity, removeUnusedStorage, type Ctx } from '../context.js';
 import { emitEvent } from '../webhooks.js';
 import { extractTeamMentionIds, syncTeamChannels } from '../teams.js';
 import { sendAutoReplies } from '../away.js';
@@ -44,6 +44,18 @@ export async function serializeMessages(db: Database, auth: Auth, rows: Row[]) {
       (r) => r.message_id,
     ),
   );
+  // In your Saved: the item itself, or a message you saved a copy of (copies point at the original).
+  const mySaved = await db.get('SELECT id FROM channels WHERE workspace_id = ? AND created_by = ? AND personal = 1', auth.workspaceId, auth.userId);
+  const roots = [...new Set(rows.map((r) => r.forwarded_from ?? r.id))];
+  const savedCopies = new Set(
+    mySaved
+      ? (await db.all(
+          `SELECT forwarded_from FROM messages WHERE channel_id = ? AND deleted_at IS NULL AND forwarded_from IN (${roots.map(() => '?').join(',')})`,
+          mySaved.id,
+          ...roots,
+        )).map((r) => r.forwarded_from)
+      : [],
+  );
   const acks = await db.all(`SELECT message_id, user_id FROM acknowledgements WHERE message_id IN (${marks})`, ...ids);
   const files = await db.all(
     `SELECT f.id, f.name, f.message_id, v.mime, v.size FROM files f
@@ -58,12 +70,18 @@ export async function serializeMessages(db: Database, auth: Auth, rows: Row[]) {
   const forwards = new Map(
     forwardIds.length
       ? (await db.all(
-          `SELECT m.id, m.body, m.created_at, m.deleted_at, m.channel_id, c.name AS channel_name, c.kind AS channel_kind, u.name AS user_name, u.color AS user_color
+          `SELECT m.id, m.body, m.created_at, m.edited_at, m.deleted_at, m.channel_id, c.workspace_id, c.name AS channel_name, c.kind AS channel_kind,
+                  c.personal AS channel_personal, u.name AS user_name, u.color AS user_color
              FROM messages m JOIN channels c ON c.id = m.channel_id JOIN users u ON u.id = m.user_id WHERE m.id IN (${forwardIds.map(() => '?').join(',')})`,
           ...forwardIds,
         )).map((f) => [f.id, f])
       : [],
   );
+  // Where a forward came from is only shown to people who can open that conversation themselves.
+  const canSee = new Map<string, boolean>();
+  for (const f of forwards.values()) {
+    if (!canSee.has(f.channel_id)) canSee.set(f.channel_id, await canViewChannel(db, auth, { id: f.channel_id, workspace_id: f.workspace_id, kind: f.channel_kind }));
+  }
   const users = new Map(
     (await db
       .all(
@@ -94,7 +112,7 @@ export async function serializeMessages(db: Database, auth: Auth, rows: Row[]) {
       edited_at: m.edited_at,
       deleted,
       pinned: !!m.pinned_at,
-      saved: saved.has(m.id),
+      saved: saved.has(m.id) || savedCopies.has(m.forwarded_from ?? m.id) || (!!mySaved && m.channel_id === mySaved.id),
       reactions: deleted ? [] : [...grouped.values()],
       reply_count: reply?.n ?? 0,
       last_reply_at: reply?.last_at ?? null,
@@ -104,26 +122,245 @@ export async function serializeMessages(db: Database, auth: Auth, rows: Row[]) {
       tasks: tasks.filter((t) => t.source_message_id === m.id),
       decisions: decisions.filter((d) => d.message_id === m.id),
       poll: deleted ? null : polls.get(m.id) ?? null,
-      forwarded: deleted || !m.forwarded_from ? null : forwardView(forwards.get(m.forwarded_from)),
+      forwarded: deleted || (!m.forwarded_from && !m.forward_snapshot) ? null : forwardView(m, forwards.get(m.forwarded_from), canSee),
       auto_reply: !!m.auto_reply,
+      // Lets the sender's outbox match a sent message to the one it was waiting for.
+      client_id: m.user_id === auth.userId ? m.client_id ?? null : null,
     };
   });
 }
 
-/** The forwarded message as shown in its new place: the forwarder chose to share its text, not its files. */
-function forwardView(f: Row | undefined) {
-  if (!f) return { deleted: true };
-  if (f.deleted_at) return { id: f.id, deleted: true };
+export interface ForwardSnapshot {
+  message_id: string;
+  body: string;
+  created_at: string;
+  user_id: string;
+  user_name: string;
+  user_color: string;
+  files: { name: string; mime: string; size: number }[];
+}
+
+function parseSnapshot(raw: unknown): ForwardSnapshot | null {
+  if (typeof raw !== 'string' || !raw) return null;
+  try {
+    return JSON.parse(raw) as ForwardSnapshot;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * A forwarded message as shown in its new place. A forward is a copy: it shows what the original said when it
+ * was forwarded, whoever reads it. Where it came from (and a link back) is only shown to people who can open
+ * that conversation; nobody else learns its name, or whether it still exists.
+ */
+function forwardView(m: Row, src: Row | undefined, canSee: Map<string, boolean>) {
+  const snap = parseSnapshot(m.forward_snapshot);
+  const visible = !!src && !!canSee.get(src.channel_id);
+  const source =
+    visible && !src!.deleted_at
+      ? {
+          message_id: src!.id,
+          channel_id: src!.channel_id,
+          kind: src!.channel_kind,
+          personal: !!src!.channel_personal,
+          channel_name: src!.channel_personal ? 'Saved' : src!.channel_kind === 'dm' ? null : src!.channel_name,
+        }
+      : null;
+  // Older forwards (before copies) pointed at the live original.
+  if (!snap) {
+    if (!src) return { deleted: true };
+    if (src.deleted_at) return { deleted: true };
+    return {
+      copy: false,
+      id: source ? src.id : undefined,
+      deleted: false,
+      body: src.body,
+      created_at: src.created_at,
+      channel_id: source?.channel_id,
+      channel_name: source && !source.personal ? source.channel_name : null,
+      user: { name: src.user_name, color: src.user_color },
+      source,
+      original_deleted: false,
+      original_edited: false,
+    };
+  }
   return {
-    id: f.id,
+    copy: true,
+    id: source ? src!.id : undefined,
     deleted: false,
-    body: f.body,
-    created_at: f.created_at,
-    channel_id: f.channel_id,
-    channel_name: f.channel_kind === 'dm' ? null : f.channel_name,
-    user: { name: f.user_name, color: f.user_color },
+    body: snap.body,
+    created_at: snap.created_at,
+    channel_id: source?.channel_id,
+    channel_name: source && !source.personal ? source.channel_name : null,
+    user: { name: snap.user_name, color: snap.user_color },
+    source,
+    original_deleted: visible && !!src!.deleted_at,
+    original_edited: visible && !src!.deleted_at && !!src!.edited_at && src!.edited_at > m.created_at,
   };
 }
+
+/** Each person's private Saved conversation in this workspace, made the first time it's needed. */
+export async function savedChannel(db: Database, auth: Auth): Promise<Row> {
+  const find = () => db.get('SELECT * FROM channels WHERE workspace_id = ? AND created_by = ? AND personal = 1', auth.workspaceId, auth.userId);
+  const found = await find();
+  if (found) return found;
+  // A direct message with only yourself (from before Saved existed) becomes Saved, keeping what's in it.
+  const selfDm = await db.get(
+    `SELECT c.id FROM channels c WHERE c.workspace_id = ? AND c.kind = 'dm' AND c.personal = 0 AND c.created_by = ?
+        AND NOT EXISTS (SELECT 1 FROM channel_members m WHERE m.channel_id = c.id AND m.user_id != ?)
+        AND NOT EXISTS (SELECT 1 FROM messages x WHERE x.channel_id = c.id AND x.user_id != ?)
+      ORDER BY c.created_at LIMIT 1`,
+    auth.workspaceId,
+    auth.userId,
+    auth.userId,
+    auth.userId,
+  );
+  try {
+    if (selfDm && await isChannelMember(db, selfDm.id, auth.userId)) {
+      await db.run("UPDATE channels SET personal = 1, name = 'Saved' WHERE id = ?", selfDm.id);
+    } else {
+      const id = newId();
+      await db.transaction(async () => {
+        await db.insert('channels', { id, workspace_id: auth.workspaceId, name: 'Saved', kind: 'dm', personal: 1, created_by: auth.userId, created_at: now() });
+        await db.run('INSERT OR IGNORE INTO channel_members (channel_id, user_id, joined_at, last_read_at) VALUES (?, ?, ?, ?)', id, auth.userId, now(), now());
+      });
+    }
+  } catch (error) {
+    // Made at the same moment by another request: use that one.
+    const raced = await find();
+    if (raced) return raced;
+    throw error;
+  }
+  const saved = (await find())!;
+  await moveBookmarks(db, auth, saved);
+  return saved;
+}
+
+/** What a forward keeps of the original: frozen at the moment it's forwarded. A forward of a forward keeps the first original. */
+async function snapshotFor(db: Database, message: Row): Promise<ForwardSnapshot> {
+  const existing = parseSnapshot(message.forward_snapshot);
+  if (existing) return existing;
+  let original = message;
+  if (message.forwarded_from) {
+    const pointed = await db.get('SELECT * FROM messages WHERE id = ?', message.forwarded_from);
+    if (pointed && !pointed.deleted_at) original = pointed;
+  }
+  const author = (await db.get('SELECT name, color FROM users WHERE id = ?', original.user_id)) ?? { name: 'Someone', color: '#888888' };
+  const files = await db.all(
+    `SELECT f.name, v.mime, v.size FROM files f JOIN file_versions v ON v.file_id = f.id AND v.version = f.current_version
+      WHERE f.message_id = ? AND f.archived_at IS NULL ORDER BY f.created_at`,
+    message.id,
+  );
+  return {
+    message_id: original.id,
+    body: original.body,
+    created_at: original.created_at,
+    user_id: original.user_id,
+    user_name: author.name,
+    user_color: author.color,
+    // Not where it came from: that's looked up when it's shown, for people allowed to see it.
+    files: files.map((f) => ({ name: f.name, mime: f.mime, size: Number(f.size) })),
+  };
+}
+
+/**
+ * Forward `message` (which `auth` can read) to `target` as a copy, with an optional note. Its attachments come
+ * along as new files in the target conversation that share the stored bytes (so they use no extra storage) and
+ * are only readable by people who can read the target.
+ */
+export async function forwardMessage(ctx: Ctx, auth: Auth, message: Row, target: Row, note: string, clientId?: string) {
+  if (message.deleted_at) throw badRequest('This message was deleted');
+  if (!await canPostChannel(ctx.db, auth, target)) throw forbidden(target.kind === 'announcement' ? 'Only leads and admins can post announcements' : 'You can’t post in that conversation');
+  const snapshot = await snapshotFor(ctx.db, message);
+  return postMessage(ctx, auth, target, {
+    body: note,
+    clientId,
+    forward: { snapshot, originalId: snapshot.message_id, filesFrom: message.id },
+  });
+}
+
+/** Copies of a message's attachments for a forwarded copy: readable by whoever can read its conversation, sharing the stored bytes. */
+async function copyAttachments(db: Database, fromMessageId: string, to: { id: string; channel: Row; ownerId: string; createdAt: string }) {
+  const originals = await db.all(
+    `SELECT f.name, f.external_url, v.storage_key, v.mime, v.size FROM files f JOIN file_versions v ON v.file_id = f.id AND v.version = f.current_version
+      WHERE f.message_id = ? AND f.archived_at IS NULL ORDER BY f.created_at`,
+    fromMessageId,
+  );
+  for (const f of originals) {
+    const fileId = newId();
+    await db.insert('files', {
+      id: fileId,
+      workspace_id: to.channel.workspace_id,
+      channel_id: to.channel.id,
+      message_id: to.id,
+      owner_id: to.ownerId,
+      name: f.name,
+      external_url: f.external_url ?? null,
+      current_version: 1,
+      created_at: to.createdAt,
+      updated_at: to.createdAt,
+    });
+    await db.insert('file_versions', { id: newId(), file_id: fileId, version: 1, storage_key: f.storage_key, mime: f.mime, size: f.size, uploaded_by: to.ownerId, created_at: to.createdAt });
+  }
+}
+
+/** Bookmarks from before Saved was a conversation become copies in it (those you can still read). */
+async function moveBookmarks(db: Database, auth: Auth, saved: Row) {
+  const marks = await db.all(
+    `SELECT m.*, s.created_at AS saved_at FROM saved_messages s JOIN messages m ON m.id = s.message_id JOIN channels c ON c.id = m.channel_id
+      WHERE s.user_id = ? AND c.workspace_id = ? AND m.deleted_at IS NULL ORDER BY s.created_at`,
+    auth.userId,
+    auth.workspaceId,
+  );
+  for (const m of marks) {
+    const channel = (await db.get('SELECT * FROM channels WHERE id = ?', m.channel_id))!;
+    if (!await canViewChannel(db, auth, channel)) continue;
+    const snapshot = await snapshotFor(db, m);
+    const id = newId();
+    await db.transaction(async () => {
+      await db.insert('messages', {
+        id,
+        channel_id: saved.id,
+        user_id: auth.userId,
+        body: '',
+        created_at: m.saved_at,
+        forwarded_from: snapshot.message_id,
+        forward_snapshot: JSON.stringify(snapshot),
+      });
+      await copyAttachments(db, m.id, { id, channel: saved, ownerId: auth.userId, createdAt: m.saved_at });
+      await db.run('DELETE FROM saved_messages WHERE user_id = ? AND message_id = ?', auth.userId, m.id);
+    });
+  }
+}
+
+/**
+ * Take something out of Saved for good: the item, its replies, and its attachment copies (stored bytes are
+ * removed when nothing else uses them). Under a legal hold it's hidden instead.
+ */
+async function removeFromSaved(ctx: Ctx, channel: Row, message: Row) {
+  const { db } = ctx;
+  if ((await db.get('SELECT legal_hold FROM workspaces WHERE id = ?', channel.workspace_id))?.legal_hold) {
+    await db.update('messages', message.id, { deleted_at: now(), pinned_at: null });
+  } else {
+    const ids = [message.id, ...(await db.all('SELECT id FROM messages WHERE parent_id = ?', message.id)).map((r) => r.id)];
+    const marks = ids.map(() => '?').join(',');
+    const files = await db.all(`SELECT id FROM files WHERE message_id IN (${marks}) AND channel_id = ?`, ...ids, channel.id);
+    const keys: string[] = [];
+    await db.transaction(async () => {
+      for (const f of files) {
+        keys.push(...(await db.all('SELECT storage_key FROM file_versions WHERE file_id = ?', f.id)).map((v) => v.storage_key));
+        await db.run('DELETE FROM file_versions WHERE file_id = ?', f.id);
+        await db.run('DELETE FROM files WHERE id = ?', f.id);
+      }
+      await db.run(`DELETE FROM messages WHERE parent_id = ?`, message.id);
+      await db.run('DELETE FROM messages WHERE id = ?', message.id);
+    });
+    await removeUnusedStorage(ctx, keys);
+  }
+  await publishToChannel(ctx, channel, { type: 'message.removed', messageId: message.id, channelId: channel.id, parentId: message.parent_id });
+}
+
 
 async function pollsFor(db: Database, auth: Auth, messageIds: string[]) {
   const out = new Map<string, unknown>();
@@ -163,6 +400,7 @@ export function broadcastMention(body: string): 'channel' | 'here' | null {
 }
 
 async function channelList(db: Database, auth: Auth) {
+  await savedChannel(db, auth);
   const channels = await db.all(
     `SELECT c.*, cm.last_read_at, cm.notify, (cm.user_id IS NOT NULL) AS joined, p.name AS project_name
        FROM channels c
@@ -201,14 +439,16 @@ async function channelList(db: Database, auth: Auth) {
             )
           : undefined;
       const lastMessage = await db.get(
-        `SELECT created_at, body, user_id FROM messages WHERE channel_id = ? AND deleted_at IS NULL AND parent_id IS NULL ORDER BY created_at DESC LIMIT 1`,
+        `SELECT m.created_at, m.body, m.user_id, m.forward_snapshot, u.name AS user_name FROM messages m JOIN users u ON u.id = m.user_id
+          WHERE m.channel_id = ? AND m.deleted_at IS NULL AND m.parent_id IS NULL ORDER BY m.created_at DESC LIMIT 1`,
         c.id,
       );
       return {
         id: c.id,
-        name: c.name,
+        name: c.personal ? 'Saved' : c.name,
         topic: c.topic,
         kind: c.kind,
+        personal: !!c.personal,
         project_id: c.project_id,
         project_name: c.project_name,
         team_id: c.team_id,
@@ -218,9 +458,16 @@ async function channelList(db: Database, auth: Auth) {
         mentions: c.kind === 'dm' ? unread : mentions,
         members,
         last_message_at: lastMessage?.created_at ?? null,
-        // A preview for the Chats list; channels show their name and topic instead.
+        // A preview for the conversation list (for channels you're in; others show their topic).
         last_message:
-          c.kind === 'dm' && lastMessage ? { text: String(lastMessage.body ?? '').slice(0, 160), mine: lastMessage.user_id === auth.userId } : undefined,
+          lastMessage && (c.kind === 'dm' || c.joined)
+            ? {
+                text: String(lastMessage.body || parseSnapshot(lastMessage.forward_snapshot)?.body || '').slice(0, 160),
+                mine: lastMessage.user_id === auth.userId,
+                author: String(lastMessage.user_name ?? '').split(' ')[0],
+                forwarded: !!lastMessage.forward_snapshot,
+              }
+            : undefined,
       };
     })));
 }
@@ -232,6 +479,10 @@ export interface NewMessage {
   fileIds?: string[];
   poll?: { question: string; options: string[]; multiple?: boolean; anonymous?: boolean } | null;
   forwardedFrom?: string | null;
+  /** A forwarded copy: the original as it was, and the message whose attachments come along. */
+  forward?: { snapshot: ForwardSnapshot; originalId: string; filesFrom: string } | null;
+  /** The sender's id for this message: sending it again returns the first one instead of posting twice. */
+  clientId?: string | null;
 }
 
 /**
@@ -241,7 +492,11 @@ export interface NewMessage {
 export async function postMessage(ctx: Ctx, auth: Auth, channel: Row, input: NewMessage) {
   const { db } = ctx;
   const body = { body: input.body, parentId: input.parentId ?? null, urgent: !!input.urgent, fileIds: input.fileIds ?? [] };
-  if (!body.body && !body.fileIds.length && !input.poll && !input.forwardedFrom) throw badRequest('Write a message or attach a file');
+  if (!body.body && !body.fileIds.length && !input.poll && !input.forwardedFrom && !input.forward) throw badRequest('Write a message or attach a file');
+  const sentBefore = async () =>
+    input.clientId ? await db.get('SELECT * FROM messages WHERE channel_id = ? AND user_id = ? AND client_id = ?', channel.id, auth.userId, input.clientId) : undefined;
+  const repeat = await sentBefore();
+  if (repeat) return (await serializeMessages(db, auth, [repeat]))[0];
   if (!await canPostChannel(db, auth, channel)) {
     // Anyone who can read an announcement may reply in its thread.
     if (!(channel.kind === 'announcement' && body.parentId && await canViewChannel(db, auth, channel))) {
@@ -255,39 +510,51 @@ export async function postMessage(ctx: Ctx, auth: Auth, channel: Row, input: New
   }
   const id = newId();
   const createdAt = now();
-  await db.transaction(async () => {
-    if (channel.kind !== 'dm' && !await isChannelMember(db, channel.id, auth.userId)) {
-      await db.run('INSERT OR IGNORE INTO channel_members (channel_id, user_id, joined_at, last_read_at) VALUES (?, ?, ?, ?)', channel.id, auth.userId, now(), now());
-    }
-    await db.insert('messages', {
-      id,
-      channel_id: channel.id,
-      user_id: auth.userId,
-      parent_id: parent?.id ?? null,
-      body: body.body,
-      urgent: body.urgent,
-      created_at: createdAt,
-      forwarded_from: input.forwardedFrom ?? null,
-    });
-    if (input.poll) {
-      await db.insert('polls', {
-        id: newId(),
-        message_id: id,
-        question: input.poll.question,
-        options: JSON.stringify(input.poll.options),
-        multiple: !!input.poll.multiple,
-        anonymous: !!input.poll.anonymous,
+  try {
+    await db.transaction(async () => {
+      if (channel.kind !== 'dm' && !await isChannelMember(db, channel.id, auth.userId)) {
+        await db.run('INSERT OR IGNORE INTO channel_members (channel_id, user_id, joined_at, last_read_at) VALUES (?, ?, ?, ?)', channel.id, auth.userId, now(), now());
+      }
+      await db.insert('messages', {
+        id,
+        channel_id: channel.id,
+        user_id: auth.userId,
+        parent_id: parent?.id ?? null,
+        body: body.body,
+        urgent: body.urgent,
+        created_at: createdAt,
+        forwarded_from: input.forward?.originalId ?? input.forwardedFrom ?? null,
+        forward_snapshot: input.forward ? JSON.stringify(input.forward.snapshot) : null,
+        client_id: input.clientId ?? null,
       });
-    }
-    for (const fileId of body.fileIds) {
-      await db.run('UPDATE files SET message_id = ?, channel_id = ? WHERE id = ? AND owner_id = ? AND message_id IS NULL', id, channel.id, fileId, auth.userId);
-    }
-    await db.run('UPDATE channel_members SET last_read_at = ? WHERE channel_id = ? AND user_id = ?', createdAt, channel.id, auth.userId);
-  });
+      if (input.forward) await copyAttachments(db, input.forward.filesFrom, { id, channel, ownerId: auth.userId, createdAt });
+      if (input.poll) {
+        await db.insert('polls', {
+          id: newId(),
+          message_id: id,
+          question: input.poll.question,
+          options: JSON.stringify(input.poll.options),
+          multiple: !!input.poll.multiple,
+          anonymous: !!input.poll.anonymous,
+        });
+      }
+      for (const fileId of body.fileIds) {
+        await db.run('UPDATE files SET message_id = ?, channel_id = ? WHERE id = ? AND owner_id = ? AND message_id IS NULL', id, channel.id, fileId, auth.userId);
+      }
+      await db.run('UPDATE channel_members SET last_read_at = ? WHERE channel_id = ? AND user_id = ?', createdAt, channel.id, auth.userId);
+    });
+  } catch (error) {
+    // The same send arriving twice at once: the other one won, so answer with it.
+    const raced = await sentBefore();
+    if (raced) return (await serializeMessages(db, auth, [raced]))[0];
+    throw error;
+  }
   const [message] = await serializeMessages(db, auth, [(await db.get('SELECT * FROM messages WHERE id = ?', id))!]);
   await publishToChannel(ctx, channel, { type: 'message.created', message });
   // Writing in a chat means you have caught up with it.
   await readNotificationGroup(ctx, auth.workspaceId, auth.userId, `/channels/${channel.id}`, createdAt);
+  // Saved is private: no integrations, notifications or automatic replies.
+  if (channel.personal) return message;
   await emitEvent(
     ctx,
     auth.workspaceId,
@@ -332,7 +599,8 @@ export async function postMessage(ctx: Ctx, auth: Auth, channel: Row, input: New
     for (const userId of ids) {
       if (notified.has(userId)) continue;
       const pref = prefs.get(userId) ?? 'all';
-      if (pref !== 'all' && !body.urgent && kind !== 'announcement') continue;
+      // "Mentions and replies" still hears about replies in threads they're in; "Muted" hears nothing but urgent messages.
+      if (!body.urgent && kind !== 'announcement' && !(pref === 'all' || (pref === 'mentions' && kind === 'thread'))) continue;
       notified.add(userId);
       await notify(ctx, auth.workspaceId, { userId, kind, title, body: preview, link, viewKey, actorId: auth.userId, urgent: body.urgent });
     }
@@ -352,8 +620,20 @@ export async function postMessage(ctx: Ctx, auth: Auth, channel: Row, input: New
   }
   if (channel.kind === 'dm') await recipients(memberIds, 'dm', `New message from ${actor.name}`);
   if (parent) {
+    // People in the thread and those following it, except anyone who muted it.
     const threadPeople = (await db.all('SELECT DISTINCT user_id FROM messages WHERE parent_id = ? OR id = ?', parent.id, parent.id)).map((m) => m.user_id);
-    await recipients(threadPeople.filter((u) => prefs.has(u)), 'thread', `${actor.name} replied to a thread in ${where}`);
+    const subs = await db.all('SELECT user_id, mode FROM thread_subscriptions WHERE message_id = ?', parent.id);
+    const muted = new Set(subs.filter((s) => s.mode === 'mute').map((s) => s.user_id));
+    const audience: string[] = [];
+    for (const userId of new Set([...threadPeople, ...subs.filter((s) => s.mode === 'follow').map((s) => s.user_id)])) {
+      if (muted.has(userId) || !await isActiveMember(db, auth.workspaceId, userId)) continue;
+      if (!prefs.has(userId)) {
+        const role = (await db.get('SELECT role FROM memberships WHERE workspace_id = ? AND user_id = ?', auth.workspaceId, userId))?.role;
+        if (!role || !await canViewChannel(db, { userId, workspaceId: auth.workspaceId, role }, channel)) continue;
+      }
+      audience.push(userId);
+    }
+    await recipients(audience, 'thread', `${actor.name} replied to a thread in ${where}`);
   } else if (channel.kind === 'announcement') {
     await recipients(memberIds, 'announcement', `New announcement in #${channel.name}`);
   } else if (body.urgent) {
@@ -481,6 +761,7 @@ export function channelsRouter(ctx: Ctx) {
   r.post('/channels/:id/leave', async (req, res) => {
     const auth = authOf(req);
     const channel = await loadChannel(db, auth, req.params.id);
+    if (channel.personal) throw badRequest('Saved is yours to keep');
     await db.run('DELETE FROM channel_members WHERE channel_id = ? AND user_id = ?', channel.id, auth.userId);
     res.json({ ok: true });
   });
@@ -511,6 +792,7 @@ export function channelsRouter(ctx: Ctx) {
   r.delete('/channels/:id/members/:userId', async (req, res) => {
     const auth = authOf(req);
     const channel = await loadChannel(db, auth, req.params.id);
+    if (channel.personal) throw badRequest('Saved is yours to keep');
     if (req.params.userId !== auth.userId && channel.created_by !== auth.userId && !isAdmin(auth)) {
       throw forbidden('Only the channel creator or an admin can remove people');
     }
@@ -544,6 +826,8 @@ export function channelsRouter(ctx: Ctx) {
     const { userIds } = parse(z.object({ userIds: z.array(z.string()).min(1).max(8) }), req.body);
     const members = [...new Set([auth.userId, ...userIds])].sort();
     for (const id of members) if (!await isActiveMember(db, auth.workspaceId, id)) throw notFound('Person');
+    // A message to yourself goes to Saved.
+    if (members.length === 1) return res.json({ id: (await savedChannel(db, auth)).id });
     if (isGuest(auth)) {
       // Guests may only message people who share a channel or project with them.
       for (const id of members.filter((m) => m !== auth.userId)) {
@@ -561,7 +845,7 @@ export function channelsRouter(ctx: Ctx) {
     const existing = (await db
       .all(
         `SELECT c.id, GROUP_CONCAT(m.user_id) AS members FROM channels c JOIN channel_members m ON m.channel_id = c.id
-          WHERE c.workspace_id = ? AND c.kind = 'dm' GROUP BY c.id`,
+          WHERE c.workspace_id = ? AND c.kind = 'dm' AND c.personal = 0 GROUP BY c.id`,
         auth.workspaceId,
       ))
       .find((c) => (c.members as string).split(',').sort().join(',') === members.join(','));
@@ -680,10 +964,32 @@ export function channelsRouter(ctx: Ctx) {
     const root = message.parent_id ? (await db.get('SELECT * FROM messages WHERE id = ?', message.parent_id))! : message;
     const replies = await db.all('SELECT * FROM messages WHERE parent_id = ? ORDER BY created_at', root.id);
     res.json({
-      channel: { id: channel.id, name: channel.name, kind: channel.kind },
+      channel: { id: channel.id, name: channel.personal ? 'Saved' : channel.name, kind: channel.kind, personal: !!channel.personal },
       root: (await serializeMessages(db, auth, [root]))[0],
       replies: await serializeMessages(db, auth, replies),
+      subscription: await threadSubscription(auth, root, replies),
     });
+  });
+
+  /** Whether you hear about new replies: you do if you're in the thread or follow it, unless you muted it. */
+  const threadSubscription = async (auth: Auth, root: Row, replies: Row[]) => {
+    const mode = ((await db.get('SELECT mode FROM thread_subscriptions WHERE user_id = ? AND message_id = ?', auth.userId, root.id))?.mode ?? null) as
+      | 'follow'
+      | 'mute'
+      | null;
+    const participant = root.user_id === auth.userId || replies.some((r) => r.user_id === auth.userId);
+    return { mode, following: mode === 'follow' || (mode !== 'mute' && participant) };
+  };
+
+  r.put('/messages/:id/subscription', async (req, res) => {
+    const auth = authOf(req);
+    const { message } = await loadMessage(auth, req.params.id);
+    if (message.parent_id) throw badRequest('Follow the thread from its first message');
+    const { mode } = parse(z.object({ mode: z.enum(['follow', 'mute', 'none']) }), req.body);
+    await db.run('DELETE FROM thread_subscriptions WHERE user_id = ? AND message_id = ?', auth.userId, message.id);
+    if (mode !== 'none') await db.insert('thread_subscriptions', { user_id: auth.userId, message_id: message.id, mode, created_at: now() });
+    const replies = await db.all('SELECT user_id FROM messages WHERE parent_id = ?', message.id);
+    res.json(await threadSubscription(auth, message, replies));
   });
 
   r.post('/channels/:id/messages', async (req, res) => {
@@ -695,6 +1001,7 @@ export function channelsRouter(ctx: Ctx) {
         parentId: z.string().nullish(),
         urgent: z.boolean().default(false),
         fileIds: z.array(z.string()).max(10).default([]),
+        clientId: z.string().trim().min(8).max(64).optional(),
       }),
       req.body,
     );
@@ -759,15 +1066,33 @@ export function channelsRouter(ctx: Ctx) {
     res.json({ closed: !poll.closed_at });
   });
 
+  /** Forward a copy to a conversation you can post in ("saved" for your Saved), with an optional note. */
   r.post('/messages/:id/forward', async (req, res) => {
     const auth = authOf(req);
     const { message } = await loadMessage(auth, req.params.id);
     if (message.deleted_at) throw badRequest('This message was deleted');
-    const body = parse(z.object({ channelId: z.string(), comment: z.string().trim().max(10_000).default('') }), req.body);
-    const target = await loadChannel(db, auth, body.channelId);
-    // Forward the original, not a forward of a forward.
-    const forwardedMessage = await postMessage(ctx, auth, target, { body: body.comment, forwardedFrom: message.forwarded_from ?? message.id });
+    const body = parse(
+      z.object({ channelId: z.string(), comment: z.string().trim().max(10_000).default(''), clientId: z.string().trim().min(8).max(64).optional() }),
+      req.body,
+    );
+    const target = body.channelId === 'saved' ? await savedChannel(db, auth) : await loadChannel(db, auth, body.channelId);
+    const forwardedMessage = await forwardMessage(ctx, auth, message, target, body.comment, body.clientId);
     res.status(201).json(forwardedMessage);
+  });
+
+  /** Where you can forward to: your Saved, and the conversations you can post in. */
+  r.get('/forward-targets', async (req, res) => {
+    const auth = authOf(req);
+    const list = await channelList(db, auth);
+    const out = [];
+    for (const c of list) {
+      if (c.kind !== 'dm' && !c.joined) continue;
+      const channel = (await db.get('SELECT * FROM channels WHERE id = ?', c.id))!;
+      if (!await canPostChannel(db, auth, channel)) continue;
+      out.push({ id: c.id, name: c.name, kind: c.kind, personal: c.personal, members: c.members, last_message_at: c.last_message_at });
+    }
+    out.sort((a, b) => Number(b.personal) - Number(a.personal) || String(b.last_message_at ?? '').localeCompare(String(a.last_message_at ?? '')));
+    res.json(out);
   });
 
   const editPolicy = async (auth: Auth, message: Row) => {
@@ -781,7 +1106,9 @@ export function channelsRouter(ctx: Ctx) {
     const auth = authOf(req);
     const { message, channel } = await loadMessage(auth, req.params.id);
     if (message.deleted_at) throw badRequest('This message was deleted');
-    if (!await editPolicy(auth, message)) throw forbidden('Your workspace policy does not allow editing this message');
+    // Your own notes in Saved are always yours to change.
+    const ownSaved = !!channel.personal && message.user_id === auth.userId;
+    if (!ownSaved && !await editPolicy(auth, message)) throw forbidden('Your workspace policy does not allow editing this message');
     const { body } = parse(z.object({ body: z.string().trim().min(1).max(10_000) }), req.body);
     await db.update('messages', message.id, { body, edited_at: now() });
     const [updated] = await serializeMessages(db, auth, [(await db.get('SELECT * FROM messages WHERE id = ?', message.id))!]);
@@ -792,6 +1119,10 @@ export function channelsRouter(ctx: Ctx) {
   r.delete('/messages/:id', async (req, res) => {
     const auth = authOf(req);
     const { message, channel } = await loadMessage(auth, req.params.id);
+    if (channel.personal && channel.created_by === auth.userId) {
+      await removeFromSaved(ctx, channel, message);
+      return res.json({ ok: true });
+    }
     const allowed = message.user_id === auth.userId ? await editPolicy(auth, message) || isAdmin(auth) : isAdmin(auth);
     if (!allowed) throw forbidden('You cannot delete this message');
     await db.update('messages', message.id, { deleted_at: now(), pinned_at: null });
@@ -820,26 +1151,43 @@ export function channelsRouter(ctx: Ctx) {
     res.json({ pinned: !message.pinned_at });
   });
 
+  /**
+   * Save to Saved (a private copy) or take it out again. Saving is just for you; pinning is for everyone in the
+   * conversation.
+   */
   r.post('/messages/:id/save', async (req, res) => {
     const auth = authOf(req);
-    const { message } = await loadMessage(auth, req.params.id);
-    const exists = await db.get('SELECT 1 FROM saved_messages WHERE user_id = ? AND message_id = ?', auth.userId, message.id);
-    if (exists) await db.run('DELETE FROM saved_messages WHERE user_id = ? AND message_id = ?', auth.userId, message.id);
-    else await db.insert('saved_messages', { user_id: auth.userId, message_id: message.id, created_at: now() });
-    res.json({ saved: !exists });
+    const { message, channel } = await loadMessage(auth, req.params.id);
+    if (channel.personal) {
+      await removeFromSaved(ctx, channel, message);
+      return res.json({ saved: false, removed: message.id });
+    }
+    // A bookmark from before Saved was a conversation.
+    if (await db.get('SELECT 1 FROM saved_messages WHERE user_id = ? AND message_id = ?', auth.userId, message.id)) {
+      await db.run('DELETE FROM saved_messages WHERE user_id = ? AND message_id = ?', auth.userId, message.id);
+      return res.json({ saved: false });
+    }
+    const saved = await savedChannel(db, auth);
+    const copy = await db.get('SELECT * FROM messages WHERE channel_id = ? AND forwarded_from = ? AND deleted_at IS NULL', saved.id, message.forwarded_from ?? message.id);
+    if (copy) {
+      await removeFromSaved(ctx, saved, copy);
+      return res.json({ saved: false, removed: copy.id });
+    }
+    const item = await forwardMessage(ctx, auth, message, saved, '');
+    res.status(201).json({ saved: true, channel_id: saved.id, message: item });
   });
 
+  /** What's in your Saved, newest first (for older apps that list it separately). */
   r.get('/saved', async (req, res) => {
     const auth = authOf(req);
-    const rows = (await filterAsync((await db
-      .all(
-        `SELECT m.*, c.name AS channel_name, c.kind AS channel_kind FROM saved_messages s JOIN messages m ON m.id = s.message_id
-           JOIN channels c ON c.id = m.channel_id WHERE s.user_id = ? AND m.deleted_at IS NULL ORDER BY s.created_at DESC`,
-        auth.userId,
-      )), async (m) => canViewChannel(db, auth, (await db.get('SELECT * FROM channels WHERE id = ?', m.channel_id))!)));
+    const saved = await savedChannel(db, auth);
+    const rows = await db.all('SELECT * FROM messages WHERE channel_id = ? AND parent_id IS NULL AND deleted_at IS NULL ORDER BY created_at DESC LIMIT 200', saved.id);
     const serialized = await serializeMessages(db, auth, rows);
-    res.json(serialized.map((m, i) => ({ ...m, channel_name: rows[i].channel_name, channel_kind: rows[i].channel_kind })));
+    res.json(serialized.map((m) => ({ ...m, channel_name: 'Saved', channel_kind: 'dm' })));
   });
+
+  /** The Saved conversation's id. */
+  r.get('/saved/channel', async (req, res) => res.json({ id: (await savedChannel(db, authOf(req))).id }));
 
   r.post('/messages/:id/ack', async (req, res) => {
     const auth = authOf(req);

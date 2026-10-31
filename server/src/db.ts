@@ -169,6 +169,15 @@ CREATE TABLE IF NOT EXISTS saved_messages (
   PRIMARY KEY (user_id, message_id)
 );
 
+-- Following or muting a thread: 'follow' notifies about replies without taking part; 'mute' stops them.
+CREATE TABLE IF NOT EXISTS thread_subscriptions (
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  message_id TEXT NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
+  mode TEXT NOT NULL,                               -- follow | mute
+  created_at TEXT NOT NULL,
+  PRIMARY KEY (user_id, message_id)
+);
+
 CREATE TABLE IF NOT EXISTS acknowledgements (
   message_id TEXT NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
   user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -1007,6 +1016,12 @@ const ADDED_COLUMNS: [table: string, column: string, definition: string, backfil
   ['tasks', 'team_id', 'TEXT REFERENCES teams(id) ON DELETE SET NULL'],
   ['files', 'team_id', 'TEXT REFERENCES teams(id) ON DELETE SET NULL'],
   ['messages', 'forwarded_from', 'TEXT'],
+  // A forward is a copy: what the original said, who wrote it and when, frozen at the time it was forwarded.
+  ['messages', 'forward_snapshot', 'TEXT'],
+  // The sender's own id for a message, so a retried send after a lost response doesn't post it twice.
+  ['messages', 'client_id', 'TEXT'],
+  // Each person's private "Saved" conversation (a direct message with only themselves).
+  ['channels', 'personal', 'INTEGER NOT NULL DEFAULT 0'],
   // Plan packaging version (see PLAN_VERSIONS in plans.ts). Workspaces that existed before versioning keep
   // the original allowances ('v1'); new workspaces are stamped with the current version when created.
   ['workspaces', 'plan_version', "TEXT NOT NULL DEFAULT 'v1'"],
@@ -1048,6 +1063,10 @@ export const DATA_MIGRATIONS = [
   "UPDATE payments SET plan = 'team' WHERE plan = 'standard'",
   "UPDATE payments SET plan = 'organization' WHERE plan = 'business'",
   'CREATE INDEX IF NOT EXISTS idx_notifications_group ON notifications(user_id, group_key, read_at)',
+  'CREATE UNIQUE INDEX IF NOT EXISTS idx_messages_client ON messages(channel_id, user_id, client_id) WHERE client_id IS NOT NULL',
+  // One Saved conversation per person per workspace.
+  'CREATE UNIQUE INDEX IF NOT EXISTS idx_channels_personal ON channels(workspace_id, created_by) WHERE personal = 1',
+  'CREATE INDEX IF NOT EXISTS idx_messages_forwarded ON messages(forwarded_from) WHERE forwarded_from IS NOT NULL',
 ];
 
 export type Row = Record<string, any>;

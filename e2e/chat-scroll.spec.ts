@@ -87,7 +87,8 @@ for (const [device, viewport] of [
     await slowPhotos(page);
 
     await page.goto(`/channels/${channel.id}`);
-    const newest = page.getByText(`Newest ${run}`);
+    // In the conversation (the list beside it previews the same text on wide screens).
+    const newest = page.locator('.message').getByText(`Newest ${run}`);
     await expect(newest).toBeVisible();
     // Wait for the photos to arrive, then the newest message must still be on screen.
     await expect(page.locator('img[src*="/api/files/"]').last()).toHaveJSProperty('complete', true, { timeout: 10_000 });

@@ -286,17 +286,18 @@ describe('chat additions', () => {
     const secretPoll = (await owner.agent.post(`/api/channels/${team.id}/polls`).send({ question: 'Hidden?', options: ['Yes', 'No'] })).body;
     expect((await b.agent.post(`/api/polls/${secretPoll.poll.id}/vote`).send({ options: [0] })).status).toBe(404);
 
-    // Forwarding shares the text, credits the author and needs access to both ends.
+    // Forwarding copies the text, credits the author and needs access to both ends.
     const original = (await a.agent.post(`/api/channels/${team.id}/messages`).send({ body: 'Budget approved' })).body;
     expect((await b.agent.post(`/api/messages/${original.id}/forward`).send({ channelId: general.id })).status).toBe(404);
     const fwd = (await a.agent.post(`/api/messages/${original.id}/forward`).send({ channelId: general.id, comment: 'FYI all' })).body;
     expect(fwd).toMatchObject({ body: 'FYI all', forwarded: { id: original.id, body: 'Budget approved', channel_name: 'team', deleted: false } });
+    // A forward of a forward still credits (and links to) the first original.
     const again = (await owner.agent.post(`/api/messages/${fwd.id}/forward`).send({ channelId: general.id })).body;
-    expect(again.forwarded.id).toBe(original.id);
+    expect(again.forwarded).toMatchObject({ body: 'Budget approved', source: { message_id: original.id, channel_name: 'team' } });
     await a.agent.delete(`/api/messages/${original.id}`).expect(200);
+    // The copy stays after the original is deleted.
     const seen = (await b.agent.get(`/api/channels/${general.id}/messages`)).body.messages.find((m: { id: string }) => m.id === fwd.id);
-    expect(seen.forwarded).toMatchObject({ deleted: true });
-    expect(seen.forwarded.body).toBeUndefined();
+    expect(seen.forwarded).toMatchObject({ deleted: false, body: 'Budget approved', source: null });
 
     // @channel reaches every member; a word like "email@channel" does not.
     await owner.agent.post(`/api/channels/${general.id}/messages`).send({ body: 'write to me at olu@channel.lr' });

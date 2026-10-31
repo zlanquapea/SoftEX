@@ -74,6 +74,11 @@ class Realtime {
       }
     };
     socket.onclose = (e) => {
+      // Without a connection we can't know who is online: show nobody as online rather than a stale list.
+      if (this.online.size) {
+        this.online = new Set();
+        this.emit({ type: 'presence', userId: null, online: false });
+      }
       if (this.stopped || e.code === 4001) return;
       this.retry += 1;
       this.timer = window.setTimeout(() => this.connect(), Math.min(30_000, 500 * 2 ** this.retry));

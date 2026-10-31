@@ -196,7 +196,10 @@ export interface Channel {
   mentions: number;
   members?: (UserRef & { status: string })[];
   last_message_at: string | null;
-  last_message?: { text: string; mine: boolean };
+  last_message?: { text: string; mine: boolean; author?: string; forwarded?: boolean };
+  /** Your private Saved conversation. */
+  personal?: boolean;
+  team_id?: string | null;
 }
 
 export interface Message {
@@ -223,6 +226,8 @@ export interface Message {
   forwarded?: ForwardedMessage | null;
   /** Sent on the author's behalf while they are out of office. */
   auto_reply?: boolean;
+  /** The sender's own id for this message (only on your own messages). */
+  client_id?: string | null;
 }
 
 export interface MessagePoll {
@@ -239,11 +244,17 @@ export interface MessagePoll {
 export interface ForwardedMessage {
   id?: string;
   deleted: boolean;
+  /** A copy made when it was forwarded (older forwards showed the live original). */
+  copy?: boolean;
   body?: string;
   created_at?: string;
   channel_id?: string;
   channel_name?: string | null;
   user?: { name: string; color: string };
+  /** Where it came from: only when you can open that conversation. */
+  source?: { message_id: string; channel_id: string; channel_name: string | null; kind: string; personal: boolean } | null;
+  original_edited?: boolean;
+  original_deleted?: boolean;
 }
 
 export type TaskStatus = 'todo' | 'in_progress' | 'blocked' | 'review' | 'done';

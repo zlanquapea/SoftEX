@@ -25,7 +25,6 @@ import {
   PeoplePicker,
   Pill,
   SearchField,
-  Section,
   StatusPill,
   SwitchField,
   useAction,
@@ -57,6 +56,7 @@ import {
   MessageScrollerProvider,
   MessageScrollerViewport,
   useMessageScroller,
+  useMessageScrollerScrollable,
 } from '@/components/ui/message-scroller';
 import { Separator } from '@/components/ui/separator';
 import { Spinner } from '@/components/ui/spinner';
@@ -70,6 +70,7 @@ import { AwayNotice } from '../components/AwayNotice';
 import { awayLabel, isAway } from '../away';
 import { MediaAttachment, VideoLinks, isPlayable } from '../components/Media';
 import { FavoriteButton } from '../components/Favorites';
+import { ConversationList, conversationIcon, useMinWidth } from '../components/ConversationList';
 import { ForwardModal, ForwardedQuote, PollCard, PollModal, VoiceNoteButton } from '../components/ChatExtras';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -80,7 +81,7 @@ import { Label } from '@/components/ui/label';
 
 const EMOJI = ['👍', '❤️', '🎉', '✅', '👀', '😄', '🙏', '🚀'];
 
-const channelIcon = (c: { kind: string }) => (c.kind === 'private' ? 'lock' : c.kind === 'announcement' ? 'megaphone' : c.kind === 'dm' ? 'chat' : 'hash');
+const channelIcon = (c: { kind: string; personal?: boolean }) => conversationIcon(c);
 
 /**
  * The message whose actions are showing on a touch screen. Phones have no hover, so tapping a message selects it
@@ -145,87 +146,20 @@ function useEnterSends() {
 
 export function Chats() {
   const { openCreate } = useShell();
-  const { data: channels, error, reload } = useApi<Channel[]>('/channels');
-  const { data: saved } = useApi<(Message & { channel_name: string; channel_kind: string })[]>('/saved');
-  useRealtime((e) => (e.type === 'message.created' || e.type === 'presence') && reload());
-  const dms = (channels ?? []).filter((c) => c.kind === 'dm').sort((a, b) => (b.last_message_at ?? '').localeCompare(a.last_message_at ?? ''));
   return (
     <Page width="narrow">
       <PageHeader
         title="Chats"
-        description="Direct and group conversations."
+        description="Your Saved, direct messages and channels in one place."
         actions={
           <Button onClick={() => openCreate('message')}>
             <Icon name="plus" data-icon="inline-start" /> New message
           </Button>
         }
       />
-      {error && <ErrorState error={error} retry={reload} />}
-      {!channels && !error && <LoadingRows rows={5} />}
-      {channels && !dms.length && (
-        <EmptyState
-          icon="chat"
-          title="No conversations yet"
-          action={
-            <Button onClick={() => openCreate('message')}>
-              <Icon name="plus" data-icon="inline-start" /> New message
-            </Button>
-          }
-        >
-          Start a direct message with a teammate.
-        </EmptyState>
-      )}
-      {dms.length > 0 && (
-        <Card className="gap-0 p-1.5">
-          <ul className="flex flex-col">
-            {dms.map((c) => (
-              <li key={c.id}>
-                <Link to={`/channels/${c.id}`} className={cn('list-row flex items-center gap-3 rounded-xl px-3 py-2.5 transition-colors hover:bg-muted/60', c.unread && 'unread')}>
-                  {c.members && c.members.length === 1 ? (
-                    <Avatar user={c.members[0]} size="md" showPresence />
-                  ) : (
-                    <span className="flex size-8 shrink-0 items-center justify-center rounded-full bg-secondary text-xs font-semibold" aria-hidden="true">
-                      {c.members?.length ?? 0}
-                    </span>
-                  )}
-                  <span className="flex min-w-0 flex-1 flex-col">
-                    <span className="flex items-baseline justify-between gap-2">
-                      <strong className={cn('truncate text-sm', c.unread ? 'font-semibold' : 'font-medium')}>{c.members?.map((m) => m.name).join(', ') || 'Just you'}</strong>
-                      {c.last_message_at && <span className="shrink-0 text-xs text-muted-foreground">{timeAgo(c.last_message_at)}</span>}
-                    </span>
-                    <span className={cn('list-preview truncate text-xs', c.unread ? 'text-foreground' : 'text-muted-foreground')}>
-                      {c.last_message ? `${c.last_message.mine ? 'You: ' : ''}${plainMentions(c.last_message.text) || 'Sent an attachment'}` : 'No messages yet'}
-                    </span>
-                  </span>
-                  <CountBadge count={c.unread} />
-                </Link>
-              </li>
-            ))}
-          </ul>
-        </Card>
-      )}
-      {saved && saved.length > 0 && (
-        <Section title="Saved messages">
-          <Card className="gap-0 p-1.5">
-            <ul className="flex flex-col">
-              {saved.map((m) => (
-                <li key={m.id}>
-                  <Link to={`/channels/${m.channel_id}?message=${m.parent_id ?? m.id}`} className="flex items-center gap-3 rounded-xl px-3 py-2.5 hover:bg-muted/60">
-                    <Avatar user={m.user} size="sm" />
-                    <span className="flex min-w-0 flex-1 flex-col text-sm">
-                      <strong className="font-medium">
-                        {m.user?.name} <span className="text-xs font-normal text-muted-foreground">in {m.channel_kind === 'dm' ? 'a direct message' : `#${m.channel_name}`}</span>
-                      </strong>
-                      <span className="truncate text-xs text-muted-foreground">{plainMentions(m.body).slice(0, 140)}</span>
-                    </span>
-                    <Icon name="bookmark" size={16} className="text-muted-foreground" />
-                  </Link>
-                </li>
-              ))}
-            </ul>
-          </Card>
-        </Section>
-      )}
+      <Card className="gap-0 p-2">
+        <ConversationList />
+      </Card>
     </Page>
   );
 }
@@ -397,8 +331,48 @@ function ScrollOnSend({ count }: { count: number }) {
   return null;
 }
 
+/**
+ * Inside the scroller: while you're reading further up, new messages from others don't move you — a button says how
+ * many arrived and takes you down to them. At the bottom it's the plain "go to the latest" arrow.
+ */
+function NewMessagesButton({ messages, myId }: { messages: Message[]; myId: string }) {
+  const { end } = useMessageScrollerScrollable();
+  const { scrollToEnd } = useMessageScroller();
+  const [count, setCount] = useState(0);
+  const seen = useRef(messages.length ? messages[messages.length - 1].id : null);
+  useEffect(() => {
+    const last = messages[messages.length - 1];
+    if (!last || last.id === seen.current) return;
+    const at = seen.current ? messages.findIndex((m) => m.id === seen.current) : -1;
+    const arrived = at >= 0 ? messages.slice(at + 1).filter((m) => m.user?.id !== myId).length : 0;
+    seen.current = last.id;
+    // `end` is true while there's more below, i.e. you've scrolled up.
+    if (end && arrived) setCount((c) => c + arrived);
+  }, [messages, myId, end]);
+  useEffect(() => {
+    if (!end) setCount(0);
+  }, [end]);
+  if (!count) return <MessageScrollerButton />;
+  return (
+    <Button
+      size="sm"
+      className="absolute bottom-4 left-1/2 z-10 -translate-x-1/2 rounded-full shadow-md motion-safe:animate-in motion-safe:fade-in-0 motion-safe:slide-in-from-bottom-2"
+      onClick={() => {
+        scrollToEnd({ behavior: 'smooth' });
+        setCount(0);
+      }}
+    >
+      <Icon name="chevronDown" data-icon="inline-start" /> {count} new message{count === 1 ? '' : 's'}
+    </Button>
+  );
+}
+
 export function ChannelView() {
   const { id } = useParams();
+  const { openSearch } = useShell();
+  // Wide screens keep the conversation list beside the open conversation (and beside a thread too, when there's room).
+  const wide = useMinWidth(1280);
+  const veryWide = useMinWidth(1536);
   const [params, setParams] = useSearchParams();
   const { me } = useSession();
   const act = useAction();
@@ -434,9 +408,18 @@ export function ChannelView() {
   // Where unread messages began when you opened the chat (or from where you marked it unread): a "New" line goes there.
   const [unread, setUnread] = useState<{ from: string; count: number } | null>(null);
   const load = async (before?: string) => {
-    const res = await api.get<{ messages: Message[]; has_more: boolean; last_read_at: string | null }>(`/channels/${id}/messages${qs({ before, limit: 50 })}`);
-    setHasMore(res.has_more);
-    setMessages((prev) => (before ? [...res.messages, ...prev] : res.messages));
+    type Page = { messages: Message[]; has_more: boolean; last_read_at: string | null };
+    const res = await api.get<Page>(`/channels/${id}/messages${qs({ before, limit: 50 })}`);
+    // Opening a link to an older message (from search, a forward or a copied link): load back until it's here.
+    let list = res.messages;
+    let more = res.has_more;
+    for (let pages = 0; !before && highlight && more && !list.some((m) => m.id === highlight) && pages < 10; pages++) {
+      const older = await api.get<Page>(`/channels/${id}/messages${qs({ before: list[0]?.created_at, limit: 100 })}`);
+      list = [...older.messages, ...list];
+      more = older.has_more;
+    }
+    setHasMore(more);
+    setMessages((prev) => (before ? [...list, ...prev] : list));
     setLoaded(true);
     if (!before && res.last_read_at) {
       const fresh = res.messages.filter((m) => m.created_at > res.last_read_at! && m.user?.id !== me!.user.id && !m.deleted);
@@ -490,6 +473,12 @@ export function ChannelView() {
     if (e.type === 'message.updated' && e.channelId === id) {
       refreshMessage(e.parentId ?? e.messageId);
     }
+    // Taken out of Saved (on this or another device).
+    if (e.type === 'message.removed' && e.channelId === id) {
+      if (e.parentId) refreshMessage(e.parentId);
+      else setMessages((prev) => prev.filter((m) => m.id !== e.messageId));
+      if (threadId === e.messageId) setThreadId(null);
+    }
     if (e.type === 'typing' && e.channelId === id) setTyping((t) => ({ ...t, [e.userId]: { name: e.name, at: Date.now() } }));
     if (e.type === 'channel.updated' && e.channelId === id) reloadChannel();
     if (e.type === 'reconnected') load();
@@ -536,12 +525,21 @@ export function ChannelView() {
     },
     pin: async (m: Message) => act(() => api.post(`/messages/${m.id}/pin`), m.pinned ? 'Unpinned' : 'Pinned to channel'),
     save: async (m: Message) => {
-      const res = await act(() => api.post<{ saved: boolean }>(`/messages/${m.id}/save`), m.saved ? 'Removed from saved' : 'Saved for later');
-      if (res) setMessages((prev) => prev.map((x) => (x.id === m.id ? { ...x, saved: res.saved } : x)));
+      const res = await act(() => api.post<{ saved: boolean; removed?: string; channel_id?: string }>(`/messages/${m.id}/save`));
+      if (!res) return;
+      if (res.saved) notify('Saved a copy to Saved', 'success', { action: { label: 'Open Saved', onClick: () => navigate(`/channels/${res.channel_id}`) } });
+      else notify('Removed from Saved', 'success');
+      setMessages((prev) => (res.removed ? prev.filter((x) => x.id !== res.removed) : prev).map((x) => (x.id === m.id ? { ...x, saved: res.saved } : x)));
     },
     edit: async (m: Message, body: string) => act(() => api.patch(`/messages/${m.id}`, { body })),
     remove: async (m: Message) => {
-      if (await confirm({ title: 'Delete this message?', confirmLabel: 'Delete', destructive: true })) await act(() => api.del(`/messages/${m.id}`), 'Message deleted');
+      const personal = !!channel?.personal;
+      const ok = await confirm(
+        personal
+          ? { title: 'Remove from Saved?', description: 'It’s deleted from your Saved for good. The original message isn’t affected.', confirmLabel: 'Remove', destructive: true }
+          : { title: 'Delete this message?', description: 'Copies people forwarded or saved stay as they are.', confirmLabel: 'Delete', destructive: true },
+      );
+      if (ok && (await act(() => api.del(`/messages/${m.id}`), personal ? 'Removed from Saved' : 'Message deleted')) && personal) setMessages((prev) => prev.filter((x) => x.id !== m.id));
     },
     ack: async (m: Message) => act(() => api.post(`/messages/${m.id}/ack`), 'Acknowledged'),
     reply: (m: Message) => setThreadId(m.id),
@@ -552,12 +550,37 @@ export function ChannelView() {
   if (error) return <ErrorState error={error} />;
   if (!channel) return <Loading />;
 
-  const dmName = channel.kind === 'dm' ? channel.members.filter((m) => m.id !== me!.user.id).map((m) => m.name).join(', ') || 'Just you' : channel.name;
+  const personal = !!channel.personal;
+  const dmName = personal ? 'Saved' : channel.kind === 'dm' ? channel.members.filter((m) => m.id !== me!.user.id).map((m) => m.name).join(', ') || 'Just you' : channel.name;
+  const notifySelect = (className?: string) =>
+    !personal && channel.joined ? (
+      <NativeSelect
+        size="sm"
+        className={className}
+        value={channel.notify}
+        aria-label="Notifications for this conversation"
+        onChange={async (e) => {
+          await act(() => api.patch(`/channels/${channel.id}/preferences`, { notify: e.target.value }), 'Notification preference saved');
+          reloadChannel();
+        }}
+      >
+        <NativeSelectOption value="all">All messages</NativeSelectOption>
+        <NativeSelectOption value="mentions">Mentions and replies</NativeSelectOption>
+        <NativeSelectOption value="none">Muted</NativeSelectOption>
+      </NativeSelect>
+    ) : null;
   const typingNames = Object.values(typing).map((t) => t.name);
 
   const panelOpen = !!threadId || !!panel;
+  const showList = panelOpen ? veryWide : wide;
   return (
     <div className="flex h-[calc(100dvh-3.5rem-4rem)] min-h-0 md:h-[calc(100dvh-3.5rem)]">
+      {/* On wide screens, every conversation stays one click away beside the open one. */}
+      {showList && (
+        <div className="flex w-72 shrink-0 flex-col overflow-y-auto border-r bg-background p-2">
+          <ConversationList activeId={id} compact />
+        </div>
+      )}
       {/* Keyed by chat, so switching chats starts each one at its latest message instead of where the last one was. */}
       <MessageScrollerProvider key={id} autoScroll defaultScrollPosition="end">
         <section className={cn('flex min-w-0 flex-1 flex-col', panelOpen && 'max-lg:hidden')} aria-label={`Conversation ${dmName}`}>
@@ -571,7 +594,7 @@ export function ChannelView() {
                 aria-label={`Details for ${channel.kind === 'dm' ? dmName : `#${channel.name}`}`}
                 className="absolute inset-0 rounded-xl outline-none"
               />
-              <span className="pointer-events-none flex size-8 shrink-0 items-center justify-center rounded-lg bg-secondary text-muted-foreground">
+              <span className={cn('pointer-events-none flex size-8 shrink-0 items-center justify-center rounded-lg', personal ? 'bg-primary/10 text-primary' : 'bg-secondary text-muted-foreground')}>
                 <Icon name={channelIcon(channel)} size={16} />
               </span>
               <div className="pointer-events-none flex min-w-0 flex-1 flex-col">
@@ -580,6 +603,8 @@ export function ChannelView() {
                   <Icon name="chevronRight" size={14} className="shrink-0 text-muted-foreground" />
                 </h1>
                 <p className="truncate text-xs text-muted-foreground">
+                  {personal && 'Only you can see this'}
+                  {channel.kind === 'dm' && !personal && channel.members.length > 2 && `${channel.members.length} people`}
                   {channel.project && (
                     <span className="inline-flex items-center gap-1">
                       <span className="size-2 rounded-full" style={{ background: `var(--c-${channel.project.color})` }} /> {channel.project.name}
@@ -591,40 +616,30 @@ export function ChannelView() {
               </div>
             </div>
             <div className="flex items-center gap-0.5">
+              <IconButton label="Search this conversation" size="icon-sm" onClick={() => openSearch('', { channelId: channel.id })}>
+                <Icon name="search" />
+              </IconButton>
               <FavoriteButton kind="channel" id={channel.id} />
+              {!personal && (
               <Hint label="Members">
-                <Button variant={panel === 'members' ? 'secondary' : 'ghost'} size="sm" onClick={() => setPanel(panel === 'members' ? null : 'members')} aria-label="Members">
+                <Button className="max-sm:hidden" variant={panel === 'members' ? 'secondary' : 'ghost'} size="sm" onClick={() => setPanel(panel === 'members' ? null : 'members')} aria-label="Members">
                   <Icon name="users" data-icon="inline-start" />
                   <span className="tabular-nums">{channel.members.length}</span>
                 </Button>
               </Hint>
-              <IconButton label="Pinned messages" variant={panel === 'pins' ? 'secondary' : 'ghost'} size="icon-sm" onClick={() => setPanel(panel === 'pins' ? null : 'pins')}>
+              )}
+              <IconButton label="Pinned messages" variant={panel === 'pins' ? 'secondary' : 'ghost'} size="icon-sm" className="max-sm:hidden" onClick={() => setPanel(panel === 'pins' ? null : 'pins')}>
                 <Icon name="pin" />
               </IconButton>
-              <IconButton label="Files" variant={panel === 'files' ? 'secondary' : 'ghost'} size="icon-sm" onClick={() => setPanel(panel === 'files' ? null : 'files')}>
+              <IconButton label="Files" variant={panel === 'files' ? 'secondary' : 'ghost'} size="icon-sm" className="max-sm:hidden" onClick={() => setPanel(panel === 'files' ? null : 'files')}>
                 <Icon name="paperclip" />
               </IconButton>
-              {channel.can_post && (
-                <IconButton label="Schedule a meeting" size="icon-sm" onClick={() => setMeeting(true)}>
+              {channel.can_post && !personal && (
+                <IconButton label="Schedule a meeting" size="icon-sm" className="max-sm:hidden" onClick={() => setMeeting(true)}>
                   <Icon name="video" />
                 </IconButton>
               )}
-              {channel.kind !== 'dm' && channel.joined && (
-                <NativeSelect
-                  size="sm"
-                  className="ml-1 max-sm:hidden"
-                  value={channel.notify}
-                  aria-label="Notification preference"
-                  onChange={async (e) => {
-                    await act(() => api.patch(`/channels/${channel.id}/preferences`, { notify: e.target.value }), 'Notification preference saved');
-                    reloadChannel();
-                  }}
-                >
-                  <NativeSelectOption value="all">All activity</NativeSelectOption>
-                  <NativeSelectOption value="mentions">Mentions only</NativeSelectOption>
-                  <NativeSelectOption value="none">Muted</NativeSelectOption>
-                </NativeSelect>
-              )}
+              {notifySelect('ml-1 max-md:hidden')}
             </div>
           </header>
 
@@ -661,9 +676,16 @@ export function ChannelView() {
                 <ScrollOnSend count={outgoing.length} />
                 {loaded && !messages.length && (
                   <MessageScrollerItem className="my-auto">
-                    <EmptyState icon={channelIcon(channel)} title={channel.kind === 'dm' ? `This is the start of your conversation` : `Welcome to #${channel.name}`}>
-                      {channel.topic || 'Say hello, share a file or record a decision.'}
-                    </EmptyState>
+                    {personal ? (
+                      <EmptyState icon="bookmark" title="Saved">
+                        Your space for notes, links, and messages you want to keep.
+                        <span className="mt-1 block text-xs">Choose “Save to Saved” or “Forward” on any message, or write a note below. Only you can see this.</span>
+                      </EmptyState>
+                    ) : (
+                      <EmptyState icon={channelIcon(channel)} title={channel.kind === 'dm' ? `This is the start of your conversation` : `Welcome to #${channel.name}`}>
+                        {channel.topic || 'Say hello, share a file or record a decision.'}
+                      </EmptyState>
+                    )}
                   </MessageScrollerItem>
                 )}
                 {!loaded && (
@@ -693,6 +715,7 @@ export function ChannelView() {
                         highlight={m.id === highlight}
                         isAnnouncement={channel.kind === 'announcement'}
                         canPost={channel.can_post}
+                        personal={personal}
                         actions={actions}
                         entering={fresh.has(m.id)}
                       />
@@ -710,7 +733,7 @@ export function ChannelView() {
                 })}
               </MessageScrollerContent>
             </MessageScrollerViewport>
-            <MessageScrollerButton />
+            <NewMessagesButton messages={messages} myId={me!.user.id} />
             {unread && unread.count > 4 && <JumpToUnread from={unread.from} count={unread.count} />}
           </MessageScroller>
           <div className="h-5 px-4 text-xs text-muted-foreground" aria-live="polite">
@@ -720,7 +743,7 @@ export function ChannelView() {
           {channel.can_post ? (
             <Composer
               channelId={channel.id}
-              placeholder={channel.kind === 'dm' ? `Message ${dmName}` : `Message #${channel.name}`}
+              placeholder={personal ? 'Write a note' : channel.kind === 'dm' ? `Message ${dmName}` : `Message #${channel.name}`}
               members={channel.members}
               onEditLast={() => {
                 // ↑ in an empty box: edit your last message here.
@@ -747,6 +770,7 @@ export function ChannelView() {
           actions={actions}
           isAnnouncement={channel.kind === 'announcement'}
           aiExcluded={channel.ai_excluded}
+          personal={personal}
         />
       )}
       {!threadId && panel && (
@@ -771,6 +795,7 @@ export function ChannelView() {
                   : undefined
               }
               settings={channel.can_manage && channel.kind !== 'dm' ? <ChannelSettings channel={channel} onSaved={reloadChannel} /> : null}
+              notifications={notifySelect('w-full')}
             />
           )}
           {panel === 'members' && (
@@ -814,11 +839,14 @@ export function ChannelView() {
       <Modal open={!!taskFrom} onClose={() => setTaskFrom(null)} title="Create a task from this message" eyebrow="Turn discussion into delivery">
         {taskFrom && (
           <>
-            <blockquote className="mb-4 border-l-2 border-primary/40 pl-3 text-sm text-muted-foreground">{plainMentions(taskFrom.body).slice(0, 300)}</blockquote>
+            <blockquote className="mb-2 border-l-2 border-primary/40 pl-3 text-sm text-muted-foreground">{plainMentions(taskFrom.body || taskFrom.forwarded?.body || '').slice(0, 300)}</blockquote>
+            <p className="mb-4 flex items-center gap-1.5 text-xs text-muted-foreground">
+              <Icon name="link" size={12} /> The task links back to this message. Only people who can open this conversation can follow the link.
+            </p>
             <NewTaskForm
               endpoint={`/messages/${taskFrom.id}/task`}
               projectId={channel.project?.id}
-              defaults={{ title: plainMentions(taskFrom.body).split('\n')[0].slice(0, 200) }}
+              defaults={{ title: plainMentions(taskFrom.body || taskFrom.forwarded?.body || '').split('\n')[0].slice(0, 200) }}
               onDone={() => setTaskFrom(null)}
             />
           </>
@@ -1066,6 +1094,7 @@ function ChannelOverview({
   onAddPeople,
   onLeave,
   settings,
+  notifications,
 }: {
   channel: ChannelDetail;
   name: string;
@@ -1073,7 +1102,10 @@ function ChannelOverview({
   onAddPeople?: () => void;
   onLeave?: () => void;
   settings: ReactNode;
+  /** The notification preference for this conversation. */
+  notifications?: ReactNode;
 }) {
+  const personal = !!channel.personal;
   const { data } = useApi<ChannelOverviewData>(`/channels/${channel.id}/overview`);
   const { data: files } = useApi<{ id: string; name: string; size: number; owner_name: string; created_at: string }[]>(`/channels/${channel.id}/files`);
   const shownMembers = channel.members.slice(0, 6);
@@ -1086,10 +1118,22 @@ function ChannelOverview({
           </span>
           <div className="flex min-w-0 flex-col">
             <strong className="truncate font-heading text-base">{name}</strong>
-            <span className="text-xs text-muted-foreground">{KIND_LABEL[channel.kind] ?? channel.kind}</span>
+            <span className="text-xs text-muted-foreground">{personal ? 'Private to you' : (KIND_LABEL[channel.kind] ?? channel.kind)}</span>
           </div>
         </div>
         {channel.topic && <p className="px-1 text-sm">{channel.topic}</p>}
+        {personal && (
+          <p className="px-1 text-sm text-muted-foreground">
+            Notes, files and copies of messages you saved. Nobody else can see Saved — not even admins. Saving keeps a copy for you; pinning shows a message to everyone in its conversation.
+          </p>
+        )}
+        {notifications && (
+          <label className="flex flex-col gap-1 px-1 pt-1 text-xs font-medium text-muted-foreground">
+            Notifications
+            {notifications}
+            <span className="font-normal">Unread counts are kept either way.</span>
+          </label>
+        )}
         {channel.project && (
           <Link to={`/projects/${channel.project.id}`} className="inline-flex items-center gap-1.5 self-start rounded-lg px-1 text-sm hover:underline">
             <span className="size-2 rounded-full" style={{ background: `var(--c-${channel.project.color})` }} /> {channel.project.name}
@@ -1102,6 +1146,7 @@ function ChannelOverview({
         )}
       </section>
 
+      {!personal && (
       <OverviewSection title="Members" count={channel.members.length} onAll={channel.members.length > shownMembers.length ? () => onOpen('members') : undefined}>
         <div className="flex flex-col">
           {shownMembers.map((m) => (
@@ -1118,6 +1163,7 @@ function ChannelOverview({
           </Button>
         )}
       </OverviewSection>
+      )}
 
       <OverviewSection title="Files" count={data?.file_count} onAll={(files?.length ?? 0) > 3 ? () => onOpen('files') : undefined}>
         {!files && <LoadingRows rows={2} />}
@@ -1143,6 +1189,7 @@ function ChannelOverview({
         ))}
       </OverviewSection>
 
+      {!personal && (
       <OverviewSection title="Meetings" count={data?.meetings.length}>
         {!data && <LoadingRows rows={1} />}
         {data && !data.meetings.length && <p className="px-1 text-sm text-muted-foreground">No meetings scheduled from here.</p>}
@@ -1156,6 +1203,7 @@ function ChannelOverview({
           </Link>
         ))}
       </OverviewSection>
+      )}
 
       <OverviewSection title="Pinned" count={data?.pin_count} onAll={data?.pin_count ? () => onOpen('pins') : undefined}>
         {data && !data.pin_count && <p className="px-1 text-sm text-muted-foreground">Nothing pinned.</p>}
@@ -1194,6 +1242,7 @@ const MessageItem = memo(function MessageItem({
   highlight,
   isAnnouncement,
   canPost,
+  personal = false,
   actions,
   inThread = false,
   entering = false,
@@ -1203,6 +1252,8 @@ const MessageItem = memo(function MessageItem({
   highlight?: boolean;
   isAnnouncement: boolean;
   canPost: boolean;
+  /** In your Saved: your notes are always yours to edit or remove. */
+  personal?: boolean;
   actions: Actions;
   inThread?: boolean;
   /** Arrived while the chat was open: glides in instead of popping in. */
@@ -1230,7 +1281,7 @@ const MessageItem = memo(function MessageItem({
   const mine = m.user?.id === me!.user.id;
   const isAdmin = me!.role === 'admin' || me!.role === 'owner';
   const policy = me!.workspace.message_edit_policy;
-  const canEdit = policy === 'author' ? mine : policy === 'admins' ? isAdmin : false;
+  const canEdit = (personal && mine) || (policy === 'author' ? mine : policy === 'admins' ? isAdmin : false);
 
   if (m.deleted) {
     return (
@@ -1442,19 +1493,35 @@ const MessageItem = memo(function MessageItem({
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end" className="min-w-52">
             <DropdownMenuGroup>
+              {!inThread && !m.parent_id && (
+                <DropdownMenuItem onClick={() => actions.reply(m)}>
+                  <Icon name="thread" /> Reply in thread
+                </DropdownMenuItem>
+              )}
               <DropdownMenuItem onClick={() => actions.forward(m)}>
-                <Icon name="forward" /> Forward
+                <Icon name="forward" /> Forward…
+              </DropdownMenuItem>
+              <DropdownMenuItem onClick={() => actions.save(m)}>
+                <Icon name="bookmark" />
+                <span className="flex flex-col">
+                  {personal ? 'Remove from Saved' : m.saved ? 'Remove from Saved' : 'Save to Saved'}
+                  {!personal && !m.saved && <span className="text-[11px] text-muted-foreground">A private copy, just for you</span>}
+                </span>
+              </DropdownMenuItem>
+              {canPost && !personal && (
+                <DropdownMenuItem onClick={() => actions.pin(m)}>
+                  <Icon name="pin" />
+                  <span className="flex flex-col">
+                    {m.pinned ? 'Unpin' : 'Pin to conversation'}
+                    {!m.pinned && <span className="text-[11px] text-muted-foreground">Everyone here can find it</span>}
+                  </span>
+                </DropdownMenuItem>
+              )}
+              <DropdownMenuItem onClick={() => actions.task(m)}>
+                <Icon name="task" /> Create task…
               </DropdownMenuItem>
               <DropdownMenuItem onClick={() => actions.decision(m)}>
                 <Icon name="gavel" /> Record decision
-              </DropdownMenuItem>
-              {canPost && (
-                <DropdownMenuItem onClick={() => actions.pin(m)}>
-                  <Icon name="pin" /> {m.pinned ? 'Unpin' : 'Pin to channel'}
-                </DropdownMenuItem>
-              )}
-              <DropdownMenuItem onClick={() => actions.save(m)}>
-                <Icon name="bookmark" /> {m.saved ? 'Remove from saved' : 'Save for later'}
               </DropdownMenuItem>
               <DropdownMenuItem onClick={() => setRemind(true)}>
                 <Icon name="clock" /> Remind me about this
@@ -1471,7 +1538,7 @@ const MessageItem = memo(function MessageItem({
                 <Icon name="link" /> Copy link
               </DropdownMenuItem>
             </DropdownMenuGroup>
-            {((canEdit && !poll) || canEdit || isAdmin) && (
+            {(canEdit || (isAdmin && !personal)) && (
               <>
                 <DropdownMenuSeparator />
                 <DropdownMenuGroup>
@@ -1485,9 +1552,9 @@ const MessageItem = memo(function MessageItem({
                       <Icon name="edit" /> Edit
                     </DropdownMenuItem>
                   )}
-                  {(canEdit || isAdmin) && (
+                  {(canEdit || (isAdmin && !personal)) && (
                     <DropdownMenuItem variant="destructive" onClick={() => actions.remove(m)}>
-                      <Icon name="trash" /> Delete
+                      <Icon name="trash" /> {personal ? 'Remove from Saved' : 'Delete'}
                     </DropdownMenuItem>
                   )}
                 </DropdownMenuGroup>
@@ -1496,7 +1563,12 @@ const MessageItem = memo(function MessageItem({
           </DropdownMenuContent>
         </DropdownMenu>
         {picker && (
-          <div className="absolute top-full right-0 z-20 mt-1 flex gap-0.5 rounded-xl border bg-popover p-1 shadow-md" role="group" aria-label="Pick a reaction">
+          <div
+            className="absolute top-full right-0 z-20 mt-1 flex gap-0.5 rounded-xl border bg-popover p-1 shadow-md"
+            role="group"
+            aria-label="Pick a reaction"
+            onKeyDown={(e) => e.key === 'Escape' && (e.stopPropagation(), setPicker(false))}
+          >
             {EMOJI.map((e) => (
               <button
                 key={e}
@@ -1601,6 +1673,7 @@ function ThreadPanel({
   actions,
   isAnnouncement,
   aiExcluded,
+  personal = false,
 }: {
   messageId: string;
   onClose: () => void;
@@ -1608,14 +1681,32 @@ function ThreadPanel({
   actions: Actions;
   isAnnouncement: boolean;
   aiExcluded: boolean;
+  personal?: boolean;
 }) {
-  const { data, error, reload } = useApi<{ root: Message; replies: Message[]; channel: { id: string; name: string } }>(`/messages/${messageId}/thread`);
+  const act = useAction();
+  const { data, error, reload } = useApi<{
+    root: Message;
+    replies: Message[];
+    channel: { id: string; name: string };
+    subscription?: { mode: 'follow' | 'mute' | null; following: boolean };
+  }>(`/messages/${messageId}/thread`);
+  const [subscription, setSubscription] = useState<{ mode: 'follow' | 'mute' | null; following: boolean } | null>(null);
+  useEffect(() => setSubscription(data?.subscription ?? null), [data?.subscription]);
+  const subscribe = async (mode: 'follow' | 'mute' | 'none', done: string) => {
+    const next = await act(() => api.put<{ mode: 'follow' | 'mute' | null; following: boolean }>(`/messages/${data!.root.id}/subscription`, { mode }), done);
+    if (next) setSubscription(next);
+  };
   const end = useRef<HTMLDivElement>(null);
   const outgoing = useOutbox(data?.root.channel_id, data?.root.id ?? null);
   useEffect(() => outbox.onDelivered((m) => m.parent_id === messageId && reload()), [messageId, reload]);
   useRealtime((e) => {
     if (e.type === 'message.created' && e.message.parent_id === data?.root.id) outbox.settle(e.message);
-    if ((e.type === 'message.created' && (e.message.parent_id === data?.root.id || e.message.id === data?.root.id)) || (e.type === 'message.updated' && data && (e.parentId === data.root.id || e.messageId === data.root.id))) reload();
+    if (
+      (e.type === 'message.created' && (e.message.parent_id === data?.root.id || e.message.id === data?.root.id)) ||
+      ((e.type === 'message.updated' || e.type === 'message.removed') && data && (e.parentId === data.root.id || e.messageId === data.root.id)) ||
+      e.type === 'reconnected'
+    )
+      reload();
   });
   useStayAtEnd(end, !!data, (data?.replies.length ?? 0) + outgoing.length);
   return (
@@ -1624,16 +1715,44 @@ function ThreadPanel({
       {!data && !error && <Loading />}
       {data && (
         <div className="flex min-h-0 flex-1 flex-col">
+          {subscription && !personal && (
+            <div className="mb-2 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+              <span className="min-w-0 flex-1">
+                {subscription.mode === 'mute' ? 'Muted: no notifications for new replies.' : subscription.following ? 'You’ll be notified about new replies.' : 'Not following: you won’t be notified about replies.'}
+              </span>
+              {subscription.mode === 'mute' ? (
+                <Button size="xs" variant="outline" onClick={() => subscribe('none', 'Thread unmuted')}>
+                  <Icon name="bell" data-icon="inline-start" /> Unmute
+                </Button>
+              ) : (
+                <>
+                  <Button
+                    size="xs"
+                    variant={subscription.following ? 'secondary' : 'outline'}
+                    aria-pressed={subscription.following}
+                    onClick={() => (subscription.following ? subscribe('mute', 'Stopped following') : subscribe('follow', 'Following this thread'))}
+                  >
+                    <Icon name={subscription.following ? 'check' : 'bell'} data-icon="inline-start" /> {subscription.following ? 'Following' : 'Follow'}
+                  </Button>
+                  {!subscription.following ? null : (
+                    <Button size="xs" variant="ghost" onClick={() => subscribe('mute', 'Thread muted')}>
+                      <Icon name="bellOff" data-icon="inline-start" /> Mute
+                    </Button>
+                  )}
+                </>
+              )}
+            </div>
+          )}
           {data.replies.length > 0 && <ThreadAi messageId={data.root.id} excluded={aiExcluded} />}
           <div className="flex flex-col">
-            <MessageItem message={data.root} grouped={false} isAnnouncement={isAnnouncement} canPost actions={actions} inThread />
+            <MessageItem message={data.root} grouped={false} isAnnouncement={isAnnouncement} canPost personal={personal} actions={actions} inThread />
             <Marker variant="separator" className="my-3">
               <MarkerContent>
                 {data.replies.length} repl{data.replies.length === 1 ? 'y' : 'ies'}
               </MarkerContent>
             </Marker>
             {data.replies.map((r) => (
-              <MessageItem key={r.id} message={r} grouped={false} isAnnouncement={false} canPost actions={actions} inThread />
+              <MessageItem key={r.id} message={r} grouped={false} isAnnouncement={false} canPost personal={personal} actions={actions} inThread />
             ))}
             {outgoing.map((o) => (
               <OutgoingMessage key={o.key} item={o} grouped={false} />
@@ -1671,6 +1790,50 @@ function DmAwayNotice({ members }: { members: { id: string }[] }) {
   );
 }
 
+/** A file in the message box: uploading (with progress), ready, or failed (with Retry). */
+interface Draftfile {
+  key: string;
+  name: string;
+  size: number;
+  status: 'uploading' | 'done' | 'failed';
+  progress: number;
+  id?: string;
+  error?: string;
+  preview?: string;
+  kind?: 'image' | 'video';
+  file?: File;
+}
+
+const MAX_ATTACHMENTS = 10;
+const COMPOSER_EMOJI = ['😀', '😂', '😊', '😍', '🤔', '😅', '😎', '🥳', '😢', '😮', '🙌', '👏', '👍', '👎', '🙏', '💪', '👀', '🔥', '🎉', '✅', '❌', '⚠️', '💡', '📌', '📎', '🚀', '❤️', '💯', '⏰', '☕', '🤝', '👋'];
+
+/** Upload one file with progress; `abort` cancels it. Never a public URL: the file is only readable through Küü's permission checks. */
+function uploadFile(file: File, channelId: string, onProgress: (fraction: number) => void) {
+  const xhr = new XMLHttpRequest();
+  const done = new Promise<{ id: string; name: string }>((resolve, reject) => {
+    xhr.upload.onprogress = (e) => e.lengthComputable && onProgress(e.loaded / e.total);
+    xhr.onload = () => {
+      let data: { id?: string; name?: string; error?: string; details?: { code?: string } } | null = null;
+      try {
+        data = JSON.parse(xhr.responseText);
+      } catch {
+        /* not JSON */
+      }
+      if (xhr.status >= 200 && xhr.status < 300 && data?.id) resolve({ id: data.id, name: data.name ?? file.name });
+      else reject(Object.assign(new Error(xhr.status === 413 ? 'This file is too large to upload' : data?.error || 'Upload failed'), { code: data?.details?.code }));
+    };
+    xhr.onerror = () => reject(new Error('Upload failed — check your connection'));
+    xhr.onabort = () => reject(Object.assign(new Error('Cancelled'), { cancelled: true }));
+  });
+  const form = new FormData();
+  form.append('file', file);
+  form.append('channelId', channelId);
+  xhr.open('POST', '/api/files');
+  xhr.withCredentials = true;
+  xhr.send(form);
+  return { done, abort: () => xhr.abort() };
+}
+
 function Composer({
   channelId,
   parentId,
@@ -1701,14 +1864,33 @@ function Composer({
   });
   const [mentions, setMentions] = useState<Record<string, string>>({});
   const [query, setQuery] = useState<string | null>(null);
-  const [files, setFiles] = useState<{ id: string; name: string; preview?: string; kind?: 'image' | 'video' }[]>([]);
+  const [active, setActive] = useState(0);
+  // Files already uploaded stay with the draft (they're kept on this device with its text).
+  const [files, setFiles] = useState<Draftfile[]>(() => {
+    try {
+      const saved = JSON.parse(localStorage.getItem(`${storageKey}.files`) ?? '[]') as { id: string; name: string; size: number }[];
+      return saved.map((f) => ({ ...f, key: f.id, status: 'done' as const, progress: 1 }));
+    } catch {
+      return [];
+    }
+  });
   const [urgent, setUrgent] = useState(false);
-  const [uploading, setUploading] = useState(false);
   const [later, setLater] = useState(false);
   const [polling, setPolling] = useState(false);
+  const [emoji, setEmoji] = useState(false);
+  const [dragging, setDragging] = useState(false);
+  const [formatting, setFormatting] = useState(() => {
+    try {
+      return localStorage.getItem('kuu:composer-formatting') === '1';
+    } catch {
+      return false;
+    }
+  });
   const ref = useRef<HTMLTextAreaElement>(null);
   const fileInput = useRef<HTMLInputElement>(null);
   const lastTyping = useRef(0);
+  const uploads = useRef(new Map<string, () => void>());
+  const listId = `mentions-${channelId}-${parentId ?? 'root'}`;
 
   useEffect(() => {
     try {
@@ -1718,6 +1900,25 @@ function Composer({
       /* ignore */
     }
   }, [text, storageKey]);
+  useEffect(() => {
+    try {
+      const ready = files.filter((f) => f.status === 'done' && f.id).map((f) => ({ id: f.id, name: f.name, size: f.size }));
+      if (ready.length) localStorage.setItem(`${storageKey}.files`, JSON.stringify(ready));
+      else localStorage.removeItem(`${storageKey}.files`);
+    } catch {
+      /* ignore */
+    }
+  }, [files, storageKey]);
+  // A tap anywhere else closes the emoji picker.
+  const emojiBox = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!emoji) return;
+    const onDown = (e: PointerEvent) => !emojiBox.current?.contains(e.target as Node) && !(e.target as Element).closest?.('[data-emoji-toggle]') && setEmoji(false);
+    document.addEventListener('pointerdown', onDown);
+    return () => document.removeEventListener('pointerdown', onDown);
+  }, [emoji]);
+  // Leaving the conversation cancels uploads still running.
+  useEffect(() => () => uploads.current.forEach((abort) => abort()), []);
 
   // "Edit" on a message that failed to send puts its text back here.
   useEffect(() => {
@@ -1744,6 +1945,7 @@ function Composer({
       .map((t) => ({ id: `team:${t.id}`, name: t.name, color: 'gold', team: true as const }));
     return [...found, ...groups, ...everyone].slice(0, 8);
   }, [query, members, people, teams]);
+  useEffect(() => setActive(0), [query]);
 
   const onChange = (value: string) => {
     setText(value);
@@ -1771,13 +1973,116 @@ function Composer({
     window.setTimeout(() => ref.current?.focus(), 0);
   };
 
+  /** Replace the selection (or insert at the caret) and put the caret where `caret` says, relative to the new text. */
+  const edit = (make: (selected: string) => { insert: string; select?: [number, number] }) => {
+    const el = ref.current;
+    const start = el?.selectionStart ?? text.length;
+    const end = el?.selectionEnd ?? text.length;
+    const { insert, select } = make(text.slice(start, end));
+    const next = text.slice(0, start) + insert + text.slice(end);
+    setText(next);
+    window.setTimeout(() => {
+      el?.focus();
+      const [a, b] = select ?? [insert.length, insert.length];
+      el?.setSelectionRange(start + a, start + b);
+    }, 0);
+  };
+  const wrap = (mark: string, fallback: string) =>
+    edit((sel) => {
+      const inner = sel || fallback;
+      return { insert: `${mark}${inner}${mark}`, select: [mark.length, mark.length + inner.length] };
+    });
+  const prefixLines = (numbered: boolean) =>
+    edit((sel) => {
+      const lines = (sel || 'List item').split('\n');
+      const insert = lines.map((l, i) => `${numbered ? `${i + 1}.` : '-'} ${l.replace(/^(\s*([-*]|\d+\.)\s+)/, '')}`).join('\n');
+      return { insert: (text && !text.endsWith('\n') && (ref.current?.selectionStart ?? 0) > 0 ? '\n' : '') + insert };
+    });
+  const FORMATS = [
+    { label: 'Bold', icon: 'bold', keys: 'Ctrl+B', run: () => wrap('**', 'bold text') },
+    { label: 'Italic', icon: 'italic', keys: 'Ctrl+I', run: () => wrap('_', 'italic text') },
+    { label: 'Inline code', icon: 'code', run: () => wrap('`', 'code') },
+    {
+      label: 'Code block',
+      icon: 'codeBlock',
+      run: () => edit((sel) => ({ insert: `\n\`\`\`\n${sel || 'code'}\n\`\`\`\n`, select: [5, 5 + (sel || 'code').length] })),
+    },
+    {
+      label: 'Link',
+      icon: 'link',
+      run: () =>
+        edit((sel) => {
+          const label = sel && !/^https?:\/\//.test(sel) ? sel : 'link text';
+          const url = sel && /^https?:\/\//.test(sel) ? sel : 'https://';
+          return { insert: `[${label}](${url})`, select: [label.length + 3, label.length + 3 + url.length] };
+        }),
+    },
+    { label: 'Bulleted list', icon: 'list', run: () => prefixLines(false) },
+    { label: 'Numbered list', icon: 'listOrdered', run: () => prefixLines(true) },
+    { label: 'Quote', icon: 'quote', run: () => edit((sel) => ({ insert: (sel || 'Quote').split('\n').map((l) => `> ${l}`).join('\n') })) },
+  ] as const;
+
+  const uploading = files.some((f) => f.status === 'uploading');
+  const failed = files.some((f) => f.status === 'failed');
+
+  const startUpload = (key: string, file: File) => {
+    const job = uploadFile(file, channelId, (progress) => setFiles((fs) => fs.map((f) => (f.key === key ? { ...f, progress } : f))));
+    uploads.current.set(key, job.abort);
+    job.done
+      .then((res) => setFiles((fs) => fs.map((f) => (f.key === key ? { ...f, status: 'done', progress: 1, id: res.id, name: res.name, file: undefined } : f))))
+      .catch((e: Error & { code?: string; cancelled?: boolean }) => {
+        if (e.cancelled) return;
+        if (e.code === 'plan_limit') notify(e.message, 'warning', { action: { label: 'See plans', onClick: () => window.dispatchEvent(new CustomEvent('kuu:see-plans')) } });
+        setFiles((fs) => fs.map((f) => (f.key === key ? { ...f, status: 'failed', error: e.message } : f)));
+      })
+      .finally(() => uploads.current.delete(key));
+  };
+
+  const addFiles = (list: FileList | File[]) => {
+    const incoming = [...list];
+    const room = MAX_ATTACHMENTS - files.length;
+    if (incoming.length > room) notify(`You can attach up to ${MAX_ATTACHMENTS} files to one message.`, 'warning');
+    const added: Draftfile[] = [];
+    for (const raw of incoming.slice(0, Math.max(0, room))) {
+      if (!raw.size) {
+        notify(`“${raw.name || 'That file'}” is empty.`, 'error');
+        continue;
+      }
+      // Pasted screenshots arrive as "image.png": give them a name that says what they are.
+      const file = raw.name && raw.name !== 'image.png' ? raw : new File([raw], `Pasted image ${new Date().toLocaleString().replace(/[/:]/g, '-')}.${(raw.type.split('/')[1] || 'png').replace('jpeg', 'jpg')}`, { type: raw.type });
+      const key = `f-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+      const preview = /^(image|video)\//.test(file.type) ? URL.createObjectURL(file) : undefined;
+      added.push({ key, name: file.name, size: file.size, status: 'uploading', progress: 0, preview, kind: file.type.startsWith('video/') ? 'video' : 'image', file });
+    }
+    if (!added.length) return;
+    setFiles((fs) => [...fs, ...added]);
+    for (const f of added) startUpload(f.key, f.file!);
+  };
+
+  const removeFile = (f: Draftfile) => {
+    uploads.current.get(f.key)?.();
+    if (f.preview) URL.revokeObjectURL(f.preview);
+    setFiles((fs) => fs.filter((x) => x.key !== f.key));
+  };
+  const retryFile = (f: Draftfile) => {
+    if (!f.file) return removeFile(f);
+    setFiles((fs) => fs.map((x) => (x.key === f.key ? { ...x, status: 'uploading', progress: 0, error: undefined } : x)));
+    startUpload(f.key, f.file);
+  };
+
   // The message shows in the chat at once (see outbox.ts) and the box is ready for the next one; a failed send
   // stays in the chat with Retry, so nothing typed is lost.
+  const ready = files.filter((f) => f.status === 'done' && f.id);
+  const canSend = (!!text.trim() || ready.length > 0) && !uploading && !failed;
   const send = () => {
-    if (!text.trim() && !files.length) return;
+    if (!canSend) {
+      if (uploading) notify('Wait for your files to finish uploading.', 'info');
+      else if (failed) notify('Retry or remove the files that didn’t upload.', 'info');
+      return;
+    }
     let body = text.trim();
     for (const [name, id] of Object.entries(mentions)) body = body.split(`@${name}`).join(`@[${name}](${id})`);
-    outbox.send({ channelId, parentId: parentId ?? null, body, fileIds: files.map((f) => f.id), fileNames: files.map((f) => f.name), urgent });
+    outbox.send({ channelId, parentId: parentId ?? null, body, fileIds: ready.map((f) => f.id!), fileNames: ready.map((f) => f.name), urgent });
     setText('');
     for (const f of files) if (f.preview) URL.revokeObjectURL(f.preview);
     setFiles([]);
@@ -1799,37 +2104,67 @@ function Composer({
     return ok;
   };
 
-  const upload = async (file: File) => {
-    setUploading(true);
-    const form = new FormData();
-    form.append('file', file);
-    form.append('channelId', channelId);
-    const res = await act(() => api.upload<{ id: string; name: string }>('/files', form));
-    setUploading(false);
-    // Show a preview of images and videos while the message is being written.
-    const preview = /^(image|video)\//.test(file.type) ? URL.createObjectURL(file) : undefined;
-    if (res) setFiles((f) => [...f, { id: res.id, name: res.name, preview, kind: file.type.startsWith('video/') ? 'video' : 'image' }]);
-    else if (preview) URL.revokeObjectURL(preview);
+  // Shift+Enter (or Enter when Enter doesn't send) on a list line starts the next item.
+  const continueList = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    const el = e.currentTarget;
+    const caret = el.selectionStart;
+    if (caret !== el.selectionEnd) return false;
+    const lineStart = text.lastIndexOf('\n', caret - 1) + 1;
+    const line = text.slice(lineStart, caret);
+    const m = line.match(/^(\s*)([-*]|(\d+)\.)\s(.*)$/);
+    if (!m) return false;
+    e.preventDefault();
+    // An empty item ends the list.
+    if (!m[4].trim()) {
+      setText(text.slice(0, lineStart) + text.slice(caret));
+      window.setTimeout(() => el.setSelectionRange(lineStart, lineStart), 0);
+      return true;
+    }
+    const bullet = m[3] ? `${Number(m[3]) + 1}.` : m[2];
+    const insert = `\n${m[1]}${bullet} `;
+    setText(text.slice(0, caret) + insert + text.slice(caret));
+    window.setTimeout(() => el.setSelectionRange(caret + insert.length, caret + insert.length), 0);
+    return true;
+  };
+
+  const toggleFormatting = () => {
+    setFormatting(!formatting);
+    try {
+      localStorage.setItem('kuu:composer-formatting', formatting ? '0' : '1');
+    } catch {
+      /* this visit only */
+    }
   };
 
   return (
     <div
       className="composer relative mx-3 mb-3 md:mx-4 md:mb-4"
+      onDragEnter={(e) => e.dataTransfer.types.includes('Files') && setDragging(true)}
       onDragOver={(e) => e.preventDefault()}
+      onDragLeave={(e) => !e.currentTarget.contains(e.relatedTarget as Node) && setDragging(false)}
       onDrop={(e) => {
         e.preventDefault();
-        const file = e.dataTransfer.files[0];
-        if (file) upload(file);
+        setDragging(false);
+        if (e.dataTransfer.files.length) addFiles(e.dataTransfer.files);
       }}
     >
+      {dragging && (
+        <div className="pointer-events-none absolute inset-0 z-30 flex items-center justify-center rounded-2xl border-2 border-dashed border-primary bg-background/90 text-sm font-medium text-primary" aria-hidden>
+          <Icon name="upload" size={16} className="mr-2" /> Drop files to attach
+        </div>
+      )}
       {candidates.length > 0 && (
-        <div className="absolute bottom-full left-0 z-20 mb-1 flex w-72 flex-col rounded-xl border bg-popover p-1 shadow-md" role="listbox" aria-label="Mention someone">
+        <div id={listId} className="absolute bottom-full left-0 z-20 mb-1 flex w-72 max-w-full flex-col rounded-xl border bg-popover p-1 shadow-md" role="listbox" aria-label="Mention someone">
           {candidates.map((p, i) => (
             <button
               key={p.id}
+              id={`${listId}-${i}`}
+              type="button"
               role="option"
-              aria-selected={i === 0}
-              className={cn('flex items-center gap-2 rounded-lg px-2 py-1.5 text-left text-sm hover:bg-muted', i === 0 && 'bg-muted')}
+              tabIndex={-1}
+              aria-selected={i === active}
+              className={cn('flex items-center gap-2 rounded-lg px-2 py-1.5 text-left text-sm hover:bg-muted', i === active && 'bg-muted')}
+              onMouseEnter={() => setActive(i)}
               onMouseDown={(e) => (e.preventDefault(), pick(p))}
             >
               {'hint' in p ? (
@@ -1850,6 +2185,30 @@ function Composer({
           ))}
         </div>
       )}
+      {emoji && (
+        <div
+          ref={emojiBox}
+          className="absolute right-0 bottom-full z-20 mb-1 grid w-72 max-w-full grid-cols-8 gap-0.5 rounded-xl border bg-popover p-1.5 shadow-md"
+          role="group"
+          aria-label="Insert an emoji"
+          onKeyDown={(e) => e.key === 'Escape' && (e.stopPropagation(), setEmoji(false), ref.current?.focus())}
+        >
+          {COMPOSER_EMOJI.map((em) => (
+            <button
+              key={em}
+              type="button"
+              className="flex aspect-square items-center justify-center rounded-lg text-lg hover:bg-muted focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
+              aria-label={`Insert ${em}`}
+              onClick={() => {
+                edit(() => ({ insert: em }));
+                setEmoji(false);
+              }}
+            >
+              {em}
+            </button>
+          ))}
+        </div>
+      )}
       {awayMentioned.length > 0 && (
         <p role="status" className="mb-1.5 flex items-start gap-1.5 px-1 text-xs text-muted-foreground">
           <Icon name="away" size={14} className="mt-px shrink-0" />
@@ -1859,10 +2218,19 @@ function Composer({
         </p>
       )}
       <InputGroup className="h-auto flex-col items-stretch rounded-2xl bg-card shadow-sm">
+        {formatting && (
+          <div className="flex w-full flex-wrap items-center gap-0.5 border-b px-1.5 py-1" role="toolbar" aria-label="Formatting">
+            {FORMATS.map((f) => (
+              <IconButton key={f.label} label={'keys' in f ? `${f.label} (${f.keys})` : f.label} size="icon-xs" onMouseDown={(e) => e.preventDefault()} onClick={f.run}>
+                <Icon name={f.icon} />
+              </IconButton>
+            ))}
+          </div>
+        )}
         {files.length > 0 && (
-          <AttachmentGroup className="pending-files px-2 pt-2">
+          <AttachmentGroup className="pending-files px-2 pt-2" aria-label="Attachments">
             {files.map((f) => (
-              <Attachment key={f.id} size="sm" state="done">
+              <Attachment key={f.key} size="sm" state={f.status === 'uploading' ? 'uploading' : f.status === 'failed' ? 'error' : 'done'}>
                 <AttachmentMedia variant={f.preview ? 'image' : 'icon'}>
                   {f.preview ? (
                     f.kind === 'video' ? (
@@ -1876,15 +2244,30 @@ function Composer({
                 </AttachmentMedia>
                 <AttachmentContent>
                   <AttachmentTitle>{f.name}</AttachmentTitle>
+                  <AttachmentDescription className={cn(f.status === 'failed' && 'text-destructive')}>
+                    {f.status === 'uploading' ? (
+                      <span role="progressbar" aria-label={`Uploading ${f.name}`} aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(f.progress * 100)}>
+                        Uploading… {Math.round(f.progress * 100)}%
+                      </span>
+                    ) : f.status === 'failed' ? (
+                      f.error
+                    ) : (
+                      bytes(f.size)
+                    )}
+                  </AttachmentDescription>
+                  {f.status === 'uploading' && (
+                    <span className="mt-1 block h-1 overflow-hidden rounded-full bg-muted" aria-hidden>
+                      <span className="block h-full bg-primary transition-[width]" style={{ width: `${Math.max(4, f.progress * 100)}%` }} />
+                    </span>
+                  )}
                 </AttachmentContent>
                 <AttachmentActions>
-                  <AttachmentAction
-                    aria-label={`Remove ${f.name}`}
-                    onClick={() => {
-                      if (f.preview) URL.revokeObjectURL(f.preview);
-                      setFiles(files.filter((x) => x.id !== f.id));
-                    }}
-                  >
+                  {f.status === 'failed' && f.file && (
+                    <AttachmentAction aria-label={`Retry ${f.name}`} onClick={() => retryFile(f)}>
+                      <Icon name="refresh" />
+                    </AttachmentAction>
+                  )}
+                  <AttachmentAction aria-label={f.status === 'uploading' ? `Cancel uploading ${f.name}` : `Remove ${f.name}`} onClick={() => removeFile(f)}>
                     <Icon name="x" />
                   </AttachmentAction>
                 </AttachmentActions>
@@ -1898,22 +2281,51 @@ function Composer({
           rows={Math.min(8, Math.max(1, text.split('\n').length))}
           placeholder={placeholder}
           aria-label={placeholder}
+          aria-describedby={`${listId}-hint`}
+          aria-autocomplete="list"
+          aria-controls={candidates.length ? listId : undefined}
+          aria-activedescendant={candidates.length ? `${listId}-${active}` : undefined}
           className="max-h-60 min-h-11 resize-none"
           onChange={(e) => onChange(e.target.value)}
+          onPaste={(e) => {
+            const pasted = [...e.clipboardData.files];
+            if (pasted.length) {
+              e.preventDefault();
+              addFiles(pasted);
+            }
+          }}
           onKeyDown={(e) => {
-            if (e.key === 'Enter' && !(e.nativeEvent as KeyboardEvent).isComposing) {
-              if (candidates.length && !e.shiftKey) {
+            if (candidates.length) {
+              if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
                 e.preventDefault();
-                pick(candidates[0]);
+                setActive((a) => (a + (e.key === 'ArrowDown' ? 1 : candidates.length - 1)) % candidates.length);
                 return;
               }
+              if ((e.key === 'Enter' && !e.shiftKey) || e.key === 'Tab') {
+                e.preventDefault();
+                pick(candidates[active] ?? candidates[0]);
+                return;
+              }
+            }
+            if ((e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey && (e.key === 'b' || e.key === 'i')) {
+              e.preventDefault();
+              if (e.key === 'b') wrap('**', 'bold text');
+              else wrap('_', 'italic text');
+              return;
+            }
+            if (e.key === 'Enter' && !(e.nativeEvent as KeyboardEvent).isComposing) {
               // Ctrl/⌘+Enter always sends; plain Enter sends only when "Enter to send" is on. Otherwise Enter is a new line.
               if (e.ctrlKey || e.metaKey || (enterSends && !e.shiftKey)) {
                 e.preventDefault();
                 send();
+                return;
               }
+              continueList(e);
             }
-            if (e.key === 'Escape') setQuery(null);
+            if (e.key === 'Escape') {
+              setQuery(null);
+              setEmoji(false);
+            }
             if (e.key === 'ArrowUp' && !text && !candidates.length && onEditLast && !e.shiftKey && !e.altKey && !e.ctrlKey && !e.metaKey) {
               e.preventDefault();
               onEditLast();
@@ -1922,16 +2334,31 @@ function Composer({
         />
         {/* The tools wrap onto a second line on narrow screens; the send button always stays in view. */}
         <InputGroupAddon align="block-end" className="flex-wrap gap-1 border-t">
-          <IconButton label="Attach a file" size="icon-xs" onClick={() => fileInput.current?.click()} disabled={uploading}>
-            {uploading ? <Spinner /> : <Icon name="paperclip" />}
+          <IconButton label="Attach files" size="icon-xs" onClick={() => fileInput.current?.click()} disabled={files.length >= MAX_ATTACHMENTS}>
+            <Icon name="paperclip" />
           </IconButton>
-          <input ref={fileInput} type="file" hidden onChange={(e) => e.target.files?.[0] && (upload(e.target.files[0]), (e.target.value = ''))} />
-          <VoiceNoteButton onRecorded={upload} disabled={uploading} />
-          <IconButton label="Create a poll" size="icon-xs" onClick={() => setPolling(true)}>
-            <Icon name="poll" />
+          <input
+            ref={fileInput}
+            type="file"
+            multiple
+            hidden
+            onChange={(e) => {
+              if (e.target.files?.length) addFiles(e.target.files);
+              e.target.value = '';
+            }}
+          />
+          <IconButton label={formatting ? 'Hide formatting' : 'Show formatting'} size="icon-xs" variant={formatting ? 'secondary' : 'ghost'} aria-pressed={formatting} onClick={toggleFormatting}>
+            <Icon name="type" />
+          </IconButton>
+          <IconButton label="Insert an emoji" size="icon-xs" variant={emoji ? 'secondary' : 'ghost'} aria-expanded={emoji} data-emoji-toggle onClick={() => setEmoji(!emoji)}>
+            <Icon name="smile" />
           </IconButton>
           <IconButton label="Mention someone" size="icon-xs" onClick={() => onChange(`${text}${text && !text.endsWith(' ') ? ' ' : ''}@`)}>
             <span className="text-sm font-semibold">@</span>
+          </IconButton>
+          <VoiceNoteButton onRecorded={(file) => addFiles([file])} disabled={files.length >= MAX_ATTACHMENTS} />
+          <IconButton label="Create a poll" size="icon-xs" onClick={() => setPolling(true)}>
+            <Icon name="poll" />
           </IconButton>
           <Separator orientation="vertical" className="mx-1 h-4" />
           <Label className={cn('h-6 gap-1.5 rounded-md px-1.5 text-xs font-normal', urgent && 'bg-destructive/10 text-destructive')} title="Urgent messages break through quiet hours and focus time">
@@ -1940,13 +2367,15 @@ function Composer({
           <Label className="h-6 gap-1.5 px-1.5 text-xs font-normal" title={enterSends ? 'Shift+Enter starts a new line' : 'Ctrl+Enter (⌘+Enter on a Mac) sends'}>
             <Checkbox checked={enterSends} onCheckedChange={(checked) => setEnterSends(checked)} /> Enter to send
           </Label>
-          <span className="truncate text-xs text-muted-foreground max-lg:hidden">{enterSends ? 'Shift+Enter for a new line' : 'Ctrl+Enter to send'} · **bold**, *italic*, `code`</span>
+          <span id={`${listId}-hint`} className="truncate text-xs text-muted-foreground max-md:sr-only">
+            {enterSends ? 'Shift+Enter for a new line' : 'Ctrl+Enter to send'}
+          </span>
           <span className="ml-auto flex items-center gap-1">
             <IconButton label={files.length ? 'Attachments cannot be scheduled' : 'Send later'} size="icon-xs" onClick={() => setLater(true)} disabled={!text.trim() || files.length > 0}>
               <Icon name="clock" />
             </IconButton>
-            <InputGroupButton variant="default" size="icon-sm" className="send rounded-xl" onClick={send} disabled={uploading || (!text.trim() && !files.length)} aria-label="Send">
-              <Icon name="send" />
+            <InputGroupButton variant="default" size="icon-sm" className="send rounded-xl" onClick={send} disabled={!canSend} aria-label={uploading ? 'Send (waiting for uploads)' : 'Send'}>
+              {uploading ? <Spinner /> : <Icon name="send" />}
             </InputGroupButton>
           </span>
         </InputGroupAddon>

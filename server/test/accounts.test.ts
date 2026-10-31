@@ -16,6 +16,7 @@ async function populate(owner: Awaited<ReturnType<typeof registerOwner>>, member
   await a.post(`/api/messages/${reply.id}/reactions`).send({ emoji: '👍' });
   await a.post(`/api/messages/${root.id}/pin`);
   await member.agent.post(`/api/messages/${root.id}/save`);
+  await member.agent.put(`/api/messages/${root.id}/subscription`).send({ mode: 'follow' });
   const project = (await a.post('/api/projects').send({ name: 'Launch', memberIds: [member.id] })).body;
   await a.post(`/api/projects/${project.id}/milestones`).send({ name: 'Beta', dueDate: day(10) });
   await a.post(`/api/projects/${project.id}/risks`).send({ title: 'Vendor delay', likelihood: 'medium', impact: 'high' });
@@ -53,7 +54,7 @@ describe('deleting a workspace', () => {
     const stored = () => readdirSync(uploads).filter((f) => f !== 'incoming');
     expect(stored().length).toBe(2);
 
-    for (const table of ['meetings', 'decisions', 'risks', 'automations', 'reminders', 'scheduled_messages', 'requests', 'page_versions', 'task_dependencies', 'status_updates', 'milestones', 'reactions', 'saved_messages', 'teams', 'invitations', 'notifications', 'checklist_items', 'task_comments']) {
+    for (const table of ['meetings', 'decisions', 'risks', 'automations', 'reminders', 'scheduled_messages', 'requests', 'page_versions', 'task_dependencies', 'status_updates', 'milestones', 'reactions', 'thread_subscriptions', 'teams', 'invitations', 'notifications', 'checklist_items', 'task_comments']) {
       expect([table, (await db().get(`SELECT COUNT(*) AS n FROM ${table}`))!.n]).not.toEqual([table, 0]);
     }
     // Wrong password, wrong name, and non-owners are refused.
@@ -72,7 +73,7 @@ describe('deleting a workspace', () => {
     ).map((t) => t.name);
     for (const table of tables) expect([table, (await db().get(`SELECT COUNT(*) AS n FROM ${table} WHERE workspace_id = ?`, wsId))!.n]).toEqual([table, 0]);
     // Child tables without a workspace_id column cascade too (the other workspace has none of these rows).
-    for (const table of ['messages', 'status_updates', 'page_versions', 'task_dependencies', 'checklist_items', 'task_comments', 'reactions', 'saved_messages', 'milestones', 'meeting_participants', 'automation_runs', 'team_members']) {
+    for (const table of ['messages', 'status_updates', 'page_versions', 'task_dependencies', 'checklist_items', 'task_comments', 'reactions', 'thread_subscriptions', 'milestones', 'meeting_participants', 'automation_runs', 'team_members']) {
       expect([table, (await db().get(`SELECT COUNT(*) AS n FROM ${table}`))!.n]).toEqual([table, 0]);
     }
     expect((await db().get('SELECT COUNT(*) AS n FROM file_versions'))!.n).toBe(0);

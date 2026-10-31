@@ -24,7 +24,7 @@ import type { Row } from '../db.js';
 import { resetPageIfDiverged } from '../collab.js';
 import { extractText } from '../extract.js';
 import { scanUpload } from '../scanner.js';
-import { audit, authOf, notify, recordActivity, userSummary, type Ctx } from '../context.js';
+import { audit, authOf, notify, recordActivity, removeUnusedStorage, userSummary, type Ctx } from '../context.js';
 import { emitEvent } from '../webhooks.js';
 import { HttpError, badRequest, forbidden, newId, notFound, now, parse, parsePatch, today, filterAsync } from '../util.js';
 import { requireStorage, withQuotaLock } from '../plans.js';
@@ -725,12 +725,13 @@ export function knowledgeRouter(ctx: Ctx) {
       throw forbidden('This workspace is under a legal hold, so files can’t be deleted. You can archive it instead.');
     }
     const versions = await db.all('SELECT storage_key, size FROM file_versions WHERE file_id = ?', file.id);
-    const freed = versions.reduce((n, v) => n + Number(v.size || 0), 0);
     await db.transaction(async () => {
       await db.run('DELETE FROM file_versions WHERE file_id = ?', file.id);
       await db.run('DELETE FROM files WHERE id = ?', file.id);
     });
-    for (const v of versions) await ctx.files.remove(v.storage_key).catch((error) => console.error('Could not remove stored file', v.storage_key, error));
+    // Forwarded copies share stored bytes with the original: keep them while any other file still uses them.
+    const removed = new Set(await removeUnusedStorage(ctx, versions.map((v) => v.storage_key)));
+    const freed = [...new Map(versions.filter((v) => removed.has(v.storage_key)).map((v) => [v.storage_key, Number(v.size || 0)])).values()].reduce((n, b) => n + b, 0);
     await audit(ctx, auth.workspaceId, auth.userId, 'file.deleted', 'file', file.id, { name: file.name, versions: versions.length, bytes: freed });
     res.json({ ok: true, freed_bytes: freed });
   });

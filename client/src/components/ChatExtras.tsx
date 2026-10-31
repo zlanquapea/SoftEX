@@ -1,18 +1,21 @@
 import { useEffect, useRef, useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { api, type Channel, type ForwardedMessage, type Message, type MessagePoll } from '../api';
-import { timeAgo } from '../format';
+import { bytes, timeOf } from '../format';
 import { useApi } from '../hooks';
 import { useSession } from '../session';
+import { Avatar } from './Avatar';
 import { Icon } from './Icon';
 import { Markdown } from './Markdown';
-import { CheckboxField, FormField, IconButton, Modal, notify, useAction } from '@/components/kit';
+import { CheckboxField, FormField, IconButton, Modal, notify, SearchField, useAction } from '@/components/kit';
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card';
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { Spinner } from '@/components/ui/spinner';
+import { Textarea } from '@/components/ui/textarea';
 
 // ---------- Polls ----------
 
@@ -159,76 +162,161 @@ export function PollModal({ open, onClose, channelId, parentId, onSent }: { open
 
 export type Forwarded = ForwardedMessage;
 
+/** Where a forward came from, in words: a channel's name, "Saved", or "a direct message". */
+function sourceLabel(s: NonNullable<Forwarded['source']>) {
+  if (s.personal) return 'Saved';
+  if (s.kind === 'dm') return 'a direct message';
+  return `#${s.channel_name}`;
+}
+
+/**
+ * A forwarded copy inside a message: who wrote the original and when, what it said then, and (only for people who
+ * can open it) a link back to where it came from.
+ */
 export function ForwardedQuote({ f }: { f: Forwarded }) {
   if (f.deleted) return <blockquote className="forwarded my-1 border-l-2 pl-3 text-sm text-muted-foreground">Forwarded message was deleted.</blockquote>;
   return (
-    <blockquote className="forwarded my-1 flex flex-col gap-1 border-l-2 border-primary/40 pl-3">
-      <span className="flex flex-wrap items-center gap-1 text-xs text-muted-foreground">
-        <Icon name="forward" size={12} /> Forwarded from <strong className="font-medium text-foreground">{f.user?.name}</strong>
-        {f.channel_name && (
+    <blockquote className="forwarded my-1 flex max-w-full flex-col gap-1 rounded-r-xl border-l-2 border-primary/40 bg-muted/40 py-1.5 pr-3 pl-3">
+      <span className="flex flex-wrap items-center gap-x-1 gap-y-0.5 text-xs text-muted-foreground">
+        <Icon name="forward" size={12} aria-hidden />
+        <span className="sr-only">Forwarded message.</span>
+        <span aria-hidden>Forwarded ·</span>
+        <strong className="font-medium text-foreground">{f.user?.name}</strong>
+        {f.created_at && (
+          <time dateTime={f.created_at} title={new Date(f.created_at).toLocaleString()}>
+            · {new Date(f.created_at).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })} {timeOf(f.created_at)}
+          </time>
+        )}
+        {f.source && (
           <>
             {' '}
-            in{' '}
-            <Link className="text-primary hover:underline" to={`/channels/${f.channel_id}?message=${f.id}`}>
-              #{f.channel_name}
+            · from{' '}
+            <Link className="text-primary underline-offset-2 hover:underline" to={`/channels/${f.source.channel_id}?message=${f.source.message_id}`}>
+              {sourceLabel(f.source)}
             </Link>
           </>
-        )}{' '}
-        · {timeAgo(f.created_at)}
+        )}
       </span>
-      <Markdown text={f.body ?? ''} compact />
+      {f.body ? <Markdown text={f.body} compact /> : <span className="text-xs text-muted-foreground italic">Attachment only</span>}
+      {(f.original_edited || f.original_deleted) && (
+        <span className="text-[11px] text-muted-foreground">{f.original_deleted ? 'The original has since been deleted; this copy stays.' : 'The original has been edited since this was forwarded.'}</span>
+      )}
     </blockquote>
   );
 }
 
+interface ForwardTarget {
+  id: string;
+  name: string;
+  kind: Channel['kind'];
+  personal: boolean;
+  members?: { id: string; name: string; color: string }[];
+}
+
+const newClientId = () => (typeof crypto !== 'undefined' && 'randomUUID' in crypto ? crypto.randomUUID() : `f-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`);
+
+/**
+ * Forward a copy of a message: pick where (Saved, a direct message, or a channel you can post in), add a note if you
+ * like, check the preview, and send. Nothing is sent until Send is pressed.
+ */
 export function ForwardModal({ message, onClose }: { message: Message | null; onClose: () => void }) {
   const act = useAction();
-  const { data: channels } = useApi<Channel[]>(message ? '/channels' : null);
+  const navigate = useNavigate();
+  const { data: targets, error } = useApi<ForwardTarget[]>(message ? '/forward-targets' : null);
   const [target, setTarget] = useState('');
   const [comment, setComment] = useState('');
   const [q, setQ] = useState('');
+  const [sending, setSending] = useState(false);
+  // One id per attempt to forward, so pressing Send twice (or retrying after a lost answer) sends it once.
+  const clientId = useRef(newClientId());
   useEffect(() => {
     setTarget('');
     setComment('');
     setQ('');
+    clientId.current = newClientId();
   }, [message?.id]);
-  const { me } = useSession();
-  const label = (c: Channel) =>
-    c.kind === 'dm' ? c.members?.filter((m) => m.id !== me!.user.id).map((m) => m.name).join(', ') || 'Direct message' : `#${c.name}`;
-  const options = (channels ?? []).filter((c) => (c.kind === 'dm' || c.joined) && (!q || label(c).toLowerCase().includes(q.toLowerCase())));
+  const label = (c: ForwardTarget) => (c.personal ? 'Saved' : c.kind === 'dm' ? c.members?.map((m) => m.name).join(', ') || 'Direct message' : `#${c.name}`);
+  const options = (targets ?? []).filter((c) => !q || label(c).toLowerCase().includes(q.trim().toLowerCase()));
+  const chosen = targets?.find((t) => t.id === target);
+  // What will be copied: a forward of a forward copies the original.
+  const original = message?.forwarded && !message.forwarded.deleted ? { user: message.forwarded.user?.name, body: message.forwarded.body ?? '', at: message.forwarded.created_at } : { user: message?.user?.name, body: message?.body ?? '', at: message?.created_at };
   return (
-    <Modal open={!!message} onClose={onClose} title="Forward message">
+    <Modal open={!!message} onClose={onClose} title="Forward message" description="Send a copy to Saved, a person, or a channel.">
       {message && (
         <form
           className="flex flex-col gap-3"
           onSubmit={async (e) => {
             e.preventDefault();
-            const ok = await act(() => api.post(`/messages/${message.id}/forward`, { channelId: target, comment }), 'Message forwarded');
-            if (ok) onClose();
+            if (!target || sending) return;
+            setSending(true);
+            const sent = await act(
+              () => api.post<Message>(`/messages/${message.id}/forward`, { channelId: target, comment: comment.trim(), clientId: clientId.current }),
+              chosen?.personal ? undefined : `Forwarded to ${chosen ? label(chosen) : 'the conversation'}`,
+            );
+            setSending(false);
+            if (sent) {
+              onClose();
+              if (chosen?.personal) notify('Saved a copy', 'success', { action: { label: 'Open Saved', onClick: () => navigate(`/channels/${sent.channel_id}`) } });
+            }
           }}
         >
-          <Input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Find a channel or conversation" aria-label="Find a channel" />
-          <RadioGroup value={target} onValueChange={(v) => setTarget(v as string)} aria-label="Forward to" className="forward-targets max-h-60 gap-1 overflow-y-auto rounded-xl border p-1">
-            {options.slice(0, 30).map((c) => (
-              <Label key={c.id} className={cn('flex cursor-pointer items-center gap-2.5 rounded-lg px-2 py-2 font-normal hover:bg-muted', target === c.id && 'bg-accent')}>
+          <SearchField value={q} onChange={setQ} placeholder="Find a person or channel" aria-label="Search destinations" className="max-w-none" autoFocus />
+          <RadioGroup
+            value={target}
+            onValueChange={(v) => setTarget(v as string)}
+            aria-label="Forward to"
+            className="forward-targets max-h-56 grid-cols-[minmax(0,1fr)] gap-0.5 overflow-y-auto rounded-xl border p-1"
+            tabIndex={0}
+          >
+            {error && <p className="p-3 text-sm text-destructive">Couldn’t load where you can forward to.</p>}
+            {!targets && !error && <p className="p-3 text-sm text-muted-foreground">Loading…</p>}
+            {targets && !options.length && <p className="p-3 text-sm text-muted-foreground">No conversation you can post in matches “{q}”.</p>}
+            {options.slice(0, 50).map((c) => (
+              <Label key={c.id} className={cn('flex min-h-10 w-full min-w-0 cursor-pointer items-center gap-2.5 rounded-lg px-2 py-1.5 font-normal hover:bg-muted', target === c.id && 'bg-accent')}>
                 <RadioGroupItem value={c.id} />
-                <Icon name={c.kind === 'dm' ? 'chat' : c.kind === 'private' ? 'lock' : 'hash'} size={14} className="text-muted-foreground" /> <span className="truncate">{label(c)}</span>
+                {c.kind === 'dm' && !c.personal && c.members?.length === 1 ? (
+                  <Avatar user={c.members[0]} size="xs" />
+                ) : (
+                  <Icon name={c.personal ? 'bookmark' : c.kind === 'dm' ? 'users' : c.kind === 'private' ? 'lock' : 'hash'} size={14} className="text-muted-foreground" />
+                )}
+                <span className="min-w-0 flex-1 truncate">{label(c)}</span>
+                {c.personal && <span className="shrink-0 text-xs text-muted-foreground">Only you</span>}
+                {c.kind === 'private' && <span className="shrink-0 text-xs text-muted-foreground">Private</span>}
               </Label>
             ))}
           </RadioGroup>
           <FormField label="Add a note (optional)">
-            <Input value={comment} onChange={(e) => setComment(e.target.value)} maxLength={10000} />
+            <Textarea value={comment} onChange={(e) => setComment(e.target.value)} maxLength={10000} rows={2} placeholder="Why you’re sharing this" />
           </FormField>
-          <blockquote className="flex flex-col gap-1 rounded-xl border-l-2 border-primary/40 bg-muted/50 py-2 pr-3 pl-3">
-            <span className="text-xs text-muted-foreground">{message.user?.name}</span>
-            <Markdown text={message.body} compact />
-          </blockquote>
+          <div className="flex flex-col gap-1.5">
+            <span className="text-xs font-medium text-muted-foreground">Preview</span>
+            <blockquote className="flex max-h-40 flex-col gap-1 overflow-y-auto rounded-xl border-l-2 border-primary/40 bg-muted/50 py-2 pr-3 pl-3" tabIndex={0} aria-label="Message being forwarded">
+              <span className="text-xs text-muted-foreground">
+                <strong className="font-medium text-foreground">{original.user}</strong>
+                {original.at && ` · ${new Date(original.at).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}`}
+              </span>
+              {original.body ? <Markdown text={original.body} compact /> : null}
+              {message.files.length > 0 && (
+                <ul className="flex flex-wrap gap-1.5 pt-1" aria-label="Attachments">
+                  {message.files.map((f) => (
+                    <li key={f.id} className="inline-flex items-center gap-1 rounded-md border bg-background px-1.5 py-0.5 text-xs">
+                      <Icon name="paperclip" size={12} /> <span className="max-w-40 truncate">{f.name}</span> <span className="text-muted-foreground">{bytes(f.size)}</span>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </blockquote>
+          </div>
+          <p className="text-xs text-muted-foreground">
+            This sends a copy. It keeps the original author and time{message.files.length ? ', and its attachments' : ''}, and stays even if the original is edited or deleted
+            (until your workspace’s retention settings remove it). People who can’t open the original won’t see where it came from.
+          </p>
           <div className="flex flex-wrap items-center justify-end gap-2">
             <Button variant="outline" type="button" onClick={onClose}>
               Cancel
             </Button>
-            <Button disabled={!target} type="submit">
-              Forward
+            <Button disabled={!target || sending} type="submit">
+              {sending ? <Spinner data-icon="inline-start" /> : <Icon name="send" data-icon="inline-start" />} Send
             </Button>
           </div>
         </form>

@@ -609,12 +609,21 @@ export function tasksRouter(ctx: Ctx) {
     if (!message || message.deleted_at) throw notFound('Message');
     const channel = await loadChannel(db, auth, message.channel_id);
     const body = parse(TaskInput.partial({ title: true }), req.body);
-    const plain = message.body.replace(/@\[([^\]]+)\]\((?:team:)?[0-9a-f-]{36}\)/g, '@$1');
+    // A forwarded copy's own text may be just a note (or nothing): use what the original said.
+    let text = message.body;
+    if (!text.trim() && message.forward_snapshot) {
+      try {
+        text = String(JSON.parse(message.forward_snapshot).body ?? '');
+      } catch {
+        /* keep the note */
+      }
+    }
+    const plain = text.replace(/@\[([^\]]+)\]\((?:team:)?[0-9a-f-]{36}\)/g, '@$1');
     const input = parse(TaskInput, {
       ...req.body,
       title: body.title ?? (plain.split('\n')[0].slice(0, 200) || 'Follow up'),
       projectId: body.projectId === undefined ? channel.project_id : body.projectId,
-      description: body.description || `From a message in ${channel.kind === 'dm' ? 'a direct message' : `#${channel.name}`}:\n\n> ${plain}`,
+      description: body.description || `From a message in ${channel.personal ? 'Saved' : channel.kind === 'dm' ? 'a direct message' : `#${channel.name}`}:\n\n> ${plain}`,
       sourceMessageId: message.id,
     });
     const id = await createTask(auth, input);
