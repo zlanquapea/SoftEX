@@ -134,7 +134,8 @@ describe('upgrade signals and usage warnings', () => {
     const owner = await verifiedOwner();
     const wsId = owner.me.workspace.id;
     for (let i = 0; i < 3; i++) await invite(env, owner.agent);
-    await db().run(`UPDATE workspaces SET plan = 'free', paid_through = NULL, trial_ends_at = NULL WHERE id = ?`, wsId);
+    // A workspace from before the 2026-11 packaging keeps the original Free allowance of 5 members.
+    await db().run(`UPDATE workspaces SET plan = 'free', plan_version = 'v1', paid_through = NULL, trial_ends_at = NULL WHERE id = ?`, wsId);
     // 4 of 5 members = 80%.
     await processBillingNotices(env.softex.ctx);
     expect(await processBillingNotices(env.softex.ctx)).toBe(0);

@@ -12,11 +12,18 @@ test('sign up on a hosted server: trial, pricing and billing', async ({ page }) 
   await expect(page.getByRole('heading', { level: 1, name: 'Privacy Policy' })).toBeVisible();
   await page.goto('/pricing');
   await expect(page.getByRole('heading', { name: /one simple price/ })).toBeVisible();
-  // One flat price per workspace; larger organisations get a quote.
-  await expect(page.getByText('$25', { exact: true })).toBeVisible();
-  await expect(page.getByText('Custom quote', { exact: true })).toBeVisible();
+  // One flat price per workspace, with each plan's members, shared storage and active projects; larger organisations get a quote.
+  const free = page.getByRole('list', { name: 'What Free includes' });
+  await expect(free).toContainText('3 members');
+  await expect(free).toContainText('250 MB storage');
+  await expect(free).toContainText('2 active projects');
+  await expect(page.getByRole('list', { name: 'What Team includes' })).toContainText('25 GB storage');
+  await expect(page.getByText('$250 billed yearly — 2 months free')).toBeVisible();
+  await expect(page.getByText(/14-day Organization trial/).first()).toBeVisible();
+  await expect(page.getByRole('table', { name: 'Compare plans' })).toContainText('Quote');
+  await expect(page.getByText(/free forever|up to 5 members/i)).toHaveCount(0);
 
-  await page.getByRole('link', { name: 'Start free trial' }).first().click();
+  await page.getByRole('link', { name: 'Start 14-day trial' }).first().click();
   await expect(page.getByText(/14-day free trial of Organization/)).toBeVisible();
   await page.getByLabel('Your name').fill('Musu Kollie');
   await page.getByLabel('Work email').fill(`musu-${run}@example.com`);
@@ -33,7 +40,7 @@ test('sign up on a hosted server: trial, pricing and billing', async ({ page }) 
   await expect(page.getByRole('heading', { name: /Organization trial/ })).toBeVisible();
   await expect(page.getByText(/Organization trial — 14 days left/)).toBeVisible();
   await page.getByRole('button', { name: 'Choose Team' }).click();
-  await expect(page.getByText('One price for the whole workspace, up to 25 members.', { exact: false })).toBeVisible();
+  await expect(page.getByText('One price for the whole workspace: 25 members (guests don\'t count), 25 GB shared storage and unlimited active projects.', { exact: false })).toBeVisible();
   await expect(page.getByText('Send to Orange Money 0770 000 000')).toBeVisible();
   // Payments need a confirmed email address.
   await expect(page.getByRole('button', { name: 'Submit payment' })).toBeDisabled();

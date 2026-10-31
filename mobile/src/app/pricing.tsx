@@ -32,7 +32,7 @@ export default function Pricing() {
         <Eyebrow>Pricing</Eyebrow>
         <H1>Everything your team needs, one simple price</H1>
         <Muted size={15}>
-          Chat, projects, knowledge and meetings in one place. One flat price per workspace, not per person. Start with a {data.trial_days}-day free trial of Organization — no payment needed — and keep a free plan for up to 5 members forever.
+          Chat, projects, knowledge and meetings in one place. One flat price per workspace, not per person. Start with a {data.trial_days}-day free trial of Organization — no payment needed — and keep the Free plan for as long as you like.
         </Muted>
         {data.plans.map((p) => (
           <Card key={p.id} style={{ gap: 10, borderColor: p.id === 'organization' ? c.accent : c.line, borderWidth: p.id === 'organization' ? 2 : 1 }}>

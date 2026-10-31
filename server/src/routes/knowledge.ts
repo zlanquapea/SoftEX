@@ -27,7 +27,7 @@ import { scanUpload } from '../scanner.js';
 import { audit, authOf, notify, recordActivity, userSummary, type Ctx } from '../context.js';
 import { emitEvent } from '../webhooks.js';
 import { HttpError, badRequest, forbidden, newId, notFound, now, parse, parsePatch, today, filterAsync } from '../util.js';
-import { requireStorage } from '../plans.js';
+import { requireStorage, withQuotaLock } from '../plans.js';
 
 const DateStr = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'use YYYY-MM-DD');
 
@@ -439,6 +439,22 @@ export function knowledgeRouter(ctx: Ctx) {
     return { key, mime, size: file.size, text };
   };
 
+  /**
+   * Record a stored upload, checking storage again under the workspace's quota lock so simultaneous uploads
+   * can't together pass the limit. If it no longer fits, the stored object is removed and nothing is recorded.
+   */
+  const saveWithinQuota = async (auth: Auth, stored: { key: string; size: number }, write: () => Promise<void>) => {
+    try {
+      await withQuotaLock(ctx, auth.workspaceId, async () => {
+        await requireStorage(ctx, auth.workspaceId, stored.size);
+        await write();
+      });
+    } catch (e) {
+      await ctx.files.remove(stored.key).catch((error) => console.error('Could not remove stored file', stored.key, error));
+      throw e;
+    }
+  };
+
   r.post('/files', upload.single('file'), async (req, res) => {
     const auth = authOf(req);
     if (!req.file) throw badRequest('Attach a file');
@@ -456,7 +472,7 @@ export function knowledgeRouter(ctx: Ctx) {
     const stored = await storeUpload(auth, req.file);
     const id = newId();
     const name = req.file.originalname.slice(0, 200);
-    await db.transaction(async () => {
+    await saveWithinQuota(auth, stored, async () => {
       await db.insert('files', {
         id,
         workspace_id: auth.workspaceId,
@@ -618,8 +634,10 @@ export function knowledgeRouter(ctx: Ctx) {
     }
     const stored = await storeUpload(auth, req.file);
     const version = file.current_version + 1;
-    await db.insert('file_versions', { id: newId(), file_id: file.id, version, storage_key: stored.key, mime: stored.mime, size: stored.size, uploaded_by: auth.userId, created_at: now() });
-    await db.update('files', file.id, { current_version: version, content_text: stored.text, updated_at: now() });
+    await saveWithinQuota(auth, stored, async () => {
+      await db.insert('file_versions', { id: newId(), file_id: file.id, version, storage_key: stored.key, mime: stored.mime, size: stored.size, uploaded_by: auth.userId, created_at: now() });
+      await db.update('files', file.id, { current_version: version, content_text: stored.text, updated_at: now() });
+    });
     await emitEvent(ctx, auth.workspaceId, 'document.version_added', { file_id: file.id, name: file.name, version, project_id: file.project_id, channel_id: file.channel_id }, { projectId: file.project_id, channelId: file.channel_id });
     await recordActivity(ctx, auth.workspaceId, {
       actorId: auth.userId,
@@ -693,6 +711,28 @@ export function knowledgeRouter(ctx: Ctx) {
     await db.update('files', file.id, { archived_at: archived ? now() : null });
     await audit(ctx, auth.workspaceId, auth.userId, archived ? 'file.archived' : 'file.restored', 'file', file.id, { name: file.name });
     res.json({ ok: true });
+  });
+
+  /**
+   * Delete a file and every stored version of it, freeing the workspace's storage. Allowed for its owner or an
+   * admin, including when the workspace is over its storage limit; refused while a legal hold is in place.
+   */
+  r.delete('/files/:id', async (req, res) => {
+    const auth = authOf(req);
+    const file = await loadFile(auth, String(req.params.id));
+    if (file.owner_id !== auth.userId && !isAdmin(auth)) throw forbidden('Only the owner or an admin can delete this file');
+    if ((await db.get('SELECT legal_hold FROM workspaces WHERE id = ?', auth.workspaceId))?.legal_hold) {
+      throw forbidden('This workspace is under a legal hold, so files can’t be deleted. You can archive it instead.');
+    }
+    const versions = await db.all('SELECT storage_key, size FROM file_versions WHERE file_id = ?', file.id);
+    const freed = versions.reduce((n, v) => n + Number(v.size || 0), 0);
+    await db.transaction(async () => {
+      await db.run('DELETE FROM file_versions WHERE file_id = ?', file.id);
+      await db.run('DELETE FROM files WHERE id = ?', file.id);
+    });
+    for (const v of versions) await ctx.files.remove(v.storage_key).catch((error) => console.error('Could not remove stored file', v.storage_key, error));
+    await audit(ctx, auth.workspaceId, auth.userId, 'file.deleted', 'file', file.id, { name: file.name, versions: versions.length, bytes: freed });
+    res.json({ ok: true, freed_bytes: freed });
   });
 
   return r;

@@ -144,6 +144,8 @@ export interface PlanInfo {
   paid_through: string | null;
   features: Feature[];
   member_limit: number | null;
+  storage_limit?: number | null;
+  project_limit?: number | null;
   priority_support: boolean;
 }
 
@@ -152,8 +154,14 @@ export interface PublicPlan {
   name: string;
   /** Per workspace per month in USD; null means priced by quote. */
   price: number | null;
+  /** Full members included, the owner too; guests don't count. null means unlimited. */
   member_limit: number | null;
+  /** Shared storage for the whole workspace, in bytes (binary units: 1 GB = 1024 MB). */
+  storage_bytes: number;
+  /** Older field, kept for the phone app; use storage_bytes. */
   storage_gb: number;
+  /** Projects that aren't archived; null means unlimited. */
+  project_limit: number | null;
   ai_per_month: number;
   recording_hours: number | null;
   priority_support: boolean;
@@ -161,6 +169,18 @@ export interface PublicPlan {
   self_serve: boolean;
   features: Feature[];
   tagline: string;
+}
+
+/** Shared allowances anyone in the workspace can see (GET /plan/usage). Limits of null mean unlimited. */
+export interface PlanUsage {
+  plan: { id: PlanId | 'unlimited'; name: string; status: PlanInfo['status']; trial_ends_at: string | null };
+  members: number;
+  member_limit: number | null;
+  storage_bytes: number;
+  storage_limit: number | null;
+  projects: number;
+  project_limit: number | null;
+  can_manage_billing: boolean;
 }
 
 export interface Channel {

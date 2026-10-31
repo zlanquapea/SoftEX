@@ -103,15 +103,16 @@ describe('sign-up on a hosted server', () => {
 });
 
 describe('plan limits', () => {
-  it('keeps the Free plan to 5 members and core features', async () => {
+  it('keeps the Free plan to 3 members and core features', async () => {
     env = saas();
     const owner = await verifiedOwner();
     const wsId = owner.me.workspace.id;
     await endTrial(wsId);
     expect((await owner.agent.get('/api/me')).body.workspace.plan).toMatchObject({ id: 'free', status: 'free', features: [] });
 
-    for (let i = 0; i < 4; i++) await invite(env, owner.agent);
-    const full = await owner.agent.post('/api/admin/invitations').send({ email: 'sixth@example.com' });
+    // The owner plus two more: three members.
+    for (let i = 0; i < 2; i++) await invite(env, owner.agent);
+    const full = await owner.agent.post('/api/admin/invitations').send({ email: 'fourth@example.com' });
     expect(full.status).toBe(402);
     expect(full.body.details).toMatchObject({ code: 'plan_limit', limit: 'members' });
 
@@ -198,7 +199,7 @@ describe('paying with mobile money', () => {
     // Guests don't count toward the member limit.
     expect(billing.usage).toMatchObject({ members: 2, guests: 1, member_limit: 50 });
     expect(billing.plans.map((p: { id: string; price: number | null; member_limit: number | null }) => [p.id, p.price, p.member_limit])).toEqual([
-      ['free', 0, 5],
+      ['free', 0, 3],
       ['starter', 10, 10],
       ['team', 25, 25],
       ['organization', 60, 50],

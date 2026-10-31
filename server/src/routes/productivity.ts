@@ -307,7 +307,8 @@ export function productivityRouter(ctx: Ctx) {
     }
     const bucketOf = (t: Row) => {
       if (!t.due_date) return 'unscheduled';
-      if (t.due_date < weeks[0]) return 'overdue';
+      // Past its due date, even earlier this week, is overdue.
+      if (t.due_date < today()) return 'overdue';
       return [...weeks].reverse().find((w) => t.due_date >= w) ?? weeks[0];
     };
     const rows = people

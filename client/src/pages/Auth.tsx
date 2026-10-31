@@ -5,7 +5,7 @@ import { Callout, FormError, FormField, Loading, PasswordInput } from '@/compone
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { useApi } from '../hooks';
 import { useSession } from '../session';
-import { ROLE_LABEL } from '../format';
+import { ROLE_LABEL, allowanceBytes } from '../format';
 import { usePublicPricing } from './Pricing';
 import { Logo, TAGLINE } from '../components/Logo';
 import { Input } from '@/components/ui/input';
@@ -176,7 +176,12 @@ export function Register() {
       subtitle={
         pricing?.mode === 'saas' ? (
           <>
-            Start a {pricing.trial_days}-day free trial of Organization — no payment needed. Afterwards, keep a free plan or <Link to="/pricing">choose a plan</Link>.
+            Start a {pricing.trial_days}-day free trial of Organization — no payment needed. Afterwards, keep the Free plan
+            {(() => {
+              const free = pricing.plans.find((p) => p.id === 'free');
+              return free ? ` (${free.member_limit} members, ${allowanceBytes(free.storage_bytes)} storage, ${free.project_limit ?? 'unlimited'} active projects)` : '';
+            })()}{' '}
+            or <Link to="/pricing">choose a plan</Link>. Nothing is ever deleted when a trial ends.
           </>
         ) : (
           'You will be the workspace owner. Invite your team next.'

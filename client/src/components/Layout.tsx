@@ -146,6 +146,13 @@ function Shell({ children, docked, setDocked }: { children: ReactNode; docked: b
   const { setOpenMobile } = sidebar;
   useEffect(() => setOpenMobile(false), [location.pathname, setOpenMobile]);
 
+  // "See plans" on a plan-limit message: admins go to billing, everyone else to the plan comparison.
+  useEffect(() => {
+    const go = () => navigate(can('admin') && me?.mode === 'saas' ? '/admin?tab=billing' : '/pricing');
+    window.addEventListener('kuu:see-plans', go);
+    return () => window.removeEventListener('kuu:see-plans', go);
+  }, [navigate, can, me?.mode]);
+
   // Moving between pages fades the new one in, which also smooths over the moment its data loads.
   const content = useRef<HTMLDivElement>(null);
   const firstPage = useRef(true);
@@ -279,7 +286,8 @@ function Shell({ children, docked, setDocked }: { children: ReactNode; docked: b
         tooltip={n.label}
         className={cn('nav-item', active && 'active')}
         aria-label={docked ? `${n.label}${n.badge ? `, ${n.badge}` : ''}` : undefined}
-        render={<NavLink to={n.to} end={n.end} />}
+        // With a direct message open (/channels/<id>), only Chats is the current page, so Channels matches its own address only.
+        render={<NavLink to={n.to} end={n.end || (n.to === '/channels' && dmOpen)} />}
       >
         <Icon name={n.icon} />
         <span>{n.label}</span>

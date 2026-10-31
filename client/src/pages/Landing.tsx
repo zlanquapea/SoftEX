@@ -11,6 +11,8 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { cn } from '@/lib/utils';
 import '../landing.css';
 import { usePublicPricing } from './Pricing';
+import type { PublicPlan } from '../api';
+import { allowanceBytes } from '../format';
 
 const FEATURES: { icon: string; title: string; text: string }[] = [
   { icon: 'chat', title: 'Channels and direct messages', text: 'Team, project and private channels, threads, mentions, polls, voice notes and announcements people must acknowledge.' },
@@ -27,13 +29,23 @@ const REPLACES = ['Group chats', 'Email threads', 'Task spreadsheets', 'Shared f
 
 const HEADLINE_WORDS = ['group chats', 'email threads', 'spreadsheets', 'shared folders', 'sticky notes'];
 
-const FAQ: [string, string][] = [
-  ['Do I need a card to start?', 'No. Create a workspace and you get the Organization plan free for 14 days. Afterwards you can stay on the Free plan (up to 5 members) for as long as you like, or choose a paid plan.'],
+/** The Free plan in a phrase, from the catalog: "3 members, 250 MB of storage and 2 active projects". */
+const freeSummary = (free: PublicPlan | undefined) =>
+  free ? `${free.member_limit} members, ${allowanceBytes(free.storage_bytes)} of storage and ${free.project_limit == null ? 'unlimited' : free.project_limit} active projects` : '';
+
+const faqFor = (trialDays: number, free: PublicPlan | undefined): [string, string][] => [
+  [
+    'Do I need a card to start?',
+    `No. Create a workspace and you get the Organization plan free for ${trialDays} days. Afterwards you can stay on the Free plan${free ? ` (${freeSummary(free)})` : ''} for as long as you like, or choose a paid plan.`,
+  ],
   ['How do we pay?', 'An admin chooses a plan in the app and pays by mobile money or bank transfer, monthly or yearly. Your plan starts as soon as the payment is confirmed.'],
   ['Does it work on phones and slow connections?', 'Yes. Küü works in any modern browser and installs on Android and iPhone home screens like an app. Pages are kept small, and recently viewed information stays readable when your connection drops.'],
   ['Who owns our data?', 'You do. Admins can export everything at any time, and owners can delete the workspace permanently. See the Privacy Policy for the details.'],
   ['Can we invite people from outside our company?', 'Yes. On the Team plan and above, guests see only the channels and projects you share with them, and their access expires automatically. Guests don’t count toward your member limit.'],
-  ['What happens if we stop paying?', 'After a short grace period your workspace moves to the Free plan. Nothing is deleted; paid features pause until you pay again.'],
+  [
+    'What happens if we stop paying?',
+    'After a short grace period your workspace moves to the Free plan. Nothing is deleted and you can still open, download and export everything; paid features, and adding more of anything above Free’s allowances, pause until you pay again.',
+  ],
 ];
 
 const reducedMotion = () => typeof window !== 'undefined' && !!window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
@@ -136,6 +148,7 @@ export function Landing() {
   useReveal(root, data);
   const trialDays = data?.trial_days ?? 14;
   const teaser = (['starter', 'team', 'organization'] as const).map((id) => data?.plans.find((p) => p.id === id));
+  const free = data?.plans.find((p) => p.id === 'free');
   return (
     <PublicPage title="Küü — work moves forward together">
       <div className="landing" ref={root}>
@@ -296,7 +309,7 @@ export function Landing() {
               One flat price per workspace
             </h2>
             <p className="mx-auto mt-3 block text-center text-muted-foreground" data-reveal>
-              Free for up to 5 members. New workspaces try every Organization feature free for {trialDays} days.
+              Try Küü free with {freeSummary(free)}. New workspaces try every Organization feature free for {trialDays} days.
             </p>
             <div className="teaser-grid" onPointerMove={spotlight}>
               {teaser.map((p, i) => (
@@ -309,7 +322,9 @@ export function Landing() {
                     <p className="flex items-baseline gap-1.5">
                       <strong className="font-heading text-3xl font-semibold">{usd(p!.price ?? 0)}</strong> <span className="text-sm text-muted-foreground">per workspace / month</span>
                     </p>
-                    <CardDescription className="text-xs">Up to {p!.member_limit} members</CardDescription>
+                    <CardDescription className="text-xs">
+                      {p!.member_limit} members · {allowanceBytes(p!.storage_bytes)} · {p!.project_limit == null ? 'unlimited' : p!.project_limit} active projects
+                    </CardDescription>
                   </CardHeader>
                   <CardContent className="text-sm text-muted-foreground">{p!.tagline}</CardContent>
                 </Card>
@@ -327,7 +342,7 @@ export function Landing() {
         <section id="faq" className="public-section mx-auto w-full max-w-3xl" data-reveal>
           <h2>Questions</h2>
           <Accordion>
-            {FAQ.map(([q, a]) => (
+            {faqFor(trialDays, free).map(([q, a]) => (
               <AccordionItem key={q} value={q}>
                 <AccordionTrigger className="text-base">{q}</AccordionTrigger>
                 <AccordionContent>

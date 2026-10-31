@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom';
 import { api, qs } from '../api';
 import { Avatar } from '../components/Avatar';
 import { Icon } from '../components/Icon';
+import { LimitNotice, usePlanUsage } from '../components/Plan';
 import { EmptyState, ErrorState, FilterBar, FormField, LoadingRows, Modal, Page, PageHeader, Pill, SearchField, SwitchField, useAction } from '@/components/kit';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
@@ -112,6 +113,9 @@ export function Files() {
   const [archived, setArchived] = useState(false);
   const { data, error, reload } = useApi<FileSummary[]>(`/files${qs({ archived: archived ? 'true' : undefined })}`);
   const upload = useRef<HTMLInputElement>(null);
+  const { usage, reload: reloadUsage } = usePlanUsage();
+  // At the storage limit uploads are refused, so say so up front instead of after picking a file.
+  const storageFull = !!usage && usage.storage_limit != null && usage.storage_bytes >= usage.storage_limit;
   const [linking, setLinking] = useState(false);
   const [link, setLink] = useState({ name: '', url: '' });
 
@@ -135,7 +139,7 @@ export function Files() {
               <Button variant="outline" onClick={() => setLinking(true)}>
                 <Icon name="link" data-icon="inline-start" /> Link file
               </Button>
-              <Button onClick={() => upload.current?.click()}>
+              <Button onClick={() => upload.current?.click()} disabled={storageFull} title={storageFull ? 'Storage is full — delete files or upgrade to upload more' : undefined}>
                 <Icon name="upload" data-icon="inline-start" /> Upload
               </Button>
               <input
@@ -151,12 +155,14 @@ export function Files() {
                   await act(() => api.upload('/files', form), 'File uploaded');
                   e.target.value = '';
                   reload();
+                  reloadUsage();
                 }}
               />
             </>
           )
         }
       />
+      <LimitNotice kind="storage" usage={usage} />
       <FilterBar>
         <SearchField value={search} onChange={setSearch} placeholder="Search files" className="flex-1 sm:max-w-xs" />
         <NativeSelect size="sm" value={where} onChange={(e) => setWhere(e.target.value as Where)} aria-label="Shared in">

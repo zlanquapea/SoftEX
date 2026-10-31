@@ -6,7 +6,7 @@ import type { Row } from '../db.js';
 import { audit, authOf, platformEvent, type Ctx } from '../context.js';
 import { generateSecret, otpauthUrl, verifyTotp } from '../totp.js';
 import { queueEmail } from '../mailer.js';
-import { TERMS_VERSION, effectivePlan, hasFeature, isOperator, isSaas, planError, requireMemberCapacity } from '../plans.js';
+import { CURRENT_PLAN_VERSION, TERMS_VERSION, effectivePlan, hasFeature, isOperator, isSaas, planError, requireMemberCapacity, withQuotaLock } from '../plans.js';
 import {
   HttpError,
   badRequest,
@@ -316,6 +316,7 @@ export function authRouter(ctx: Ctx) {
         id: workspaceId,
         name: body.workspaceName,
         plan: 'free',
+        plan_version: CURRENT_PLAN_VERSION,
         trial_ends_at: isSaas(ctx) ? new Date(Date.now() + ctx.config.billing.trialDays * 86_400_000).toISOString() : null,
         created_at: now(),
       });
@@ -481,12 +482,16 @@ export function authRouter(ctx: Ctx) {
     const invite = await loadInvitation(req.params.token);
     const target = (await db.get('SELECT suspended_at FROM workspaces WHERE id = ?', invite.workspace_id))!;
     if (target.suspended_at) throw new HttpError(403, 'This workspace has been suspended.', { code: 'workspace_suspended' });
-    const alreadyActive = await db.get(
-      `SELECT 1 FROM memberships m JOIN users u ON u.id = m.user_id WHERE m.workspace_id = ? AND u.email = ? AND m.deactivated_at IS NULL`,
-      invite.workspace_id,
-      invite.email,
-    );
-    if (!alreadyActive) await requireMemberCapacity(ctx, invite.workspace_id, 1, invite.role);
+    // A new or returning member takes a member place; so does an active guest accepting a member invitation.
+    const needsPlace = async () => {
+      const active = await db.get(
+        `SELECT m.role FROM memberships m JOIN users u ON u.id = m.user_id WHERE m.workspace_id = ? AND u.email = ? AND m.deactivated_at IS NULL`,
+        invite.workspace_id,
+        invite.email,
+      );
+      return !active || (active.role === 'guest' && invite.role !== 'guest');
+    };
+    if (await needsPlace()) await requireMemberCapacity(ctx, invite.workspace_id, 1, invite.role);
     const body = parse(z.object({ name: Name.optional(), password: z.string().min(1).max(200), acceptTerms: z.boolean().optional() }), req.body);
     let user = await db.get('SELECT * FROM users WHERE email = ?', invite.email);
     if (user) {
@@ -512,7 +517,9 @@ export function authRouter(ctx: Ctx) {
     }
     const userId = user.id as string;
     await db.run('UPDATE users SET email_verified_at = COALESCE(email_verified_at, ?) WHERE id = ?', now(), userId);
-    await db.transaction(async () => {
+    await withQuotaLock(ctx, invite.workspace_id, async () => {
+      // Checked again under the lock, so invitations accepted at the same moment can't pass the limit together.
+      if (await needsPlace()) await requireMemberCapacity(ctx, invite.workspace_id, 1, invite.role);
       const guestExpires =
         invite.role === 'guest' ? new Date(Date.now() + (invite.guest_days ?? 30) * 86_400_000).toISOString() : null;
       const existing = await db.get('SELECT * FROM memberships WHERE workspace_id = ? AND user_id = ?', invite.workspace_id, userId);

@@ -4,7 +4,7 @@ import { api, qs, type Project } from '../api';
 import { Avatar } from '../components/Avatar';
 import { Icon } from '../components/Icon';
 import { Markdown } from '../components/Markdown';
-import { DatePicker, EmptyState, ErrorState, FilterBar, FormField, Loading, Modal, Page, PageHeader, Panel, Pill, SearchField, SwitchField, TabBar, useAction } from '@/components/kit';
+import { DatePicker, EmptyState, ErrorState, FilterBar, FormField, Loading, Modal, Page, PageHeader, Panel, Pill, SearchField, SwitchField, TabBar, useAction, useConfirm } from '@/components/kit';
 import { Badge } from '@/components/ui/badge';
 import { Breadcrumb, BreadcrumbItem, BreadcrumbLink, BreadcrumbList, BreadcrumbSeparator } from '@/components/ui/breadcrumb';
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card';
@@ -480,6 +480,8 @@ export function FileView() {
   const { id } = useParams();
   const navigate = useNavigate();
   const act = useAction();
+  const confirm = useConfirm();
+  const { me, can } = useSession();
   const { data: file, error, reload } = useApi<FileFull>(`/files/${id}`);
   const input = useRef<HTMLInputElement>(null);
   const { data: projects } = useApi<Project[]>('/projects');
@@ -594,17 +596,36 @@ export function FileView() {
         <Panel
           title="File settings"
           footer={
-            <Button
-              variant="ghost"
-              size="sm"
-              className="text-destructive"
-              onClick={async () => {
-                await act(() => api.post(`/files/${file.id}/archive`, { archived: !file.archived_at }), file.archived_at ? 'File restored' : 'File archived');
-                file.archived_at ? reload() : navigate('/files');
-              }}
-            >
-              {file.archived_at ? 'Restore file' : 'Archive file'}
-            </Button>
+            <div className="flex flex-wrap gap-2">
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={async () => {
+                  await act(() => api.post(`/files/${file.id}/archive`, { archived: !file.archived_at }), file.archived_at ? 'File restored' : 'File archived');
+                  file.archived_at ? reload() : navigate('/files');
+                }}
+              >
+                {file.archived_at ? 'Restore file' : 'Archive file'}
+              </Button>
+              {!file.external_url && (file.owner?.id === me?.user.id || can('admin')) && (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="text-destructive"
+                  onClick={async () => {
+                    const ok = await confirm({
+                      title: `Delete “${file.name}”?`,
+                      description: `This deletes the file and all ${file.versions.length} version${file.versions.length === 1 ? '' : 's'} permanently, freeing their storage. Archiving keeps it (and its storage) instead.`,
+                      confirmLabel: 'Delete permanently',
+                      destructive: true,
+                    });
+                    if (ok && (await act(() => api.del(`/files/${file.id}`), 'File deleted'))) navigate('/files');
+                  }}
+                >
+                  <Icon name="trash" data-icon="inline-start" /> Delete file
+                </Button>
+              )}
+            </div>
           }
         >
           <div className="grid gap-4 sm:grid-cols-2">

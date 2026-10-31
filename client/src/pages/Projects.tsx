@@ -14,7 +14,7 @@ import { ProjectForms } from './Forms';
 import { Boards } from './Boards';
 import { FavoriteButton } from '../components/Favorites';
 import { ProjectAutomations, ProjectTimeline } from './Planning';
-import { UpgradeNotice, usePlan } from '../components/Plan';
+import { LimitNotice, UpgradeNotice, usePlan, usePlanUsage } from '../components/Plan';
 import {
   Callout,
   ColorSwatches,
@@ -72,6 +72,7 @@ export function Projects() {
   const [scope, setScope] = useState<'mine' | 'all' | 'archived'>('mine');
   const { data, error, reload } = useApi<Project[]>(`/projects${qs({ archived: scope === 'archived' ? 'true' : undefined })}`);
   const list = (data ?? []).filter((p) => scope !== 'mine' || p.is_member);
+  const { usage } = usePlanUsage();
   return (
     <Page width="full" className="max-w-7xl">
       <PageHeader
@@ -94,6 +95,7 @@ export function Projects() {
           { id: 'archived', label: 'Archived' },
         ]}
       />
+      {me!.role !== 'guest' && <LimitNotice kind="projects" usage={usage} />}
       {error && <ErrorState error={error} retry={reload} />}
       {!data && !error && <Loading />}
       {data && !list.length && (

@@ -2,13 +2,13 @@ import { useState } from 'react';
 import { api, type Feature, type PlanId, type PublicPlan } from '../api';
 import { Icon } from '../components/Icon';
 import { Markdown } from '../components/Markdown';
-import { FEATURE_ORDER, PlanFeatures, PlanPrice, contactHref, daysUntil, lrd, usd } from '../components/Plan';
+import { PlanAllowances, PlanPrice, PlanUnlocks, UsageMeters, annualLine, contactHref, daysUntil, level, lrd, monthsFreeYearly, storageAmount, usd } from '../components/Plan';
 import { Callout, ErrorState, FormField, Loading, Meter, Modal, Pill, toneFor, useAction } from '@/components/kit';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardAction, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { cn } from '@/lib/utils';
-import { bytes, dateTime, dateLabel } from '../format';
+import { allowanceBytes, dateTime, dateLabel } from '../format';
 import { useApi } from '../hooks';
 import { useSession } from '../session';
 import { Button, buttonVariants } from '@/components/ui/button';
@@ -41,6 +41,7 @@ interface BillingData {
     paid_through: string | null;
     features: Feature[];
     custom?: boolean;
+    plan_version?: string | null;
   };
   usage: {
     members: number;
@@ -48,6 +49,8 @@ interface BillingData {
     guests: number;
     storage_bytes: number;
     storage_limit: number | null;
+    projects: number;
+    project_limit: number | null;
     ai_used: number;
     ai_limit: number | null;
     recording_seconds: number;
@@ -55,6 +58,7 @@ interface BillingData {
     blocked: { key: string; label: string; count: number }[];
   };
   plans: PublicPlan[];
+  trial_days?: number;
   lrd_per_usd: number | null;
   annual_factor: number;
   grace_days: number;
@@ -87,7 +91,19 @@ export function BillingSettings() {
         ? `Paid until ${dateLabel(plan.paid_through)}.`
         : plan.status === 'grace'
           ? `Payment overdue since ${dateLabel(plan.paid_through)}. Paid features keep working for ${data.grace_days} days after that date.`
-          : 'Free forever. Upgrade any time to unlock more.';
+          : 'No time limit. Upgrade any time for more members, storage and projects.';
+  const over = [
+    level(usage.members, usage.member_limit) === 'full' && usage.members > (usage.member_limit ?? Infinity) && `members (${usage.members} of ${usage.member_limit})`,
+    usage.storage_limit != null && usage.storage_bytes > usage.storage_limit && `storage (${storageAmount(usage.storage_bytes)} of ${allowanceBytes(usage.storage_limit!)})`,
+    level(usage.projects, usage.project_limit) === 'full' && usage.projects > (usage.project_limit ?? Infinity) && `active projects (${usage.projects} of ${usage.project_limit})`,
+  ].filter(Boolean) as string[];
+  /** Why a plan wouldn't fit what the workspace has now (members block the payment; the others just pause adding more). */
+  const misfit = (p: PublicPlan) =>
+    [
+      p.member_limit != null && usage.members > p.member_limit && `${usage.members} members (${p.name} includes ${p.member_limit})`,
+      usage.storage_bytes > p.storage_bytes && `${storageAmount(usage.storage_bytes)} stored (${p.name} includes ${allowanceBytes(p.storage_bytes)})`,
+      p.project_limit != null && usage.projects > p.project_limit && `${usage.projects} active projects (${p.name} includes ${p.project_limit})`,
+    ].filter(Boolean) as string[];
 
   return (
     <div className="flex flex-col gap-4">
@@ -109,12 +125,20 @@ export function BillingSettings() {
         </CardHeader>
         <CardContent className="flex flex-col gap-4">
           <div className="grid gap-4 md:grid-cols-2">
-            <Meter label={usage.guests ? `Members (plus ${usage.guests} guest${usage.guests === 1 ? '' : 's'}, who don't count)` : 'Members'} used={usage.members} limit={usage.member_limit} />
-            <Meter label="File storage" used={usage.storage_bytes} limit={usage.storage_limit} format={(n) => bytes(n)} />
+            <UsageMeters usage={usage} guests={usage.guests} />
             {!!usage.recording_hours && <Meter label="Meeting recording this month" used={usage.recording_seconds} limit={usage.recording_hours * 3600} format={hours} />}
             {!!usage.ai_limit && <Meter label={plan.status === 'trial' ? 'AI requests during trial' : 'AI requests this month'} used={usage.ai_used} limit={usage.ai_limit} />}
           </div>
+          {over.length > 0 && (
+            <Callout tone="warning" title={`This workspace is over its ${plan.name} allowance for ${over.join(', ')}.`}>
+              Nothing has been deleted and everyone keeps access: you can still open, download, export, archive and delete. Only adding more of what’s over is paused. Reduce
+              usage or choose a larger plan, and everything works normally again.
+            </Callout>
+          )}
           {plan.custom && <p className="text-xs text-muted-foreground">Custom terms apply to this workspace, as agreed with us.</p>}
+          {plan.plan_version === 'v1' && (
+            <p className="text-xs text-muted-foreground">This workspace keeps the allowances it signed up with. The plans below show what each includes for you.</p>
+          )}
           {usage.blocked.length > 0 && (
             <Callout tone="warning" title="Your team tried to use these in the last 30 days, and your plan stopped them:">
               <ul className="ml-4 list-disc">
@@ -132,25 +156,35 @@ export function BillingSettings() {
         </CardContent>
       </Card>
 
-      <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-        {data.plans.map((p) => {
+      {/* Sized to the content column (beside the settings list), not the screen. Enterprise gets its own strip below. */}
+      <div className="grid grid-cols-[repeat(auto-fit,minmax(14rem,1fr))] gap-4">
+        {data.plans.filter((p) => p.price != null).map((p) => {
           const current = plan.status !== 'trial' && plan.id === p.id;
           const tooSmall = p.member_limit != null && usage.members > p.member_limit;
+          const wontFit = misfit(p);
           const contact = contactHref(data.support_email, p.name);
           return (
             <Card key={p.id} className={cn(p.id === 'organization' && 'ring-2 ring-primary', current && 'bg-accent/40')}>
               <CardHeader>
-                <div className="flex items-center justify-between gap-2">
+                <div className="flex flex-wrap items-center justify-between gap-2">
                   <CardTitle className="text-lg">{p.name}</CardTitle>
-                  {p.id === 'organization' && <Badge>Includes AI</Badge>}
-                  {current && <Badge variant="secondary">Current</Badge>}
+                  {current ? <Badge variant="secondary">Current</Badge> : p.id === 'organization' && <Badge>Includes AI</Badge>}
                 </div>
                 <PlanPrice plan={p} />
-                {!!p.price && <CardDescription className="text-xs">{lrd(p.price, data.lrd_per_usd) || 'Paid monthly or yearly'}</CardDescription>}
+                {!!p.price && (
+                  <CardDescription className="text-xs">
+                    {annualLine(p, data.annual_factor)}
+                    {data.lrd_per_usd ? ` · ${lrd(p.price, data.lrd_per_usd)} a month` : ''}
+                  </CardDescription>
+                )}
               </CardHeader>
               <CardContent className="flex flex-1 flex-col gap-4">
                 <p className="text-sm text-muted-foreground">{p.tagline}</p>
-                <PlanFeatures plan={p} all={FEATURE_ORDER} />
+                <PlanAllowances plan={p} />
+                <PlanUnlocks plan={p} plans={data.plans} />
+                {!current && !tooSmall && p.price != null && wontFit.length > 0 && (
+                  <p className="text-xs text-warning">You have {wontFit.join(' and ')}. You could still choose it, but adding more would stay paused until you reduce usage.</p>
+                )}
               </CardContent>
               <CardFooter>
                 {current ? (
@@ -159,7 +193,7 @@ export function BillingSettings() {
                   </Button>
                 ) : p.self_serve && tooSmall ? (
                   <p className="text-xs text-muted-foreground">
-                    Your workspace has {usage.members} members; {p.name} allows up to {p.member_limit}.
+                    Your workspace has {usage.members} members; {p.name} includes {p.member_limit}. Deactivate people who no longer need access to choose it.
                   </p>
                 ) : p.self_serve ? (
                   <Button className="w-full" variant={p.id === 'organization' ? 'default' : 'outline'} onClick={() => setPaying(p.id)}>
@@ -181,6 +215,28 @@ export function BillingSettings() {
           );
         })}
       </div>
+
+      {data.plans
+        .filter((p) => p.price == null)
+        .map((p) => (
+          <Card key={p.id} size="sm">
+            <CardContent className="flex flex-wrap items-center gap-3">
+              <div className="flex min-w-0 flex-1 basis-64 flex-col">
+                <strong className="font-heading text-base font-semibold">{p.name}</strong>
+                <span className="text-sm text-muted-foreground">{p.tagline}</span>
+              </div>
+              {plan.id === p.id && plan.status !== 'trial' ? (
+                <Badge variant="secondary">Current</Badge>
+              ) : contactHref(data.support_email, p.name) ? (
+                <a href={contactHref(data.support_email, p.name)!} className={buttonVariants({ variant: 'outline' })}>
+                  Contact us for a quote
+                </a>
+              ) : (
+                <span className="text-sm text-muted-foreground">Contact us for a quote.</span>
+              )}
+            </CardContent>
+          </Card>
+        ))}
 
       <Card>
         <CardHeader>
@@ -235,7 +291,7 @@ export function BillingSettings() {
           {data.support_email && (
             <p className="text-xs text-muted-foreground">
               Questions about billing? Email{' '}
-              <a className="text-primary hover:underline" href={`mailto:${data.support_email}`}>
+              <a className="text-primary underline underline-offset-2" href={`mailto:${data.support_email}`}>
                 {data.support_email}
               </a>
               .
@@ -304,7 +360,7 @@ function PayModal({ data, plan, onClose, onDone }: { data: BillingData; plan: Pl
               <NativeSelect value={form.months} onChange={(e) => setForm({ ...form, months: Number(e.target.value) })}>
                 {data.month_options.map((m) => (
                   <NativeSelectOption key={m} value={m}>
-                    {m === 1 ? '1 month' : m === 12 ? '12 months (2 months free)' : `${m} months`}
+                    {m === 1 ? '1 month' : m === 12 && monthsFreeYearly(data.annual_factor) > 0 ? `12 months (${monthsFreeYearly(data.annual_factor)} months free)` : `${m} months`}
                   </NativeSelectOption>
                 ))}
               </NativeSelect>
@@ -313,8 +369,11 @@ function PayModal({ data, plan, onClose, onDone }: { data: BillingData; plan: Pl
           <div className="flex flex-wrap items-center gap-3 rounded-xl bg-muted px-4 py-3">
             <span className="min-w-0 flex-1 text-sm">
               {usd(chosen.price ?? 0)} × {form.months} month{form.months === 1 ? '' : 's'}
-              {form.months >= 12 ? ' − 2 months free' : ''}
-              <span className="block text-xs text-muted-foreground">One price for the whole workspace, up to {chosen.member_limit} members. Guests don't count.</span>
+              {form.months >= 12 && monthsFreeYearly(data.annual_factor) > 0 ? ` − ${monthsFreeYearly(data.annual_factor)} months free` : ''}
+              <span className="block text-xs text-muted-foreground">
+                One price for the whole workspace: {chosen.member_limit ?? 'unlimited'} members (guests don't count), {allowanceBytes(chosen.storage_bytes)} shared storage and{' '}
+                {chosen.project_limit == null ? 'unlimited' : chosen.project_limit} active projects.{form.months >= 12 ? ' Charged once for the year.' : ''}
+              </span>
             </span>
             <strong className="font-heading text-2xl font-semibold tabular-nums">
               {usd(total)} <span className="text-xs font-normal text-muted-foreground">{lrd(total, data.lrd_per_usd)}</span>

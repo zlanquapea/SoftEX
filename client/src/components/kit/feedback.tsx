@@ -38,6 +38,13 @@ export function useAction() {
       if (success) notify(success, 'success');
       return result;
     } catch (e) {
+      // A plan limit isn't a failure to retry: say what the limit is and offer the plans, without blocking anything else.
+      if ((e as { details?: { code?: string } }).details?.code === 'plan_limit') {
+        notify((e as Error).message, 'warning', {
+          action: { label: 'See plans', onClick: () => window.dispatchEvent(new CustomEvent('kuu:see-plans')) },
+        });
+        return undefined;
+      }
       notify((e as Error).message || 'Something went wrong', 'error');
       return undefined;
     }

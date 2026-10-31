@@ -10,16 +10,23 @@ import { HttpError, newId, now, parseJson } from './util.js';
  * SOFTEX_MODE=saas every workspace gets a plan. Paid plans have a flat monthly
  * price per workspace, whatever the number of members up to the plan's limit:
  *
- * - Free: permanent, up to 5 members, core collaboration only.
- * - Starter: up to 10 members; projects, tasks, messaging and file sharing.
- * - Team: up to 25 members; adds reporting, planning, automations, guests, API,
- *   meeting recordings, and more storage.
- * - Organization: up to 50 members; adds AI, single sign-on, SCIM, retention
- *   controls and priority support.
+ * - Free: permanent, for trying Küü with a small team (3 members, 250 MB, 2 active projects).
+ * - Starter: 10 members, 5 GB, 10 active projects; projects, tasks, messaging, file
+ *   sharing, knowledge and meetings.
+ * - Team: 25 members, 25 GB, unlimited projects; adds reporting, planning, custom fields,
+ *   goals, automations, guests, API access and meeting recordings.
+ * - Organization: 50 members, 100 GB, unlimited projects; adds AI, single sign-on, SCIM,
+ *   retention controls and priority support.
  * - Enterprise: above 50 members, priced by quote and set up by the operator.
+ *
+ * Allowances are versioned (PLAN_VERSIONS). Each workspace records the version it signed
+ * up under, so new packaging applies to new workspaces only and existing workspaces keep
+ * their allowances until a migration is explicitly applied to them.
  *
  * New workspaces start with an Organization trial. When a trial or paid period
  * ends the workspace falls back to Free: nothing is deleted, but Free limits apply.
+ * A workspace over a limit keeps full access to what it has (read, download, export,
+ * archive, delete); only actions that would add more of that resource are refused.
  *
  * Enforcement follows the usual entitlements pattern:
  * - The plan catalog maps each plan to entitlements: feature flags and numeric limits.
@@ -62,10 +69,12 @@ export interface PlanDefinition {
   name: string;
   /** Price per workspace per month in USD; null means priced by quote. */
   price: number | null;
-  /** Maximum active members (guests count too); null means unlimited. */
+  /** Maximum active full members, the owner included (guests don't count); null means unlimited. */
   memberLimit: number | null;
-  /** File and recording storage for the whole workspace, in bytes. */
+  /** File and recording storage shared by the whole workspace, in bytes. */
   storage: number;
+  /** Projects that aren't archived; null means unlimited. */
+  projectLimit: number | null;
   /** AI requests per month for the whole workspace. */
   aiPerMonth: number;
   /** Hours of meeting recording per month; null means unlimited. */
@@ -77,7 +86,9 @@ export interface PlanDefinition {
   tagline: string;
 }
 
-const GB = 1024 ** 3;
+/** Storage is measured in binary units throughout (1 GB = 1024 MB), matching how sizes are shown. */
+export const MB = 1024 ** 2;
+export const GB = 1024 ** 3;
 
 export interface BillingConfig {
   priceStarter: number;
@@ -96,73 +107,79 @@ export interface BillingConfig {
 const TEAM_FEATURES: Feature[] = ['automations', 'planning', 'fields', 'goals', 'recordings', 'insights', 'guests', 'api'];
 const ORGANIZATION_FEATURES: Feature[] = [...TEAM_FEATURES, 'ai', 'sso', 'scim', 'retention'];
 
-export function planCatalog(billing: BillingConfig): Record<PlanId, PlanDefinition> {
+/**
+ * Plan packaging versions. A workspace keeps the version it was created under
+ * (workspaces.plan_version) until a migration is explicitly applied to it.
+ *
+ * - v1: the original packaging (Free 5 members and 2 GB; no project limits). Every
+ *   workspace created before 2026-11 is on it.
+ * - 2026-11: Free is for evaluation (3 members, 250 MB, 2 active projects) and each
+ *   paid plan has clear storage and project allowances.
+ *
+ * Prices, features, AI and recording quotas, and Enterprise are the same in both.
+ */
+export const PLAN_VERSIONS = ['v1', '2026-11'] as const;
+export type PlanVersion = (typeof PLAN_VERSIONS)[number];
+/** The version new workspaces get. */
+export const CURRENT_PLAN_VERSION: PlanVersion = '2026-11';
+export const asPlanVersion = (v: unknown): PlanVersion => (PLAN_VERSIONS as readonly unknown[]).includes(v) ? (v as PlanVersion) : 'v1';
+
+type Allowance = Pick<PlanDefinition, 'memberLimit' | 'storage' | 'projectLimit'>;
+const ALLOWANCES: Record<PlanVersion, Record<PlanId, Allowance>> = {
+  v1: {
+    free: { memberLimit: 5, storage: 2 * GB, projectLimit: null },
+    starter: { memberLimit: 10, storage: 20 * GB, projectLimit: null },
+    team: { memberLimit: 25, storage: 100 * GB, projectLimit: null },
+    organization: { memberLimit: 50, storage: 250 * GB, projectLimit: null },
+    enterprise: { memberLimit: null, storage: 1024 * GB, projectLimit: null },
+  },
+  '2026-11': {
+    free: { memberLimit: 3, storage: 250 * MB, projectLimit: 2 },
+    starter: { memberLimit: 10, storage: 5 * GB, projectLimit: 10 },
+    team: { memberLimit: 25, storage: 25 * GB, projectLimit: null },
+    organization: { memberLimit: 50, storage: 100 * GB, projectLimit: null },
+    // Enterprise terms are negotiated; unchanged from v1.
+    enterprise: { memberLimit: null, storage: 1024 * GB, projectLimit: null },
+  },
+};
+
+const TAGLINES: Record<PlanVersion, Record<PlanId, string>> = {
+  v1: {
+    free: 'For very small teams getting started.',
+    starter: 'Projects, tasks, messaging and file sharing for small teams.',
+    team: 'Everything in Starter, plus reporting, planning, automations and meeting recordings.',
+    organization: 'Everything in Team, plus AI, advanced administration and priority support.',
+    enterprise: 'For organisations above 50 members. Priced on usage, onboarding and support needs.',
+  },
+  '2026-11': {
+    free: 'Try Küü with a small team.',
+    starter: 'Run your team’s everyday work.',
+    team: 'Coordinate projects, clients, and workflows.',
+    organization: 'Manage growing teams with AI and advanced controls.',
+    enterprise: 'For organisations above 50 members. Priced on usage, onboarding and support needs.',
+  },
+};
+
+export function planCatalog(billing: BillingConfig, version: PlanVersion = CURRENT_PLAN_VERSION): Record<PlanId, PlanDefinition> {
+  const a = ALLOWANCES[version];
+  const t = TAGLINES[version];
   return {
-    free: {
-      id: 'free',
-      name: 'Free',
-      price: 0,
-      memberLimit: 5,
-      storage: 2 * GB,
-      aiPerMonth: 0,
-      recordingHours: 0,
-      prioritySupport: false,
-      selfServe: false,
-      features: [],
-      tagline: 'For very small teams getting started.',
-    },
-    starter: {
-      id: 'starter',
-      name: 'Starter',
-      price: billing.priceStarter,
-      memberLimit: 10,
-      storage: 20 * GB,
-      aiPerMonth: 0,
-      recordingHours: 0,
-      prioritySupport: false,
-      selfServe: true,
-      features: [],
-      tagline: 'Projects, tasks, messaging and file sharing for small teams.',
-    },
-    team: {
-      id: 'team',
-      name: 'Team',
-      price: billing.priceTeam,
-      memberLimit: 25,
-      storage: 100 * GB,
-      aiPerMonth: 0,
-      recordingHours: 20,
-      prioritySupport: false,
-      selfServe: true,
-      features: TEAM_FEATURES,
-      tagline: 'Everything in Starter, plus reporting, planning, automations and meeting recordings.',
-    },
+    free: { id: 'free', name: 'Free', price: 0, ...a.free, aiPerMonth: 0, recordingHours: 0, prioritySupport: false, selfServe: false, features: [], tagline: t.free },
+    starter: { id: 'starter', name: 'Starter', price: billing.priceStarter, ...a.starter, aiPerMonth: 0, recordingHours: 0, prioritySupport: false, selfServe: true, features: [], tagline: t.starter },
+    team: { id: 'team', name: 'Team', price: billing.priceTeam, ...a.team, aiPerMonth: 0, recordingHours: 20, prioritySupport: false, selfServe: true, features: TEAM_FEATURES, tagline: t.team },
     organization: {
       id: 'organization',
       name: 'Organization',
       price: billing.priceOrganization,
-      memberLimit: 50,
-      storage: 250 * GB,
+      ...a.organization,
       aiPerMonth: 1000,
       recordingHours: 60,
       prioritySupport: true,
       selfServe: true,
       features: ORGANIZATION_FEATURES,
-      tagline: 'Everything in Team, plus AI, advanced administration and priority support.',
+      tagline: t.organization,
     },
-    enterprise: {
-      id: 'enterprise',
-      name: 'Enterprise',
-      price: null,
-      memberLimit: null,
-      storage: 1024 * GB,
-      aiPerMonth: 5000,
-      recordingHours: null,
-      prioritySupport: true,
-      selfServe: false,
-      features: ORGANIZATION_FEATURES,
-      tagline: 'For organisations above 50 members. Priced on usage, onboarding and support needs.',
-    },
+    enterprise: { id: 'enterprise', name: 'Enterprise', price: null, ...a.enterprise, aiPerMonth: 5000, recordingHours: null, prioritySupport: true, selfServe: false, features: ORGANIZATION_FEATURES, tagline: t.enterprise },
   };
 }
 
@@ -184,6 +201,10 @@ export interface EffectivePlan {
   features: Feature[];
   member_limit: number | null;
   storage_limit: number | null;
+  /** Active (non-archived) projects; null means unlimited. */
+  project_limit: number | null;
+  /** The packaging version whose allowances apply to this workspace. */
+  plan_version: PlanVersion | null;
   ai_limit: number | null;
   /** Hours of meeting recording per month; null means unlimited. */
   recording_hours: number | null;
@@ -201,7 +222,8 @@ export const EntitlementOverrides = z
     grant: z.array(z.string()).max(20).default([]),
     revoke: z.array(z.string()).max(20).default([]),
     members: z.number().int().min(1).max(100_000).nullable().optional(),
-    storage_gb: z.number().min(1).max(100_000).nullable().optional(),
+    storage_gb: z.number().min(0.1).max(100_000).nullable().optional(),
+    projects: z.number().int().min(1).max(100_000).nullable().optional(),
     ai_per_month: z.number().int().min(0).max(1_000_000).nullable().optional(),
     recording_hours: z.number().min(0).max(100_000).nullable().optional(),
     note: z.string().trim().max(300).default(''),
@@ -218,7 +240,7 @@ export function readOverrides(raw: string | null | undefined): EntitlementOverri
 }
 
 const hasOverrides = (o: EntitlementOverrides) =>
-  o.grant.length > 0 || o.revoke.length > 0 || ['members', 'storage_gb', 'ai_per_month', 'recording_hours'].some((k) => k in o);
+  o.grant.length > 0 || o.revoke.length > 0 || ['members', 'storage_gb', 'projects', 'ai_per_month', 'recording_hours'].some((k) => k in o);
 
 /** Days after a paid period ends during which paid features keep working. */
 export const GRACE_DAYS = 7;
@@ -230,7 +252,7 @@ export const isSaas = (ctx: Ctx) => ctx.config.mode === 'saas';
 /** People who run the service (SOFTEX_OPERATOR_EMAILS). Only meaningful in SaaS mode. */
 export const isOperator = (ctx: Ctx, email: string | undefined) => isSaas(ctx) && !!email && ctx.config.operatorEmails.includes(email.toLowerCase());
 
-/** Active members who count toward the plan's member limit. Guests don't. */
+/** Active full members (the owner included) who count toward the plan's member limit. Guests don't. */
 export async function activeMemberCount(db: Database, workspaceId: string) {
   return (await db.get(`SELECT COUNT(*) AS n FROM memberships WHERE workspace_id = ? AND deactivated_at IS NULL AND role != 'guest'`, workspaceId))!.n as number;
 }
@@ -245,10 +267,42 @@ export async function activeGuestCount(db: Database, workspaceId: string) {
   ))!.n as number;
 }
 
+/**
+ * Bytes stored for the whole workspace: every retained version of every uploaded file (archived files and
+ * files in archived projects included) plus saved meeting recordings. Each stored object counts once.
+ */
 export async function storageUsed(db: Database, workspaceId: string) {
-  const files = Number((await db.get(`SELECT COALESCE(SUM(v.size), 0) AS n FROM file_versions v JOIN files f ON f.id = v.file_id WHERE f.workspace_id = ?`, workspaceId))!.n) || 0;
-  const recordings = Number((await db.get('SELECT COALESCE(SUM(size), 0) AS n FROM meeting_recordings WHERE workspace_id = ?', workspaceId))!.n) || 0;
+  const files = Number((await db.get(
+    `SELECT COALESCE(SUM(size), 0) AS n FROM (SELECT v.storage_key, MAX(v.size) AS size FROM file_versions v JOIN files f ON f.id = v.file_id
+       WHERE f.workspace_id = ? GROUP BY v.storage_key) stored`,
+    workspaceId,
+  ))!.n) || 0;
+  const recordings = Number((await db.get('SELECT COALESCE(SUM(size), 0) AS n FROM meeting_recordings WHERE workspace_id = ? AND storage_key IS NOT NULL', workspaceId))!.n) || 0;
   return files + recordings;
+}
+
+/** Projects that count toward the plan's project limit: those not archived. */
+export async function activeProjectCount(db: Database, workspaceId: string) {
+  return Number((await db.get('SELECT COUNT(*) AS n FROM projects WHERE workspace_id = ? AND archived_at IS NULL', workspaceId))!.n) || 0;
+}
+
+/**
+ * Run `fn` holding the workspace's quota lock, so two requests can't both pass a limit check and then both
+ * add. Check the limit again inside `fn`, then write. On PostgreSQL this locks the workspace row for the
+ * transaction; SQLite transactions already run one at a time.
+ */
+export async function withQuotaLock<T>(ctx: Ctx, workspaceId: string, fn: () => Promise<T>): Promise<T> {
+  return ctx.db.transaction(async () => {
+    if (ctx.db.dialect === 'postgres') await ctx.db.get('SELECT id FROM workspaces WHERE id = ? FOR UPDATE', workspaceId);
+    return fn();
+  });
+}
+
+/** "250 MB", "5 GB", "1.5 GB": the same binary units the plan allowances use. */
+export function formatBytes(bytes: number) {
+  if (bytes >= GB) return `${Math.round((bytes / GB) * 10) / 10} GB`;
+  if (bytes >= MB) return `${Math.round((bytes / MB) * 10) / 10} MB`;
+  return `${Math.max(0, Math.round(bytes / 1024))} KB`;
 }
 
 export const monthStart = (at = new Date()) => new Date(Date.UTC(at.getUTCFullYear(), at.getUTCMonth(), 1)).toISOString();
@@ -270,13 +324,16 @@ export async function effectivePlan(ctx: Ctx, workspace: Row | string, at = new 
       features: ALL_FEATURES,
       member_limit: null,
       storage_limit: null,
+      project_limit: null,
+      plan_version: null,
       ai_limit: null,
       recording_hours: null,
       priority_support: false,
       custom: false,
     };
   }
-  const catalog = planCatalog(ctx.config.billing);
+  const version = asPlanVersion(ws.plan_version);
+  const catalog = planCatalog(ctx.config.billing, version);
   const purchased: PlanId = ws.plan in catalog && ws.plan !== 'free' ? ws.plan : 'free';
   const nowIso = at.toISOString();
   const graceEnd = ws.paid_through ? new Date(new Date(ws.paid_through).getTime() + GRACE_DAYS * 86_400_000).toISOString() : null;
@@ -306,7 +363,9 @@ export async function effectivePlan(ctx: Ctx, workspace: Row | string, at = new 
     paid_through: ws.paid_through ?? null,
     features,
     member_limit: pick('members', plan.memberLimit),
-    storage_limit: pick('storage_gb', plan.storage as number | null, (gb) => gb * GB),
+    storage_limit: pick('storage_gb', plan.storage as number | null, (gb) => Math.round(gb * GB)),
+    project_limit: pick('projects', plan.projectLimit),
+    plan_version: version,
     ai_limit: pick('ai_per_month', status === 'trial' ? ctx.config.billing.trialAiRequests : plan.aiPerMonth as number | null),
     recording_hours: pick('recording_hours', plan.recordingHours),
     priority_support: plan.prioritySupport,
@@ -336,7 +395,7 @@ export async function planDenials(db: Database, workspaceId: string, since: stri
 export const denialLabel = (key: string) =>
   isFeature(key)
     ? FEATURE_LABEL[key]
-    : ({ 'limit:members': 'Adding members', 'limit:storage': 'Uploading files', 'limit:ai': 'AI requests', 'limit:recordings': 'Recording meetings' } as Record<string, string>)[key] ?? key;
+    : ({ 'limit:members': 'Adding members', 'limit:storage': 'Uploading files', 'limit:projects': 'Creating projects', 'limit:ai': 'AI requests', 'limit:recordings': 'Recording meetings' } as Record<string, string>)[key] ?? key;
 
 export async function hasFeature(ctx: Ctx, workspaceId: string, feature: Feature) {
   return (await effectivePlan(ctx, workspaceId)).features.includes(feature);
@@ -359,19 +418,48 @@ export async function requireFeature(ctx: Ctx, workspaceId: string, feature: Fea
   }
 }
 
-/** Check there is room for `adding` more members, or that guest access is included when adding guests (who don't count toward the limit). */
+/** The next self-serve plan (for this workspace's packaging) that raises a limit above `needed`, for error messages. */
+function upgradeFor(ctx: Ctx, version: PlanVersion, limit: 'memberLimit' | 'storage' | 'projectLimit', needed: number) {
+  return Object.values(planCatalog(ctx.config.billing, version)).find((p) => p.selfServe && (p[limit] == null || (p[limit] as number) >= needed));
+}
+
+const nextStep = (plan: EffectivePlan, upgrade: PlanDefinition | undefined) =>
+  upgrade && upgrade.id !== plan.id ? `The ${upgrade.name} plan includes more. An admin can upgrade under Administration → Billing.` : 'Contact us about Enterprise for more.';
+
+/**
+ * Check there is room for `adding` more full members. Guests don't count, but need guest access on the plan.
+ * Call it again inside withQuotaLock right before the write when requests may race.
+ */
 export async function requireMemberCapacity(ctx: Ctx, workspaceId: string, adding = 1, role?: string) {
   const plan = await effectivePlan(ctx, workspaceId);
   if (role === 'guest') {
     if (!plan.features.includes('guests')) await requireFeature(ctx, workspaceId, 'guests');
     return;
   }
-  if (plan.member_limit != null && await activeMemberCount(ctx.db, workspaceId) + adding > plan.member_limit) {
+  if (plan.member_limit == null || adding <= 0) return;
+  const members = await activeMemberCount(ctx.db, workspaceId);
+  if (members + adding > plan.member_limit) {
     await recordDenial(ctx, workspaceId, 'limit:members');
-    throw planError(`The ${plan.name} plan allows up to ${plan.member_limit} members. An admin can upgrade under Administration → Billing.`, {
-      limit: 'members',
-      plan: plan.id,
-    });
+    const upgrade = upgradeFor(ctx, plan.plan_version ?? CURRENT_PLAN_VERSION, 'memberLimit', members + adding);
+    throw planError(
+      `The ${plan.name} plan includes ${plan.member_limit} members (guests don't count), and this workspace has ${members}. Deactivate someone who no longer needs access, or upgrade. ${nextStep(plan, upgrade)}`,
+      { limit: 'members', plan: plan.id, used: members, allowed: plan.member_limit, upgrade: upgrade?.id ?? null },
+    );
+  }
+}
+
+/** Check there is room for `adding` more active projects. Archived projects don't count. */
+export async function requireProjectCapacity(ctx: Ctx, workspaceId: string, adding = 1) {
+  const plan = await effectivePlan(ctx, workspaceId);
+  if (plan.project_limit == null) return;
+  const active = await activeProjectCount(ctx.db, workspaceId);
+  if (active + adding > plan.project_limit) {
+    await recordDenial(ctx, workspaceId, 'limit:projects');
+    const upgrade = upgradeFor(ctx, plan.plan_version ?? CURRENT_PLAN_VERSION, 'projectLimit', active + adding);
+    throw planError(
+      `The ${plan.name} plan includes ${plan.project_limit} active project${plan.project_limit === 1 ? '' : 's'}, and this workspace has ${active}. Archive a finished project (its tasks and files stay available), or upgrade. ${nextStep(plan, upgrade)}`,
+      { limit: 'projects', plan: plan.id, used: active, allowed: plan.project_limit, upgrade: upgrade?.id ?? null },
+    );
   }
 }
 
@@ -393,14 +481,22 @@ export async function requireRecordingAllowance(ctx: Ctx, workspaceId: string) {
   }
 }
 
+/**
+ * Check `bytes` more fit in the workspace's shared storage. Uploads check before processing (to fail fast) and
+ * again inside withQuotaLock just before saving, so simultaneous uploads can't overshoot.
+ */
 export async function requireStorage(ctx: Ctx, workspaceId: string, bytes: number) {
   const plan = await effectivePlan(ctx, workspaceId);
-  if (plan.storage_limit != null && await storageUsed(ctx.db, workspaceId) + bytes > plan.storage_limit) {
+  if (plan.storage_limit == null) return;
+  const used = await storageUsed(ctx.db, workspaceId);
+  if (used + bytes > plan.storage_limit) {
     await recordDenial(ctx, workspaceId, 'limit:storage');
-    throw planError('This workspace has used all of its file storage. Delete old files or upgrade under Administration → Billing.', {
-      limit: 'storage',
-      plan: plan.id,
-    });
+    const full = used >= plan.storage_limit;
+    const upgrade = upgradeFor(ctx, plan.plan_version ?? CURRENT_PLAN_VERSION, 'storage', used + bytes);
+    throw planError(
+      `${full ? 'This workspace has used all of its' : 'This file doesn’t fit in the workspace’s remaining'} storage (${formatBytes(used)} of ${formatBytes(plan.storage_limit)} on the ${plan.name} plan). Delete files you no longer need, or upgrade. ${nextStep(plan, upgrade)}`,
+      { limit: 'storage', plan: plan.id, used, allowed: plan.storage_limit, upgrade: upgrade?.id ?? null },
+    );
   }
 }
 
@@ -431,15 +527,21 @@ export async function requireVerifiedEmail(ctx: Ctx, auth: { userId: string }) {
   }
 }
 
-/** Public, JSON-safe view of the catalog for the pricing page and billing screen. */
-export function publicPlans(ctx: Ctx) {
-  const catalog = planCatalog(ctx.config.billing);
+/**
+ * Public, JSON-safe view of the catalog: the one source for the pricing page, billing screen, onboarding and
+ * upgrade prompts. Defaults to the packaging new workspaces get; the billing screen passes the workspace's own.
+ */
+export function publicPlans(ctx: Ctx, version: PlanVersion = CURRENT_PLAN_VERSION) {
+  const catalog = planCatalog(ctx.config.billing, version);
   return (Object.values(catalog) as PlanDefinition[]).map((p) => ({
     id: p.id,
     name: p.name,
     price: p.price,
     member_limit: p.memberLimit,
+    storage_bytes: p.storage,
+    /** Kept for older clients (the phone app); prefer storage_bytes. Not rounded, so 250 MB is 0.244. */
     storage_gb: p.storage / GB,
+    project_limit: p.projectLimit,
     ai_per_month: p.aiPerMonth,
     recording_hours: p.recordingHours,
     priority_support: p.prioritySupport,
@@ -450,8 +552,8 @@ export function publicPlans(ctx: Ctx) {
 }
 
 /** Amount due for a payment covering `months` of a self-serve plan (a flat price per workspace). */
-export function priceFor(ctx: Ctx, plan: PlanId, months: number) {
-  const unit = planCatalog(ctx.config.billing)[plan].price ?? 0;
+export function priceFor(ctx: Ctx, plan: PlanId, months: number, version: PlanVersion = CURRENT_PLAN_VERSION) {
+  const unit = planCatalog(ctx.config.billing, version)[plan].price ?? 0;
   const factor = months >= 12 ? ctx.config.billing.annualFactor : 1;
   return Math.round(unit * months * factor * 100) / 100;
 }

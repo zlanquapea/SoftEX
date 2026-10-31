@@ -18,6 +18,7 @@ import {
 import type { Database, Row } from '../db.js';
 import { audit, authOf, notify, recordActivity, userSummary, type Ctx } from '../context.js';
 import { emitEvent } from '../webhooks.js';
+import { requireProjectCapacity, withQuotaLock } from '../plans.js';
 import { badRequest, forbidden, newId, notFound, now, parse, parsePatch, today, filterAsync } from '../util.js';
 
 const DateStr = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'use YYYY-MM-DD');
@@ -142,9 +143,12 @@ export function projectsRouter(ctx: Ctx) {
       req.body,
     );
     if (body.teamId && !await db.get('SELECT 1 FROM teams WHERE id = ? AND workspace_id = ?', body.teamId, auth.workspaceId)) throw notFound('Team');
+    await requireProjectCapacity(ctx, auth.workspaceId);
     const id = newId();
     let channelId: string | null = null;
-    await db.transaction(async () => {
+    await withQuotaLock(ctx, auth.workspaceId, async () => {
+      // Checked again under the lock, so projects created at the same moment can't pass the limit together.
+      await requireProjectCapacity(ctx, auth.workspaceId);
       await db.insert('projects', {
         id,
         workspace_id: auth.workspaceId,
@@ -267,17 +271,23 @@ export function projectsRouter(ctx: Ctx) {
       req.body,
     );
     if (body.ownerId && !await isActiveMember(db, auth.workspaceId, body.ownerId)) throw notFound('Person');
-    await db.update('projects', project.id, {
-      name: body.name,
-      description: body.description,
-      color: body.color,
-      visibility: body.visibility,
-      health: body.health,
-      due_date: body.dueDate,
-      owner_id: body.ownerId,
-      team_id: body.teamId,
-      archived_at: body.archived === undefined ? undefined : body.archived ? now() : null,
-      updated_at: now(),
+    // Restoring an archived project makes it active again, so it needs room under the plan's project limit.
+    const restoring = body.archived === false && !!project.archived_at;
+    if (restoring) await requireProjectCapacity(ctx, auth.workspaceId);
+    await withQuotaLock(ctx, auth.workspaceId, async () => {
+      if (restoring) await requireProjectCapacity(ctx, auth.workspaceId);
+      await db.update('projects', project.id, {
+        name: body.name,
+        description: body.description,
+        color: body.color,
+        visibility: body.visibility,
+        health: body.health,
+        due_date: body.dueDate,
+        owner_id: body.ownerId,
+        team_id: body.teamId,
+        archived_at: body.archived === undefined ? undefined : body.archived ? now() : null,
+        updated_at: now(),
+      });
     });
     if (body.ownerId) await addMember(project.id, body.ownerId);
     if (body.visibility && body.visibility !== project.visibility) {
