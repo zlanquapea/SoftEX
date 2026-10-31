@@ -12,7 +12,7 @@ describe('authentication', () => {
     expect(me.role).toBe('owner');
     expect(me.user.name).toBe('Alex');
     const channels = await agent.get('/api/channels');
-    expect(channels.body.map((c: { name: string }) => c.name).sort()).toEqual(['announcements', 'general']);
+    expect(channels.body.map((c: { name: string }) => c.name).sort()).toEqual(['Saved', 'announcements', 'general']);
   });
 
   it('rejects anonymous access and wrong passwords', async () => {

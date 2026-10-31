@@ -438,6 +438,15 @@ export function homeRouter(ctx: Ctx) {
 
   // ======================= Search (§5.1, §5.3, §9) =======================
 
+  /** A piece of text around the first match, so a result shows why it matched. */
+  const snippetOf = (text: string, needle: string) => {
+    const plain = text.replace(/@\[([^\]]+)\]\((?:team:)?[0-9a-f-]{36}\)/g, '@$1').replace(/\s+/g, ' ').trim();
+    const at = needle ? plain.toLowerCase().indexOf(needle.toLowerCase()) : -1;
+    if (at < 0) return plain.slice(0, 180);
+    const start = Math.max(0, at - 60);
+    return `${start > 0 ? '…' : ''}${plain.slice(start, at + needle.length + 120)}${at + needle.length + 120 < plain.length ? '…' : ''}`;
+  };
+
   /**
    * Permission-aware global search. Candidate rows are restricted in SQL to the
    * channels and projects the user can access, then re-checked with the same
@@ -456,6 +465,8 @@ export function homeRouter(ctx: Ctx) {
         before: z.string().optional(),
         hasFile: z.enum(['true', 'false']).optional(),
         limit: z.coerce.number().int().min(1).max(50).default(8),
+        // Paging through messages; when given, the answer also says whether there are more.
+        offset: z.coerce.number().int().min(0).max(5000).optional(),
       }),
       req.query,
     );
@@ -466,11 +477,12 @@ export function homeRouter(ctx: Ctx) {
     const channels = (await accessibleChannelIds(db, auth)).filter((c) => !q.channelId || c === q.channelId);
     const projects = (await accessibleProjectIds(db, auth)).filter((p) => !q.projectId || p === q.projectId);
     const marks = (ids: string[]) => (ids.length ? ids.map(() => '?').join(',') : "''");
-    const result: Record<string, unknown[]> = { ...empty };
+    const result: Record<string, unknown[] | boolean> = { ...empty };
 
     if (want('messages') && channels.length) {
-      const where = [`m.channel_id IN (${marks(channels)})`, 'm.deleted_at IS NULL', `m.body LIKE ? ESCAPE '\\'`];
-      const params: (string | number)[] = [...channels, like];
+      // Forwarded copies are found by what the original said, too.
+      const where = [`m.channel_id IN (${marks(channels)})`, 'm.deleted_at IS NULL', `(m.body LIKE ? ESCAPE '\\' OR m.forward_snapshot LIKE ? ESCAPE '\\')`];
+      const params: (string | number)[] = [...channels, like, like];
       if (q.from) {
         where.push('m.user_id = ?');
         params.push(q.from);
@@ -487,14 +499,36 @@ export function homeRouter(ctx: Ctx) {
         where.push('c.project_id = ?');
         params.push(q.projectId);
       }
-      if (q.hasFile === 'true') where.push('EXISTS (SELECT 1 FROM files f WHERE f.message_id = m.id)');
-      params.push(q.limit);
-      result.messages = await db.all(
-        `SELECT m.id, m.body, m.created_at, m.channel_id, m.parent_id, c.name AS channel_name, c.kind AS channel_kind, u.name AS user_name, u.color AS user_color
+      if (q.hasFile === 'true') where.push('EXISTS (SELECT 1 FROM files f WHERE f.message_id = m.id AND f.archived_at IS NULL)');
+      params.push(q.limit + 1, q.offset ?? 0);
+      const rows = await db.all(
+        `SELECT m.id, m.body, m.forward_snapshot, m.created_at, m.channel_id, m.parent_id, c.name AS channel_name, c.kind AS channel_kind, c.personal,
+                u.name AS user_name, u.color AS user_color
            FROM messages m JOIN channels c ON c.id = m.channel_id JOIN users u ON u.id = m.user_id
-          WHERE ${where.join(' AND ')} ORDER BY m.created_at DESC LIMIT ?`,
+          WHERE ${where.join(' AND ')} ORDER BY m.created_at DESC LIMIT ? OFFSET ?`,
         ...params,
       );
+      if (q.offset !== undefined) result.messages_has_more = rows.length > q.limit;
+      result.messages = rows.slice(0, q.limit).map(({ forward_snapshot, personal, ...m }) => {
+        let text = String(m.body ?? '');
+        let forwarded: { user_name: string } | null = null;
+        if (forward_snapshot) {
+          try {
+            const snap = JSON.parse(forward_snapshot);
+            forwarded = { user_name: snap.user_name };
+            text = [text, snap.body].filter(Boolean).join(' — ');
+          } catch {
+            /* keep the note */
+          }
+        }
+        return {
+          ...m,
+          channel_name: personal ? 'Saved' : m.channel_name,
+          saved: !!personal,
+          forwarded,
+          snippet: snippetOf(text, q.q),
+        };
+      });
     }
     if (q.q.length >= 2) {
       if (want('tasks')) {

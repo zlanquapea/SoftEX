@@ -101,6 +101,17 @@ export const toLocalInput = (iso: string) => {
 /** Replace stored mention tokens with readable @names. */
 export const plainMentions = (body: string) => body.replace(/@\[([^\]]+)\]\((?:team:)?[0-9a-f-]{36}\)/g, '@$1');
 
+/** A message as one line of plain text for previews: mentions as names, Markdown marks and links as their text. */
+export const plainPreview = (body: string) =>
+  plainMentions(body)
+    .replace(/```[\s\S]*?(```|$)/g, ' [code] ')
+    .replace(/\[([^\]]+)\]\([^)\s]+\)/g, '$1')
+    .replace(/(\*\*|__|~~|`)(.+?)\1/g, '$2')
+    .replace(/(^|[\s(])[*_]([^*_\s][^*_]*)[*_](?=[\s).,!?]|$)/g, '$1$2')
+    .replace(/^\s*(#{1,6}|>|[-*]|\d+\.)\s+/gm, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+
 /** "1h 25m", "40m", "3h". */
 export const duration = (minutes: number | null | undefined) => {
   const m = Math.max(0, Math.round(minutes ?? 0));

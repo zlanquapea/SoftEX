@@ -1,6 +1,7 @@
 import {
   ArrowRight,
   Bell,
+  BellOff,
   BookOpen,
   Bookmark,
   Calendar,
@@ -190,6 +191,7 @@ export const ICONS = {
   filter: ListFilter,
   away: Plane,
   repeat: Repeat,
+  bellOff: BellOff,
 } satisfies Record<string, LucideIcon>;
 
 export type IconName = keyof typeof ICONS;

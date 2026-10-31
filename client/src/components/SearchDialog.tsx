@@ -79,7 +79,17 @@ interface Command {
   run: () => void | Promise<unknown>;
 }
 
-export function SearchDialog({ open, initial, onClose }: { open: boolean; initial: string; onClose: () => void }) {
+/** Date ranges for message search, in days back from today. */
+const WHEN = [
+  { value: '', label: 'Any time' },
+  { value: '1', label: 'Today' },
+  { value: '7', label: 'Past week' },
+  { value: '30', label: 'Past month' },
+  { value: '365', label: 'Past year' },
+];
+const PAGE = 25;
+
+export function SearchDialog({ open, initial, initialChannel, onClose }: { open: boolean; initial: string; initialChannel?: string; onClose: () => void }) {
   const navigate = useNavigate();
   const people = usePeople();
   const { me, setMe } = useSession();
@@ -93,6 +103,10 @@ export function SearchDialog({ open, initial, onClose }: { open: boolean; initia
   const [type, setType] = useState<SearchType>('all');
   const [from, setFrom] = useState('');
   const [hasFile, setHasFile] = useState(false);
+  const [channelId, setChannelId] = useState('');
+  const [when, setWhen] = useState('');
+  const [moreMessages, setMoreMessages] = useState(false);
+  const [loadingMore, setLoadingMore] = useState(false);
   const [results, setResults] = useState<Record<string, any[]> | null>(null);
   // Groups the person opened up to see past the first few results.
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
@@ -117,21 +131,36 @@ export function SearchDialog({ open, initial, onClose }: { open: boolean; initia
     if (open) {
       setQ(initial);
       setAsk(null);
+      setChannelId(initialChannel ?? '');
+      if (initialChannel) setType('messages');
     }
-  }, [open, initial]);
+  }, [open, initial, initialChannel]);
+  const after = when ? new Date(Date.now() - (Number(when) - 1) * 86_400_000).toISOString().slice(0, 10) : undefined;
+  const messageQuery = (offset: number) =>
+    `/search${qs({ q: debounced.trim(), type, from, hasFile: hasFile ? 'true' : undefined, channelId: channelId || undefined, after, limit: type === 'all' ? ALL_LIMIT : PAGE, offset })}`;
+  const loadMoreMessages = async () => {
+    setLoadingMore(true);
+    const r = await api.get(messageQuery(results?.messages?.length ?? 0)).catch(() => null);
+    setLoadingMore(false);
+    if (!r) return;
+    setResults((prev) => ({ ...(prev ?? {}), messages: [...(prev?.messages ?? []), ...r.messages] }));
+    setMoreMessages(!!r.messages_has_more);
+  };
 
   useEffect(() => {
     if (!open) return;
-    if (debounced.trim().length < 2 && !from && !hasFile) {
+    if (debounced.trim().length < 2 && !from && !hasFile && !channelId) {
       setResults(null);
       return;
     }
     let cancelled = false;
     setLoading(true);
     api
-      .get(`/search${qs({ q: debounced.trim(), type, from, hasFile: hasFile ? 'true' : undefined, limit: type === 'all' ? ALL_LIMIT : 25 })}`)
+      .get(messageQuery(0))
       .then((r) => {
         if (cancelled) return;
+        setMoreMessages(!!r.messages_has_more);
+        delete r.messages_has_more;
         setResults(r);
         setExpanded(new Set());
       })
@@ -140,7 +169,8 @@ export function SearchDialog({ open, initial, onClose }: { open: boolean; initia
     return () => {
       cancelled = true;
     };
-  }, [debounced, type, from, hasFile, open]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [debounced, type, from, hasFile, channelId, when, open]);
 
   const go = (path: string) => {
     onClose();
@@ -187,7 +217,9 @@ export function SearchDialog({ open, initial, onClose }: { open: boolean; initia
       ].slice(0, 6)
     : [];
 
-  const total = results ? Object.values(results).reduce((n, list) => n + list.length, 0) : 0;
+  const total = results ? Object.values(results).reduce((n, list) => n + (Array.isArray(list) ? list.length : 0), 0) : 0;
+  const conversationLabel = (c: Channel) =>
+    c.personal ? 'Saved' : c.kind === 'dm' ? c.members?.map((m) => m.name).join(', ') || 'Direct message' : `#${c.name}`;
   // In "All", a group with more than a few results shows the first few and can be opened up.
   const section = (key: string, title: string, render: (item: any) => ReactNode) => {
     const list = results?.[key] ?? [];
@@ -259,9 +291,29 @@ export function SearchDialog({ open, initial, onClose }: { open: boolean; initia
             </NativeSelect>
           )}
           {(type === 'messages' || type === 'all') && (
-            <Label className="text-xs font-normal">
-              <Checkbox checked={hasFile} onCheckedChange={(v) => setHasFile(!!v)} /> Has attachment
-            </Label>
+            <>
+              <NativeSelect size="sm" value={channelId} onChange={(e) => setChannelId(e.target.value)} aria-label="In conversation" className="max-w-44">
+                <NativeSelectOption value="">All conversations</NativeSelectOption>
+                {(channels ?? [])
+                  .filter((c) => c.personal || c.kind === 'dm' || c.joined)
+                  .sort((a, b) => Number(!!b.personal) - Number(!!a.personal) || conversationLabel(a).localeCompare(conversationLabel(b)))
+                  .map((c) => (
+                    <NativeSelectOption key={c.id} value={c.id}>
+                      {conversationLabel(c)}
+                    </NativeSelectOption>
+                  ))}
+              </NativeSelect>
+              <NativeSelect size="sm" value={when} onChange={(e) => setWhen(e.target.value)} aria-label="When">
+                {WHEN.map((w) => (
+                  <NativeSelectOption key={w.value} value={w.value}>
+                    {w.label}
+                  </NativeSelectOption>
+                ))}
+              </NativeSelect>
+              <Label className="text-xs font-normal">
+                <Checkbox checked={hasFile} onCheckedChange={(v) => setHasFile(!!v)} /> Has attachment
+              </Label>
+            </>
           )}
           {loading && <Spinner className="ml-auto text-muted-foreground" aria-label="Searching" />}
         </div>
@@ -383,13 +435,29 @@ export function SearchDialog({ open, initial, onClose }: { open: boolean; initia
               media={<Avatar user={{ name: m.user_name, color: m.user_color }} size="sm" />}
               title={
                 <>
-                  {m.user_name} <span className="text-xs font-normal text-muted-foreground">in {m.channel_kind === 'dm' ? 'direct message' : `#${m.channel_name}`}</span>
+                  {m.user_name}{' '}
+                  <span className="text-xs font-normal text-muted-foreground">
+                    in {m.saved ? 'Saved' : m.channel_kind === 'dm' ? 'a direct message' : `#${m.channel_name}`}
+                    {m.parent_id ? ' · thread' : ''}
+                  </span>
                 </>
               }
-              snippet={plainMentions(m.body).slice(0, 180)}
-              meta={timeAgo(m.created_at)}
+              snippet={
+                <>
+                  {m.forwarded && <span className="font-medium">Forwarded from {m.forwarded.user_name}: </span>}
+                  {m.snippet ?? plainMentions(m.body).slice(0, 180)}
+                </>
+              }
+              meta={dateTime(m.created_at)}
             />
           ))}
+          {type === 'messages' && moreMessages && (
+            <CommandGroup>
+              <CommandItem value="more-messages" onSelect={loadMoreMessages} className="justify-center py-2 text-xs font-medium text-primary" disabled={loadingMore}>
+                {loadingMore ? <Spinner /> : <Icon name="chevronDown" size={14} />} Load more messages
+              </CommandItem>
+            </CommandGroup>
+          )}
           {section('tasks', 'Tasks', (t) => (
             <ResultItem
               key={t.id}

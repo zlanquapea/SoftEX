@@ -62,7 +62,7 @@ import {
 interface Shell {
   openTask: (id: string) => void;
   openCreate: (kind?: 'task' | 'project' | 'message' | 'meeting' | 'page') => void;
-  openSearch: (q?: string) => void;
+  openSearch: (q?: string, options?: { channelId?: string }) => void;
 }
 const ShellContext = createContext<Shell>({ openTask: () => {}, openCreate: () => {}, openSearch: () => {} });
 export const useShell = () => useContext(ShellContext);
@@ -121,7 +121,7 @@ function Shell({ children, docked, setDocked }: { children: ReactNode; docked: b
   const location = useLocation();
   const toast = useToast();
   const sidebar = useSidebar();
-  const [search, setSearch] = useState<{ open: boolean; q: string }>({ open: false, q: '' });
+  const [search, setSearch] = useState<{ open: boolean; q: string; channelId?: string }>({ open: false, q: '' });
   const [create, setCreate] = useState<{ open: boolean; kind?: 'task' | 'project' | 'message' | 'meeting' | 'page' }>({ open: false });
   const [taskId, setTaskId] = useState<string | null>(null);
   const [online, setOnline] = useState(() => navigator.onLine);
@@ -232,7 +232,7 @@ function Shell({ children, docked, setDocked }: { children: ReactNode; docked: b
     () => ({
       openTask: (id) => setTaskId(id),
       openCreate: (kind) => setCreate({ open: true, kind }),
-      openSearch: (q = '') => setSearch({ open: true, q }),
+      openSearch: (q = '', options?: { channelId?: string }) => setSearch({ open: true, q, channelId: options?.channelId }),
     }),
     [],
   );
@@ -585,7 +585,7 @@ function Shell({ children, docked, setDocked }: { children: ReactNode; docked: b
 
       <MobileNav unread={counts?.unread ?? 0} onSearch={() => setSearch({ open: true, q: '' })} />
 
-      <SearchDialog open={search.open} initial={search.q} onClose={() => setSearch({ open: false, q: '' })} />
+      <SearchDialog open={search.open} initial={search.q} initialChannel={search.channelId} onClose={() => setSearch({ open: false, q: '' })} />
       <QuickCreate open={create.open} kind={create.kind} onClose={() => setCreate({ open: false })} />
       <TaskDrawer taskId={taskId} onClose={() => setTaskId(null)} />
       <ShortcutsDialog open={shortcutsOpen} onClose={() => setShortcutsOpen(false)} />

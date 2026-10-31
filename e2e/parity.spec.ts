@@ -161,8 +161,8 @@ test('polls and forwarding in chat', async ({ page }) => {
   await message.getByRole('button', { name: 'More actions' }).click();
   await page.getByRole('menuitem', { name: 'Forward' }).click();
   const dialog = page.getByRole('dialog', { name: 'Forward message' });
-  await dialog.locator('.forward-targets label').filter({ hasNotText: 'general' }).first().click();
-  await dialog.getByRole('button', { name: 'Forward' }).click();
-  await expect(page.getByText('Message forwarded')).toBeVisible();
+  await dialog.locator('.forward-targets label').filter({ hasNotText: 'general' }).filter({ hasNotText: 'Saved' }).first().click();
+  await dialog.getByRole('button', { name: 'Send' }).click();
+  await expect(page.getByText(/^Forwarded to /)).toBeVisible();
   noErrors();
 });

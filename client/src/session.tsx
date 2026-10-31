@@ -84,6 +84,8 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     realtime.start();
     reloadPeople();
     const off = realtime.subscribe((e) => {
+      // Lost the connection: nobody can be shown as online until it's back.
+      if (e.type === 'presence' && e.userId === null) return setPeople((ps) => ps.map((p) => ({ ...p, online: false })));
       if (e.type === 'user.updated' || e.type === 'presence') {
         setPeople((ps) => ps.map((p) => (p.id === (e.user?.id ?? e.userId) ? { ...p, ...(e.user ?? {}), online: e.type === 'presence' ? e.online : p.online } : p)));
       }

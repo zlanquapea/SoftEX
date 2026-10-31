@@ -275,3 +275,17 @@ export async function platformEvent(ctx: Ctx, actor: string, action: string, wor
 export async function publishToChannel(ctx: Ctx, channel: Row, event: { type: string; [k: string]: unknown }) {
   await ctx.hub.publish(channel.workspace_id, event, { kind: 'channel', channelId: channel.id });
 }
+
+/**
+ * Remove stored bytes that no file version uses any more (forwarded copies share them with the original).
+ * Returns the keys that were removed.
+ */
+export async function removeUnusedStorage(ctx: Ctx, keys: string[]) {
+  const removed: string[] = [];
+  for (const key of new Set(keys)) {
+    if (await ctx.db.get('SELECT 1 FROM file_versions WHERE storage_key = ? LIMIT 1', key)) continue;
+    await ctx.files.remove(key).catch((error) => console.error('Could not remove stored file', key, error));
+    removed.push(key);
+  }
+  return removed;
+}

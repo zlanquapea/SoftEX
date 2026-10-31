@@ -756,6 +756,9 @@ export function meRouter(ctx: Ctx) {
         await db.run(`DELETE FROM ${table} WHERE user_id = ?`, auth.userId);
       }
       await db.run('DELETE FROM scheduled_messages WHERE user_id = ? AND sent_message_id IS NULL', auth.userId);
+      await db.run('DELETE FROM thread_subscriptions WHERE user_id = ?', auth.userId);
+      // Saved is private, so it goes with the account.
+      await db.run('DELETE FROM channels WHERE personal = 1 AND created_by = ?', auth.userId);
       await db.run('DELETE FROM time_entries WHERE user_id = ? AND ended_at IS NULL', auth.userId);
       await db.run('UPDATE api_tokens SET revoked_at = COALESCE(revoked_at, ?) WHERE user_id = ?', now(), auth.userId);
       await db.run('UPDATE memberships SET deactivated_at = COALESCE(deactivated_at, ?) WHERE user_id = ?', now(), auth.userId);

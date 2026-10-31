@@ -68,7 +68,8 @@ describe('private content never leaks through derived surfaces', () => {
     const shared = (await owner.agent.post('/api/channels').send({ name: 'client-x', kind: 'private' })).body;
     const guest = await invite(env, owner.agent, 'guest', { channelIds: [shared.id], guestDays: 7 });
 
-    const visible = (await guest.agent.get('/api/channels')).body.map((c: { id: string }) => c.id);
+    // Besides their own private Saved.
+    const visible = (await guest.agent.get('/api/channels')).body.filter((c: { personal: boolean }) => !c.personal).map((c: { id: string }) => c.id);
     expect(visible).toEqual([shared.id]);
     expect((await guest.agent.get(`/api/channels/${general.id}/messages`)).status).toBe(404);
     expect((await guest.agent.post('/api/projects').send({ name: 'Nope' })).status).toBe(403);
