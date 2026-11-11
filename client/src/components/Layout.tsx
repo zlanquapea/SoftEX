@@ -10,7 +10,8 @@ import { Icon } from './Icon';
 import { SearchDialog } from './SearchDialog';
 import { QuickCreate } from './QuickCreate';
 import { TaskDrawer } from './TaskDrawer';
-import { Callout, CountBadge, ErrorBoundary, Hint, IconButton, Loading, StatusDot, useToast } from '@/components/kit';
+import { Callout, CountBadge, ErrorBoundary, Hint, IconButton, Loading, notify, StatusDot, useToast } from '@/components/kit';
+import { dueChipLabel } from '../quickAdd';
 import { AccountBanners } from './Plan';
 import { ROLE_LABEL, dateLabel, plainMentions } from '../format';
 import { clearOfflineData } from '../pwa';
@@ -152,6 +153,17 @@ function Shell({ children, docked, setDocked }: { children: ReactNode; docked: b
     window.addEventListener('kuu:see-plans', go);
     return () => window.removeEventListener('kuu:see-plans', go);
   }, [navigate, can, me?.mode]);
+
+  // Completing a repeating task: say when the next one is due, with a way to open it.
+  useEffect(() => {
+    const onNext = (e: Event) => {
+      const d = (e as CustomEvent<{ title: string; due: string; id: string }>).detail;
+      notify(`Next “${d.title}”: ${dueChipLabel(d.due)}`, 'success', { action: { label: 'Open', onClick: () => setTaskId(d.id) } });
+      reloadWork();
+    };
+    window.addEventListener('kuu:next-occurrence', onNext);
+    return () => window.removeEventListener('kuu:next-occurrence', onNext);
+  }, [reloadWork]);
 
   // Moving between pages fades the new one in, which also smooths over the moment its data loads.
   const content = useRef<HTMLDivElement>(null);

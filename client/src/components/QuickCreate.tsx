@@ -5,6 +5,9 @@ import { toIso, toLocalInput } from '../format';
 import { useApi } from '../hooks';
 import { usePeople, useSession } from '../session';
 import { Icon } from './Icon';
+import { RepeatFields } from './RepeatFields';
+import { localToday } from '../format';
+import type { Recurrence } from '../repeat';
 import { FormField, Modal, PeoplePicker, useAction, Callout, ColorSwatches, DatePicker, DateTimePicker } from '@/components/kit';
 import { Input } from '@/components/ui/input';
 import { NativeSelect, NativeSelectOptGroup, NativeSelectOption } from '@/components/ui/native-select';
@@ -85,6 +88,7 @@ export function NewTaskForm({
   const [dueDate, setDueDate] = useState(defaults.dueDate ?? '');
   const [priority, setPriority] = useState('medium');
   const [description, setDescription] = useState('');
+  const [repeat, setRepeat] = useState<{ recurrence: Recurrence | ''; until: string }>({ recurrence: '', until: '' });
   const [busy, setBusy] = useState(false);
   const submit = async (e: FormEvent) => {
     e.preventDefault();
@@ -99,6 +103,8 @@ export function NewTaskForm({
           teamId: team,
           dueDate: dueDate || null,
           priority,
+          recurrence: repeat.recurrence || null,
+          recurrenceUntil: repeat.recurrence && repeat.until ? repeat.until : null,
           status: defaults.status,
           milestoneId: defaults.milestoneId,
           meetingId: defaults.meetingId,
@@ -162,6 +168,16 @@ export function NewTaskForm({
           </NativeSelect>
         </FormField>
       </div>
+      <RepeatFields
+        recurrence={repeat.recurrence}
+        until={repeat.until}
+        minUntil={dueDate || undefined}
+        onChange={(next) => {
+          // A repeating task needs a first day: today, unless one was picked.
+          if (next.recurrence && !dueDate) setDueDate(localToday());
+          setRepeat(next);
+        }}
+      />
       <FormField label="Description (optional)">
         <Textarea rows={3} value={description} onChange={(e) => setDescription(e.target.value)} />
       </FormField>

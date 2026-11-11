@@ -1,3 +1,4 @@
+import { nextDue } from '../src/routes/tasks.js';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { invite, registerOwner, setup, type TestEnv } from './helpers.js';
 
@@ -114,7 +115,8 @@ describe('turn a discussion into delivery (§6)', () => {
     await owner.agent.patch(`/api/tasks/${t.id}`).send({ status: 'done' });
     const work = (await owner.agent.get('/api/my-work')).body;
     const all = [...work.later, ...work.upcoming, ...work.today, ...work.overdue];
-    expect(all.find((x: { title: string; due_date: string }) => x.title === 'Weekly report')?.due_date).toBe('2026-10-01');
+    // Weeks that passed while it sat undone are skipped: the next one is the first weekly date after today.
+    expect(all.find((x: { title: string; due_date: string }) => x.title === 'Weekly report')?.due_date).toBe(nextDue('2026-09-24', 'weekly'));
   });
 
   it('routes approval requests to the approver', async () => {

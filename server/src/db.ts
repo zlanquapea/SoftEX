@@ -233,7 +233,7 @@ CREATE TABLE IF NOT EXISTS tasks (
   priority TEXT NOT NULL DEFAULT 'medium',          -- low | medium | high | urgent
   due_date TEXT,
   blocked_reason TEXT NOT NULL DEFAULT '',
-  recurrence TEXT,                                  -- null | daily | weekly | monthly
+  recurrence TEXT,                                  -- null | daily | weekdays | weekly | monthly
   position REAL NOT NULL DEFAULT 0,
   source_message_id TEXT REFERENCES messages(id) ON DELETE SET NULL,
   meeting_id TEXT REFERENCES meetings(id) ON DELETE SET NULL,
@@ -1016,6 +1016,9 @@ const ADDED_COLUMNS: [table: string, column: string, definition: string, backfil
   ['tasks', 'team_id', 'TEXT REFERENCES teams(id) ON DELETE SET NULL'],
   ['files', 'team_id', 'TEXT REFERENCES teams(id) ON DELETE SET NULL'],
   ['messages', 'forwarded_from', 'TEXT'],
+  // Repeating tasks: the last day a repeat may fall on (null repeats until stopped), and the occurrence it followed.
+  ['tasks', 'recurrence_until', 'TEXT'],
+  ['tasks', 'recurs_from', 'TEXT'],
   // A forward is a copy: what the original said, who wrote it and when, frozen at the time it was forwarded.
   ['messages', 'forward_snapshot', 'TEXT'],
   // The sender's own id for a message, so a retried send after a lost response doesn't post it twice.

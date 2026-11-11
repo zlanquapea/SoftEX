@@ -1,6 +1,7 @@
 import { useMemo, useState, type FormEvent } from 'react';
 import { api, type Project } from '../api';
 import { useApi } from '../hooks';
+import { localToday } from '../format';
 import { parseQuickAdd, type QuickAddToken } from '../quickAdd';
 import { usePeople } from '../session';
 import { Icon } from './Icon';
@@ -9,8 +10,8 @@ import { Button } from '@/components/ui/button';
 import { InputGroup, InputGroupAddon, InputGroupInput } from '@/components/ui/input-group';
 import { cn } from '@/lib/utils';
 
-const CHIP_ICON: Record<QuickAddToken['kind'], string> = { due: 'calendar', priority: 'flag', owner: 'users', project: 'folder' };
-const CHIP_NAME: Record<QuickAddToken['kind'], string> = { due: 'due date', priority: 'priority', owner: 'owner', project: 'project' };
+const CHIP_ICON: Record<QuickAddToken['kind'], string> = { due: 'calendar', priority: 'flag', owner: 'users', project: 'folder', repeat: 'repeat' };
+const CHIP_NAME: Record<QuickAddToken['kind'], string> = { due: 'due date', priority: 'priority', owner: 'owner', project: 'project', repeat: 'repeat' };
 
 /**
  * One line to a task: "Send deck to @maya friday !high #brand refresh". What it understood shows as chips while
@@ -50,7 +51,9 @@ export function QuickAddTask({
       () =>
         api.post('/tasks', {
           title: parsed.title,
-          dueDate: parsed.dueDate ?? defaultDue ?? null,
+          // A repeating task starts today unless a day was given.
+          dueDate: parsed.dueDate ?? defaultDue ?? (parsed.recurrence ? localToday() : null),
+          ...(parsed.recurrence ? { recurrence: parsed.recurrence } : {}),
           ...(parsed.priority ? { priority: parsed.priority } : {}),
           ...(parsed.ownerId ? { ownerId: parsed.ownerId } : {}),
           ...(parsed.projectId ? { projectId: parsed.projectId } : {}),
@@ -102,7 +105,7 @@ export function QuickAddTask({
             </button>
           </span>
         ))}
-        {!parsed.tokens.length && <span className="text-xs text-muted-foreground">Dates like “friday” or “in 3 days”, !high for priority, @name to assign, #project to file it.</span>}
+        {!parsed.tokens.length && <span className="text-xs text-muted-foreground">Dates like “friday” or “in 3 days”, “every day” to repeat, !high for priority, @name to assign, #project to file it.</span>}
       </div>
     </form>
   );

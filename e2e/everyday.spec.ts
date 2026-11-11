@@ -130,3 +130,32 @@ test.afterAll(async ({ browser }) => {
   await page.close();
 });
 
+
+test('a daily task that never ends: set it when creating, and completing it brings in tomorrow’s', async ({ page }) => {
+  const noErrors = trackErrors(page);
+  await signIn(page, 'alex@acme.test');
+  const id = run();
+  await page.getByRole('button', { name: 'Create', exact: true }).click();
+  await page.getByRole('button', { name: /Task Assign and track work/ }).click();
+  const dialog = page.getByRole('dialog');
+  await dialog.getByLabel('Title').fill(`Check support inbox ${id}`);
+  await dialog.getByLabel('Repeats').selectOption('daily');
+  // Starts today, and repeats until stopped unless an end date is chosen.
+  await expect(dialog.getByRole('button', { name: /Due date|Today|\d/ }).first()).toBeVisible();
+  await expect(dialog.getByLabel('When it stops repeating')).toHaveValue('never');
+  await dialog.getByRole('button', { name: 'Create task' }).click();
+
+  await page.goto('/my-work');
+  const row = page.locator('.task', { hasText: `Check support inbox ${id}` });
+  await expect(row).toHaveCount(1);
+  await expect(row).toContainText('Daily');
+  await row.getByRole('checkbox', { name: /Mark .* done/ }).click();
+  await expect(page.getByText(new RegExp(`Next “Check support inbox ${id}”: Tomorrow`))).toBeVisible();
+  // The next one is waiting (in the upcoming list), still repeating.
+  await expect(page.locator('.task:not(.is-done)', { hasText: `Check support inbox ${id}` })).toHaveCount(1, { timeout: 10_000 });
+
+  // Quick add understands it too.
+  await page.getByRole('textbox', { name: 'New task' }).first().fill(`Stand-up notes ${id} every weekday`);
+  await expect(page.locator('#quick-add-understood')).toContainText('Every weekday');
+  noErrors();
+});

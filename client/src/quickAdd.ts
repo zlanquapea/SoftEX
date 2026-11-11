@@ -8,6 +8,8 @@
  * "next month" (the 1st), "in 3 days", "in 2 weeks", "end of week" (Friday), "end of month",
  * "12 nov", "nov 12", "12/11" (day/month) and 2026-11-12. "by", "on" or "due" before a date is dropped too.
  * Priority: !urgent, !high, !medium (!med), !low.  Owner: @first-name or @full name.  Project: #name.
+ * Repeats: every day (daily), every weekday (weekdays), every week (weekly), every month (monthly), and
+ * "every friday" (weekly, starting Friday).
  */
 
 export type Priority = 'low' | 'medium' | 'high' | 'urgent';
@@ -20,7 +22,7 @@ export interface QuickAddProject {
   name: string;
 }
 export interface QuickAddToken {
-  kind: 'due' | 'priority' | 'owner' | 'project';
+  kind: 'due' | 'priority' | 'owner' | 'project' | 'repeat';
   /** What the chip shows, e.g. "Fri, Nov 14", "High", "Maya Singh", "Brand refresh". */
   label: string;
   /** The text that was recognised, as typed. */
@@ -32,6 +34,7 @@ export interface QuickAdd {
   priority: Priority | null;
   ownerId: string | null;
   projectId: string | null;
+  recurrence: 'daily' | 'weekdays' | 'weekly' | 'monthly' | null;
   tokens: QuickAddToken[];
 }
 
@@ -96,7 +99,8 @@ export function parseQuickAdd(
   const take = (match: string) => {
     text = text.replace(match, ' ');
   };
-  const result: QuickAdd = { title: '', dueDate: null, priority: null, ownerId: null, projectId: null, tokens };
+  const result: QuickAdd = { title: '', dueDate: null, priority: null, ownerId: null, projectId: null, recurrence: null, tokens };
+
 
   // Priority: !high
   const p = text.match(/(?:^|\s)!(urgent|high|medium|med|low)\b/i);
@@ -139,6 +143,22 @@ export function parseQuickAdd(
       tokens.push({ kind: 'owner', label: person.name, text: typed });
       take(new RegExp(`(?:^|\\s)${escape(typed)}`, 'i').exec(text)?.[0] ?? typed);
     }
+  }
+
+  // Repeats (after the other tokens are out, so "…daily !low" ends with "daily"): "every day", "weekdays", "every friday" (weekly, and the weekday is left to be read as the first date).
+  const every = skip.has('repeat')
+    ? null
+    : // "every …" anywhere; a bare "daily", "weekly"… only as the last word, so "Monthly report" keeps its title.
+      (text.match(new RegExp(`(?:^|\\s)((?:every|each) (day|weekday|work ?day|week|month|${DAY}))(?=\\s)`, 'i')) ??
+      text.match(/(?:^|\s)(daily|weekdays|weekly|monthly)(?=\s*$)/i));
+  if (every) {
+    const word = (every[2] ?? every[1]).toLowerCase();
+    const kind = /^(day|daily)$/.test(word) ? 'daily' : /^(weekday|weekdays|work ?day)$/.test(word) ? 'weekdays' : /^(month|monthly)$/.test(word) ? 'monthly' : 'weekly';
+    const LABEL = { daily: 'Every day', weekdays: 'Every weekday', weekly: 'Every week', monthly: 'Every month' } as const;
+    result.recurrence = kind;
+    const weekday = every[2] && new RegExp(`^(?:${DAY})$`, 'i').test(every[2]) ? every[2] : null;
+    tokens.push({ kind: 'repeat', label: weekday ? `Every ${WEEKDAYS.find((w) => w.startsWith(weekday.toLowerCase().slice(0, 3)))}` : LABEL[kind], text: every[1] });
+    text = text.replace(every[1], weekday ?? ' ');
   }
 
   // Due date: the first phrase that reads as a date (with "by", "on" or "due" before it).

@@ -55,6 +55,10 @@ async function send<T>(method: string, path: string, body?: unknown): Promise<T>
     }
     throw err;
   }
+  // Completing a repeating task brought in the next one: say when it's due (wherever it was completed from).
+  if (method === 'PATCH' && /^\/tasks\/[^/]+$/.test(path) && data?.next_occurrence) {
+    window.dispatchEvent(new CustomEvent('kuu:next-occurrence', { detail: { title: data.title, due: data.next_occurrence.due_date, id: data.next_occurrence.id } }));
+  }
   return data as T;
 }
 
@@ -272,6 +276,10 @@ export interface Task {
   overdue: boolean;
   blocked_reason: string;
   recurrence: string | null;
+  /** Last day a repeat may fall on; null repeats until stopped. */
+  recurrence_until?: string | null;
+  /** After completing a repeating task: the next one it brought in. */
+  next_occurrence?: { id: string; due_date: string } | null;
   position: number;
   project: { id: string; name: string; color: string } | null;
   milestone_id: string | null;
