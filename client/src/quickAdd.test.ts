@@ -79,3 +79,22 @@ describe('smart quick-add', () => {
     expect(parse('Tidy docs !low').title).toBe('Tidy docs');
   });
 });
+
+describe('repeats', () => {
+  const today = new Date(2026, 10, 11); // Wednesday
+  it('reads every day, every weekday, weekly and monthly', () => {
+    expect(parseQuickAdd('Check the inbox every day', { today })).toMatchObject({ title: 'Check the inbox', recurrence: 'daily', dueDate: null });
+    expect(parseQuickAdd('Stand-up notes every weekday', { today })).toMatchObject({ title: 'Stand-up notes', recurrence: 'weekdays' });
+    expect(parseQuickAdd('Water plants daily !low', { today })).toMatchObject({ title: 'Water plants', recurrence: 'daily', priority: 'low' });
+    expect(parseQuickAdd('Timesheet weekly', { today })).toMatchObject({ title: 'Timesheet', recurrence: 'weekly' });
+    expect(parseQuickAdd('Pay rent monthly', { today })).toMatchObject({ title: 'Pay rent', recurrence: 'monthly' });
+  });
+  it('"every friday" repeats weekly from the next Friday', () => {
+    const r = parseQuickAdd('Send the report every friday', { today });
+    expect(r).toMatchObject({ title: 'Send the report', recurrence: 'weekly', dueDate: '2026-11-13' });
+    expect(r.tokens.find((t) => t.kind === 'repeat')?.label).toBe('Every friday');
+  });
+  it('can be turned off to keep the words', () => {
+    expect(parseQuickAdd('Write the weekly newsletter', { today, skip: new Set(['repeat']) })).toMatchObject({ title: 'Write the weekly newsletter', recurrence: null });
+  });
+});

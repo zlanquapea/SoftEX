@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { Link } from 'react-router-dom';
 import { api, qs, type Task } from '../api';
-import { bytes, dueLabel, plainMentions, STATUS_LABEL, timeAgo } from '../format';
+import { bytes, dueLabel, localToday, plainMentions, STATUS_LABEL, timeAgo } from '../format';
 import { useApi, useRealtime, useViewing } from '../hooks';
 import { usePeople, useSession } from '../session';
 import { Avatar } from './Avatar';
@@ -9,6 +9,7 @@ import { Icon } from './Icon';
 import { RemindButton } from './Later';
 import { Markdown } from './Markdown';
 import { NewTaskForm } from './QuickCreate';
+import { defaultUntil, REPEAT_OPTIONS, repeatLabel, shortRepeat } from '../repeat';
 import { Callout, ChoiceChips, DatePicker, ErrorBoundary, ErrorState, IconButton, Loading, Pill, PriorityPill, StatusPill, useAction, useConfirm } from '@/components/kit';
 import { LabelChips, LabelPicker, TaskFieldRows, TimeTracker } from './Work';
 import { usePlan } from './Plan';
@@ -198,7 +199,7 @@ export function TaskDetail({ taskId, onDeleted }: { taskId: string; onDeleted?: 
         )}
         {task.recurrence && (
           <Pill>
-            <Icon name="refresh" /> Repeats {task.recurrence}
+            <Icon name="repeat" /> {repeatLabel(task.recurrence, task.recurrence_until)}
           </Pill>
         )}
       </div>
@@ -348,12 +349,44 @@ export function TaskDetail({ taskId, onDeleted }: { taskId: string; onDeleted?: 
         </Prop>
         <TaskFieldRows taskId={task.id} projectId={task.project?.id} values={task.fields ?? {}} disabled={disabled} onChange={(fields) => setData({ ...task, fields })} />
         <Prop label="Repeats">
-          <NativeSelect className="w-full" value={task.recurrence ?? ''} disabled={disabled} onChange={(e) => update({ recurrence: e.target.value || null })} aria-label="Repeats">
-            <NativeSelectOption value="">Never</NativeSelectOption>
-            <NativeSelectOption value="daily">Daily</NativeSelectOption>
-            <NativeSelectOption value="weekly">Weekly</NativeSelectOption>
-            <NativeSelectOption value="monthly">Monthly</NativeSelectOption>
-          </NativeSelect>
+          <div className="flex w-full flex-col gap-2">
+            <NativeSelect
+              className="w-full"
+              value={task.recurrence ?? ''}
+              disabled={disabled}
+              aria-label="Repeats"
+              onChange={(e) =>
+                update(
+                  e.target.value
+                    ? // A repeating task needs a first day: today, unless it has one.
+                      { recurrence: e.target.value, ...(task.due_date ? {} : { dueDate: localToday() }) }
+                    : { recurrence: null },
+                )
+              }
+            >
+              <NativeSelectOption value="">Doesn’t repeat</NativeSelectOption>
+              {REPEAT_OPTIONS.map((o) => (
+                <NativeSelectOption key={o.value} value={o.value}>
+                  {o.label}
+                </NativeSelectOption>
+              ))}
+            </NativeSelect>
+            {task.recurrence && (
+              <NativeSelect
+                className="w-full"
+                value={task.recurrence_until ? 'on' : 'never'}
+                disabled={disabled}
+                aria-label="When it stops repeating"
+                onChange={(e) => update({ recurrenceUntil: e.target.value === 'on' ? defaultUntil(task.due_date) : null })}
+              >
+                <NativeSelectOption value="never">Never ends</NativeSelectOption>
+                <NativeSelectOption value="on">Ends on a date</NativeSelectOption>
+              </NativeSelect>
+            )}
+            {task.recurrence && task.recurrence_until && (
+              <DatePicker value={task.recurrence_until} min={task.due_date ?? undefined} clearable={false} disabled={disabled} aria-label="Last day it repeats" onChange={(v) => v && update({ recurrenceUntil: v })} />
+            )}
+          </div>
         </Prop>
       </dl>
       <div className="flex flex-wrap items-center gap-2">
@@ -747,6 +780,12 @@ export function TaskRow({
           {task.status !== 'todo' && task.status !== 'done' && <StatusPill status={task.status} />}
           <LabelChips labels={task.labels} />
           <PriorityPill priority={task.priority} />
+          {task.recurrence && (
+            <span className="inline-flex items-center gap-1" title={repeatLabel(task.recurrence, task.recurrence_until)}>
+              <Icon name="repeat" size={12} /> {shortRepeat(task.recurrence)}
+              <span className="sr-only">, {repeatLabel(task.recurrence, task.recurrence_until)}</span>
+            </span>
+          )}
           {task.checklist.total > 0 && (
             <span className="inline-flex items-center gap-1">
               <Icon name="check" size={12} /> {task.checklist.done}/{task.checklist.total}

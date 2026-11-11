@@ -94,6 +94,7 @@ export async function serializeTasks(db: Database, rows: Row[]) {
       overdue: !!t.due_date && t.due_date < t0 && t.status !== 'done',
       blocked_reason: t.blocked_reason,
       recurrence: t.recurrence,
+      recurrence_until: t.recurrence_until ?? null,
       position: t.position,
       project: t.project_id ? projects.get(t.project_id) ?? null : null,
       milestone_id: t.milestone_id,
@@ -118,11 +119,36 @@ export async function serializeTasks(db: Database, rows: Row[]) {
   });
 }
 
-function nextDue(due: string | null, recurrence: string) {
-  const d = due ? new Date(`${due}T00:00:00Z`) : new Date(`${today()}T00:00:00Z`);
+export const RECURRENCES = ['daily', 'weekdays', 'weekly', 'monthly'] as const;
+const Recurrence = z.enum(RECURRENCES);
+
+/** One step of a repeat. Months keep their day where they can (the 31st becomes the month's last day). */
+function step(date: Date, recurrence: string, anchorDay: number) {
+  const d = new Date(date);
   if (recurrence === 'daily') d.setUTCDate(d.getUTCDate() + 1);
-  if (recurrence === 'weekly') d.setUTCDate(d.getUTCDate() + 7);
-  if (recurrence === 'monthly') d.setUTCMonth(d.getUTCMonth() + 1);
+  else if (recurrence === 'weekdays') {
+    do d.setUTCDate(d.getUTCDate() + 1);
+    while (d.getUTCDay() === 0 || d.getUTCDay() === 6);
+  } else if (recurrence === 'weekly') d.setUTCDate(d.getUTCDate() + 7);
+  else if (recurrence === 'monthly') {
+    const y = d.getUTCFullYear();
+    const m = d.getUTCMonth() + 1;
+    const last = new Date(Date.UTC(y, m + 1, 0)).getUTCDate();
+    return new Date(Date.UTC(y, m, Math.min(anchorDay, last)));
+  }
+  return d;
+}
+
+/**
+ * When the next occurrence of a repeating task is due: the first repeat after its due date that is also after
+ * `today`. Days missed while it sat undone are skipped rather than piling up as overdue copies.
+ */
+export function nextDue(due: string | null, recurrence: string, todayIso = today()) {
+  let d = new Date(`${due ?? todayIso}T00:00:00Z`);
+  const anchor = d.getUTCDate();
+  const floor = new Date(`${todayIso}T00:00:00Z`);
+  do d = step(d, recurrence, anchor);
+  while (d <= floor);
   return d.toISOString().slice(0, 10);
 }
 
@@ -141,7 +167,9 @@ const TaskInput = z.object({
   dueDate: DateStr.nullish(),
   startDate: DateStr.nullish(),
   estimateHours: z.number().min(0).max(1000).nullish(),
-  recurrence: z.enum(['daily', 'weekly', 'monthly']).nullish(),
+  recurrence: Recurrence.nullish(),
+  /** Last day a repeat may fall on; leave out to repeat until stopped. */
+  recurrenceUntil: DateStr.nullish(),
   sourceMessageId: z.string().nullish(),
   meetingId: z.string().nullish(),
   collaboratorIds: z.array(z.string()).max(50).default([]),
@@ -150,6 +178,42 @@ const TaskInput = z.object({
 export function tasksRouter(ctx: Ctx) {
   const r = Router();
   const { db } = ctx;
+
+  /**
+   * Completing a repeating task brings in the next one: same title, owner, project, labels and checklist (unticked),
+   * due on the next repeat. Only once per occurrence, however often it's reopened and completed again, and not past
+   * its end date.
+   */
+  const scheduleNextOccurrence = async (task: Row) => {
+    if (!task.recurrence) return null;
+    if (await db.get('SELECT 1 FROM tasks WHERE recurs_from = ?', task.id)) return null;
+    const due = nextDue(task.due_date, task.recurrence);
+    if (task.recurrence_until && due > task.recurrence_until) return null;
+    const nextId = newId();
+    // A task with a start date keeps the same gap before its due date.
+    const lead = task.start_date && task.due_date ? (Date.parse(task.due_date) - Date.parse(task.start_date)) / 86_400_000 : null;
+    await db.transaction(async () => {
+      await db.insert('tasks', {
+        ...task,
+        id: nextId,
+        status: 'todo',
+        due_date: due,
+        start_date: lead === null ? null : new Date(Date.parse(due) - lead * 86_400_000).toISOString().slice(0, 10),
+        blocked_reason: '',
+        completed_at: null,
+        created_at: now(),
+        updated_at: now(),
+        source_message_id: null,
+        recurs_from: task.id,
+      });
+      for (const item of await db.all('SELECT text, position FROM checklist_items WHERE task_id = ? ORDER BY position', task.id)) {
+        await db.insert('checklist_items', { id: newId(), task_id: nextId, text: item.text, done: 0, position: item.position });
+      }
+      await db.run('INSERT OR IGNORE INTO task_labels (task_id, label_id) SELECT ?, label_id FROM task_labels WHERE task_id = ?', nextId, task.id);
+      await db.run('INSERT OR IGNORE INTO task_collaborators (task_id, user_id) SELECT ?, user_id FROM task_collaborators WHERE task_id = ?', nextId, task.id);
+    });
+    return nextId;
+  };
 
   /** Validate that a person may own a task in the given project (they must be able to see it). */
   const checkAssignee = async (auth: Auth, userId: string | null | undefined, project: Row | null) => {
@@ -231,6 +295,7 @@ export function tasksRouter(ctx: Ctx) {
         start_date: body.startDate ?? null,
         estimate_hours: body.estimateHours ?? null,
         recurrence: body.recurrence ?? null,
+        recurrence_until: body.recurrence ? body.recurrenceUntil ?? null : null,
         position,
         source_message_id: body.sourceMessageId ?? null,
         meeting_id: body.meetingId ?? null,
@@ -711,7 +776,8 @@ export function tasksRouter(ctx: Ctx) {
         estimateHours: z.number().min(0).max(1000).nullable().optional(),
         milestoneId: z.string().nullable().optional(),
         blockedReason: z.string().max(500).optional(),
-        recurrence: z.enum(['daily', 'weekly', 'monthly']).nullable().optional(),
+        recurrence: Recurrence.nullable().optional(),
+        recurrenceUntil: DateStr.nullable().optional(),
         position: z.number().optional(),
       }),
       req.body,
@@ -725,6 +791,7 @@ export function tasksRouter(ctx: Ctx) {
     }
     if (body.startDate && body.startDate !== task.start_date) await requireFeature(ctx, auth.workspaceId, 'planning');
     const statusChanged = body.status && body.status !== task.status;
+    let nextOccurrence: string | null = null;
     await db.update('tasks', task.id, {
       title: body.title,
       description: body.description,
@@ -739,6 +806,8 @@ export function tasksRouter(ctx: Ctx) {
       milestone_id: body.milestoneId,
       blocked_reason: body.blockedReason ?? (body.status && body.status !== 'blocked' ? '' : undefined),
       recurrence: body.recurrence,
+      // Stopping the repeat clears its end date too.
+      recurrence_until: body.recurrence === null ? null : body.recurrenceUntil,
       position: body.position,
       completed_at: statusChanged ? (body.status === 'done' ? now() : null) : undefined,
       updated_at: now(),
@@ -779,19 +848,7 @@ export function tasksRouter(ctx: Ctx) {
         for (const dep of dependents) {
           if (dep.owner_id) await notify(ctx, auth.workspaceId, { userId: dep.owner_id, kind: 'handoff', title: `“${task.title}” is done — “${dep.title}” can move forward`, link: `/tasks/${dep.id}`, actorId: auth.userId });
         }
-        if (task.recurrence) {
-          const nextId = newId();
-          await db.insert('tasks', {
-            ...task,
-            id: nextId,
-            status: 'todo',
-            due_date: nextDue(task.due_date, task.recurrence),
-            completed_at: null,
-            created_at: now(),
-            updated_at: now(),
-            source_message_id: null,
-          });
-        }
+        nextOccurrence = await scheduleNextOccurrence((await db.get('SELECT * FROM tasks WHERE id = ?', task.id))!);
       }
     }
     if (body.ownerId && body.ownerId !== task.owner_id) {
@@ -812,7 +869,10 @@ export function tasksRouter(ctx: Ctx) {
     }
     if (statusChanged) await runAutomations(ctx, 'task.status_changed', (await db.get('SELECT * FROM tasks WHERE id = ?', task.id))!, task.status);
     await publishTask(auth, task.id);
-    res.json((await serializeTasks(db, [(await db.get('SELECT * FROM tasks WHERE id = ?', task.id))!]))[0]);
+    const [updated] = await serializeTasks(db, [(await db.get('SELECT * FROM tasks WHERE id = ?', task.id))!]);
+    // Completing a repeating task says when the next one is due.
+    const next = nextOccurrence ? await db.get('SELECT id, due_date FROM tasks WHERE id = ?', nextOccurrence) : null;
+    res.json({ ...updated, next_occurrence: next ? { id: next.id, due_date: next.due_date } : null });
   });
 
   r.delete('/tasks/:id', async (req, res) => {
